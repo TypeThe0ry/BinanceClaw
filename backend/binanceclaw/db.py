@@ -70,6 +70,19 @@ class Approval(SQLModel, table=True):
     tg_message_id: Optional[int] = None
 
 
+class PriceAlert(SQLModel, table=True):
+    id: str = Field(default_factory=_id, primary_key=True)
+    created: float = Field(default_factory=time.time)
+    symbol: str
+    op: str                                   # below | above
+    price: float
+    note: str = ""
+    source: str = "manual"                    # manual | ai | telegram
+    status: str = Field(default="active", index=True)   # active | triggered | cancelled
+    triggered_at: Optional[float] = None
+    trigger_price: Optional[float] = None
+
+
 class PaperBalance(SQLModel, table=True):
     asset: str = Field(primary_key=True)
     free: float = 0
@@ -143,7 +156,7 @@ class Database:
 
     # ---- domain queries ----
     def orders_for_day(self, day: str) -> list[Order]:
-        return self.all(select(Order).where(Order.day == day, Order.status.in_(("filled", "submitted"))))
+        return self.all(select(Order).where(Order.day == day, Order.status.in_(("filled", "submitted", "unknown"))))
 
     def pending_approvals(self) -> list[Approval]:
         return self.all(select(Approval).where(Approval.status == "pending").order_by(Approval.created))

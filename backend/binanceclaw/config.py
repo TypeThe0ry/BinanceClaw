@@ -32,6 +32,28 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "price_deviation_anomaly": (0.01, 0.2),
     "cycle_minutes": (5, 1440),
     "approval_timeout_minutes": (5, 720),
+    "max_asset_weight": (0.05, 1.0),
+}
+
+# Suggestions for the asset picker (any TRADING <TOKEN>USDT spot pair can also be typed in).
+CANDIDATE_TOKENS = ["BTC", "ETH", "BNB", "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "TRX", "TON",
+                    "QQQB", "NVDAB"]
+
+# One-click risk presets. Applying one overwrites these limit fields and the decision cadence;
+# editing any limit afterwards switches the preset label to "custom".
+RISK_PRESETS: dict[str, dict] = {
+    "conservative": {"limits": {"max_order_usd": 300, "auto_execute_max_usd": 100, "max_auto_daily_usd": 200,
+                                "max_orders_per_day": 2, "max_daily_notional_usd": 600, "stable_floor": 0.30,
+                                "btc_7d_drop_pause": 0.15, "allow_sell": False},
+                     "schedule": {"cycle_minutes": 120}, "allocation": {"max_asset_weight": 0.5}},
+    "balanced": {"limits": {"max_order_usd": 800, "auto_execute_max_usd": 200, "max_auto_daily_usd": 400,
+                            "max_orders_per_day": 3, "max_daily_notional_usd": 2400, "stable_floor": 0.15,
+                            "btc_7d_drop_pause": 0.25, "allow_sell": False},
+                 "schedule": {"cycle_minutes": 60}, "allocation": {"max_asset_weight": 0.7}},
+    "aggressive": {"limits": {"max_order_usd": 2000, "auto_execute_max_usd": 500, "max_auto_daily_usd": 1000,
+                              "max_orders_per_day": 6, "max_daily_notional_usd": 6000, "stable_floor": 0.08,
+                              "btc_7d_drop_pause": 0.35, "allow_sell": False},
+                   "schedule": {"cycle_minutes": 30}, "allocation": {"max_asset_weight": 0.85}},
 }
 
 
@@ -76,6 +98,51 @@ class ProviderSettings(BaseModel):
     temperature: float = 0.2
 
 
+class Capital(BaseModel):
+    """What the AI is allowed to touch."""
+    locked: dict[str, float] = Field(default_factory=dict)   # asset -> amount that is never touched or seen
+    budget_usd: float | None = None                           # cap on net capital the AI may deploy (None = no cap)
+
+    @field_validator("locked")
+    @classmethod
+    def _locked(cls, v):
+        out = {}
+        for k, amt in v.items():
+            if amt is None or float(amt) < 0:
+                raise ValueError(f"locked amount for {k} must be >= 0")
+            if float(amt) > 0:
+                out[k.upper()] = float(amt)
+        return out
+
+    @field_validator("budget_usd")
+    @classmethod
+    def _budget(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("budget must be >= 0")
+        return v
+
+
+class Allocation(BaseModel):
+    mode: Literal["targets", "ai"] = "targets"
+    # Tokens the AI may trade. In "targets" mode only tokens that also have a target are tradable.
+    enabled: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "QQQB", "NVDAB"])
+    max_asset_weight: float = 0.7        # "ai" mode: ceiling per asset (share of managed value)
+
+    @field_validator("enabled")
+    @classmethod
+    def _enabled(cls, v):
+        out = []
+        for t in v:
+            t = t.upper().strip()
+            if not t.isalnum() or len(t) > 15:
+                raise ValueError(f"invalid token {t!r}")
+            if t not in out:
+                out.append(t)
+        if len(out) > 15:
+            raise ValueError("at most 15 tradable tokens")
+        return out
+
+
 class PaperSettings(BaseModel):
     initial_balances: dict[str, float] = {"USDT": 10000}
     slippage: float = 0.0005
@@ -93,8 +160,12 @@ class Settings(BaseModel):
         "STABLE": Category(tokens={"USDT": 0.25}, band=(0.15, 0.35)),
     })
     limits: Limits = Field(default_factory=Limits)
+    risk_preset: Literal["conservative", "balanced", "aggressive", "custom"] = "balanced"
+    capital: Capital = Field(default_factory=Capital)
+    allocation: Allocation = Field(default_factory=Allocation)
     schedule: Schedule = Field(default_factory=Schedule)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
+    provider_fallback: ProviderSettings | None = None     # used when the primary model fails
     paper: PaperSettings = Field(default_factory=PaperSettings)
     investor_notes: str = "长期投资，BTC 为主。只做现货，不承诺收益。"
     # Key permissions the owner knowingly keeps enabled; validated against risk.gate.WAIVABLE
@@ -116,7 +187,7 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _clamp(self):
-        for sect in (self.limits, self.schedule):
+        for sect in (self.limits, self.schedule, self.allocation):
             for k, (lo, hi) in HARD_BOUNDS.items():
                 if hasattr(sect, k):
                     val = getattr(sect, k)
@@ -133,7 +204,37 @@ class Settings(BaseModel):
 
     # ---- derived helpers ----
     def tradable_tokens(self) -> list[str]:
-        return [t for name, c in self.categories.items() if name != "STABLE" for t in c.tokens]
+        enabled = [t for t in self.allocation.enabled if t not in self.stables and t != self.quote]
+        if self.allocation.mode == "ai":
+            return enabled
+        with_target = [t for name, c in self.categories.items() if name != "STABLE" for t in c.tokens]
+        return [t for t in with_target if t in enabled]
+
+    def group_of(self, token: str) -> str:
+        """Risk grouping: category in "targets" mode, the token itself in "ai" mode."""
+        if token in self.stables:
+            return "STABLE"
+        if self.allocation.mode == "ai":
+            return token if token in self.tradable_tokens() else "OTHER"
+        return self.category_of(token)
+
+    def group_ceiling(self, group: str) -> float:
+        if self.allocation.mode == "ai":
+            return 1.0 if group == "STABLE" else self.allocation.max_asset_weight
+        return self.categories[group].band[1] if group in self.categories else 0.0
+
+    def group_targets(self) -> dict[str, dict]:
+        """Display/prompt view of targets for the current mode: {group: {tokens, band}}."""
+        if self.allocation.mode == "ai":
+            out = {t: {"tokens": {t: None}, "band": [0.0, self.allocation.max_asset_weight]} for t in self.tradable_tokens()}
+            out["STABLE"] = {"tokens": {self.quote: None}, "band": [self.limits.stable_floor, 1.0]}
+            return out
+        out = {}
+        for n, c in self.categories.items():
+            toks = {t: w for t, w in c.tokens.items() if n == "STABLE" or t in self.tradable_tokens()}
+            if toks:
+                out[n] = {"tokens": toks, "band": list(c.band)}
+        return out
 
     def symbols(self) -> list[str]:
         return [f"{t}{self.quote}" for t in self.tradable_tokens()]
@@ -206,7 +307,7 @@ class SettingsStore:
 
 def _deep_merge(dst: dict, src: dict):
     for k, v in src.items():
-        if isinstance(v, dict) and isinstance(dst.get(k), dict) and k != "categories":
+        if isinstance(v, dict) and isinstance(dst.get(k), dict) and k not in ("categories", "locked"):
             _deep_merge(dst[k], v)
         else:
             dst[k] = v

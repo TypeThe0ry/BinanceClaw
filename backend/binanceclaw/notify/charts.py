@@ -133,14 +133,17 @@ def allocation(weights: dict[str, float], targets: dict[str, dict]) -> bytes:
     for i, c in enumerate(cats):
         y = len(cats) - 1 - i
         lo, hi = targets[c]["band"]
-        tgt = sum(targets[c]["tokens"].values())
+        tvals = [v for v in targets[c]["tokens"].values() if v is not None]
+        tgt = sum(tvals) if tvals else None
         w = weights.get(c, 0.0)
         ax.barh(y, 1, color="#141414", height=0.5)
         ax.barh(y, hi - lo, left=lo, color="#2A2A2A", height=0.5)
         ax.barh(y, w, color=CAT.get(c, TEXT), height=0.18)
-        ax.plot([tgt, tgt], [y - 0.3, y + 0.3], color=INK, linewidth=1)
+        if tgt is not None:
+            ax.plot([tgt, tgt], [y - 0.3, y + 0.3], color=INK, linewidth=1)
         ok = lo - 1e-9 <= w <= hi + 1e-9
-        ax.text(1.01, y, f"{w:.1%}  (target {tgt:.0%})", color=INK if ok else PENDING, va="center", fontsize=8.5,
+        label = f"{w:.1%}  (target {tgt:.0%})" if tgt is not None else f"{w:.1%}  (AI, max {hi:.0%})"
+        ax.text(1.01, y, label, color=INK if ok else PENDING, va="center", fontsize=8.5,
                 transform=ax.get_yaxis_transform())
     ax.set_yticks(range(len(cats)))
     ax.set_yticklabels(list(reversed(cats)))

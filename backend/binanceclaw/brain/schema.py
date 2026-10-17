@@ -17,11 +17,20 @@ class Action(BaseModel):
     invalidation: str = Field(min_length=1, max_length=800, description="什么情况说明这个判断错了")
 
 
+class AlertSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=2, max_length=20)
+    op: Literal["below", "above"]
+    price: float = Field(gt=0)
+    note: str = Field(default="", max_length=200)
+
+
 class TradePlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=3000)
     market_view: str = Field(default="", max_length=3000)
     actions: list[Action] = Field(default_factory=list, max_length=10)
+    alerts: list[AlertSpec] = Field(default_factory=list, max_length=3)
     confidence: float = Field(ge=0, le=1)
 
 

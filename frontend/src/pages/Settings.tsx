@@ -1,7 +1,7 @@
 import { Check, Warning, X } from "@phosphor-icons/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, post, type Category } from "../api";
-import { Page, SectionHead, Skeleton, Spinner } from "../components/ui";
+import { Page, Seg, SectionHead, Skeleton, Spinner } from "../components/ui";
 import { CATEGORY_LABEL, useApi, useToast } from "../lib";
 
 interface SettingsResp {
@@ -13,13 +13,30 @@ interface SettingsResp {
     provider: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number };
     investor_notes: string;
     live_gate_allow: string[];
+    risk_preset: string;
+    capital: { locked: Record<string, number>; budget_usd: number | null };
+    allocation: { mode: "targets" | "ai"; enabled: string[]; max_asset_weight: number };
+    provider_fallback: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number } | null;
   };
+  presets: Record<string, unknown>;
+  candidates: string[];
+  deployed_usd: number;
   secrets: Record<string, boolean>;
   providers: Record<string, { ok: boolean; message: string; default_model: string }>;
   bounds: Record<string, [number, number]>;
   confirm_phrase: string;
 }
 interface LiveCheck { ok: boolean; blockers: string[]; rows: { label: string; field: string; expected: boolean; actual: boolean | null; ok: boolean; waived: boolean; waivable: boolean }[] }
+
+const PRESET_LABEL: Record<string, string> = { conservative: "保守", balanced: "均衡", aggressive: "积极", custom: "自定义" };
+
+interface Device { id: string; current: boolean; created: number; last_login: number; ua: string; ip: string }
+
+function deviceName(ua: string) {
+  const os = /iPhone|iPad/.test(ua) ? "iOS" : /Android/.test(ua) ? "Android" : /Mac OS/.test(ua) ? "macOS" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "设备";
+  const br = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : /Firefox\//.test(ua) ? "Firefox" : "";
+  return `${os}${br ? " · " + br : ""}`;
+}
 
 const PROVIDER: Record<string, string> = { claude_code: "Claude 订阅", openai: "OpenAI", openai_compat: "OpenAI 兼容", anthropic_api: "Anthropic API" };
 const LIMITS: { k: string; label: string; unit: string; pct?: boolean }[] = [
@@ -54,6 +71,10 @@ function Num({ value, onChange, unit, min, max, step = 1 }: { value: number; onC
 export default function Settings() {
   const { data, reload } = useApi<SettingsResp>("/settings", { kinds: ["settings", "mode"] });
   const live = useApi<LiveCheck>("/live/check");
+  const devs = useApi<Device[]>("/devices");
+  const [newTok, setNewTok] = useState("");
+  const [lockAsset, setLockAsset] = useState("");
+  const [lockAmt, setLockAmt] = useState("");
   const toast = useToast();
   const [d, setD] = useState<SettingsResp["settings"] | null>(null);
   const [phrase, setPhrase] = useState("");
@@ -139,11 +160,92 @@ export default function Settings() {
               onChange={(e) => setD({ ...d, provider: { ...d.provider, base_url: e.target.value } })} />
           </Row>
         )}
+        <Row label="备用模型">
+          <select className="input h-9 w-44" value={d.provider_fallback?.name ?? ""}
+            onChange={(e) => setD({ ...d, provider_fallback: e.target.value ? { ...d.provider, name: e.target.value, model: "" } : null })}>
+            <option value="">无</option>
+            {Object.entries(data.providers).filter(([k]) => k !== d.provider.name).map(([k, p]) => <option key={k} value={k}>{PROVIDER[k] ?? k}{p.ok ? "" : "（未配置）"}</option>)}
+          </select>
+        </Row>
         {!data.providers[d.provider.name]?.ok && <Row label="状态"><span className="text-[13px] text-warn">{data.providers[d.provider.name]?.message}</span></Row>}
         <div className="flex gap-2 pt-4">
-          <button className="btn-primary" onClick={() => save({ provider: d.provider })}>保存</button>
+          <button className="btn-primary" onClick={() => save({ provider: d.provider, provider_fallback: d.provider_fallback })}>保存</button>
           <button className="btn-secondary" onClick={test} disabled={testing}>{testing ? <Spinner /> : "连通测试"}</button>
         </div>
+      </section>
+
+      <section>
+        <SectionHead title="风险预设" doc="risk-presets" />
+        <Row label="预设">
+          <Seg id="preset" value={(d.risk_preset in PRESET_LABEL ? d.risk_preset : "custom") as string}
+            items={["conservative", "balanced", "aggressive", "custom"].map((k) => ({ k, label: PRESET_LABEL[k] }))}
+            onChange={async (k) => {
+              if (k === "custom") return;
+              try { await post("/risk-preset", { name: k }); toast(`已套用：${PRESET_LABEL[k]}`); reload(); } catch (e) { toast((e as Error).message, "err"); }
+            }} />
+        </Row>
+      </section>
+
+      <section>
+        <SectionHead title="资产与分配" doc="capital-and-allocation" />
+        <Row label="分配方式">
+          <Seg id="alloc" value={d.allocation.mode} items={[{ k: "targets" as const, label: "按目标配置" }, { k: "ai" as const, label: "AI 自主分配" }]}
+            onChange={(k) => setD({ ...d, allocation: { ...d.allocation, mode: k } })} />
+        </Row>
+        <div className="border-b border-line py-3">
+          <p className="text-[14px] text-fg-2">可交易资产</p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {Array.from(new Set([...data.candidates, ...d.allocation.enabled])).map((t) => {
+              const on = d.allocation.enabled.includes(t);
+              return (
+                <button key={t} onClick={() => setD({ ...d, allocation: { ...d.allocation, enabled: on ? d.allocation.enabled.filter((x) => x !== t) : [...d.allocation.enabled, t] } })}
+                  className={`rounded-md border px-2.5 py-1 text-[13px] font-medium transition-colors ${on ? "border-fg bg-fg text-bg" : "border-line-strong text-fg-2 hover:text-fg"}`}>
+                  {t}
+                </button>
+              );
+            })}
+            <form className="flex gap-1" onSubmit={(e) => { e.preventDefault(); const t = newTok.trim().toUpperCase(); if (t && !d.allocation.enabled.includes(t)) setD({ ...d, allocation: { ...d.allocation, enabled: [...d.allocation.enabled, t] } }); setNewTok(""); }}>
+              <input className="input h-8 w-24 text-[13px]" placeholder="+ 代币" value={newTok} onChange={(e) => setNewTok(e.target.value)} />
+            </form>
+          </div>
+        </div>
+        {d.allocation.mode === "ai" && (
+          <Row label="单币占比上限">
+            <Num unit="%" value={Math.round(d.allocation.max_asset_weight * 1000) / 10} step={1} min={5} max={100}
+              onChange={(x) => setD({ ...d, allocation: { ...d.allocation, max_asset_weight: x / 100 } })} />
+          </Row>
+        )}
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ allocation: d.allocation })}>保存</button></div>
+      </section>
+
+      <section>
+        <SectionHead title="资金管理" doc="capital-and-allocation" />
+        <Row label={<>AI 投入预算 <span className="num text-fg-3">· 已投入 ${data.deployed_usd.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span></>}>
+          <label className="flex h-9 items-center rounded-lg bg-field pr-3">
+            <input type="number" className="num h-9 w-28 bg-transparent px-3 text-right text-[14px] focus:outline-none" placeholder="不限"
+              value={d.capital.budget_usd ?? ""} min={0}
+              onChange={(e) => setD({ ...d, capital: { ...d.capital, budget_usd: e.target.value === "" ? null : parseFloat(e.target.value) } })} />
+            <span className="w-8 text-[12px] text-fg-3">USD</span>
+          </label>
+        </Row>
+        {Object.entries(d.capital.locked).map(([a, amt]) => (
+          <Row key={a} label={<>锁定 <b className="text-fg">{a}</b></>}>
+            <span className="num text-[14px]">{amt}</span>
+            <button className="btn-secondary btn-sm" onClick={() => { const l = { ...d.capital.locked }; delete l[a]; setD({ ...d, capital: { ...d.capital, locked: l } }); }}>移除</button>
+          </Row>
+        ))}
+        <form className="flex flex-wrap items-center gap-2 border-b border-line py-3" onSubmit={(e) => {
+          e.preventDefault();
+          const a = lockAsset.trim().toUpperCase(); const v = parseFloat(lockAmt);
+          if (a && v > 0) setD({ ...d, capital: { ...d.capital, locked: { ...d.capital.locked, [a]: v } } });
+          setLockAsset(""); setLockAmt("");
+        }}>
+          <span className="mr-auto text-[14px] text-fg-2">添加锁定</span>
+          <input className="input h-9 w-24" placeholder="BTC" value={lockAsset} onChange={(e) => setLockAsset(e.target.value)} />
+          <input className="input num h-9 w-28" type="number" step="any" min={0} placeholder="数量" value={lockAmt} onChange={(e) => setLockAmt(e.target.value)} />
+          <button className="btn-secondary h-9">添加</button>
+        </form>
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ capital: d.capital })}>保存</button></div>
       </section>
 
       <section>
@@ -173,7 +275,7 @@ export default function Settings() {
             <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
               {Object.entries(c.tokens).map(([tok, w]) => (
                 <label key={tok} className="flex items-center gap-2 text-[13px] text-fg-2">{tok}
-                  <Num unit="%" value={Math.round(w * 1000) / 10} step={0.5}
+                  <Num unit="%" value={Math.round((w ?? 0) * 1000) / 10} step={0.5}
                     onChange={(x) => setD({ ...d, categories: { ...d.categories, [cat]: { ...c, tokens: { ...c.tokens, [tok]: x / 100 } } } })} />
                 </label>
               ))}
@@ -211,6 +313,17 @@ export default function Settings() {
           ["openai_api_key", "OpenAI"], ["anthropic_api_key", "Anthropic"], ["openai_compat_api_key", "OpenAI 兼容"]].map(([k, l]) => (
           <Row key={k} label={l}>
             <span className={`text-[13px] ${data.secrets[k] ? "text-up" : "text-fg-3"}`}>{data.secrets[k] ? "已配置" : "未配置"}</span>
+          </Row>
+        ))}
+      </section>
+
+      <section>
+        <SectionHead title="已登录设备" doc="faq" right={(devs.data?.length ?? 0) > 1 ? (
+          <button className="btn-secondary btn-sm" onClick={async () => { const r = await post<{ revoked: number }>("/devices/revoke-others"); toast(`已撤销 ${r.revoked} 台设备`); devs.reload(); }}>撤销其他设备</button>
+        ) : undefined} />
+        {(devs.data ?? []).map((x) => (
+          <Row key={x.id} label={<>{deviceName(x.ua)}{x.current && <span className="ml-2 text-[12px] text-up">本机</span>}</>}>
+            <span className="num text-[13px] text-fg-3">{x.ip} · {new Date(x.last_login * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}</span>
           </Row>
         ))}
       </section>

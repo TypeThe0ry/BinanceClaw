@@ -156,3 +156,44 @@ def test_live_mode_with_owner_waivers(svc):
     svc.set_mode("paper")
     svc.client.restrictions["enableWithdrawals"] = True
     assert not svc.set_mode("live", gate.CONFIRM_PHRASE)[0]
+
+
+
+def _live(svc, monkeypatch):
+    from binanceclaw.exchange import broker as br
+    monkeypatch.setattr(br.time, "sleep", lambda *_: None)
+    assert svc.set_mode("live", gate.CONFIRM_PHRASE)[0]
+
+
+def test_live_timeout_but_order_exists_is_recovered(svc, monkeypatch):
+    from binanceclaw.exchange.binance_spot import ExchangeError
+    _live(svc, monkeypatch)
+    svc.client.place_error = ExchangeError("POST /api/v3/order: ReadTimeout")
+    svc.client.place_error_after_fill = True
+    ok, msg, oid = svc.execute("BUY", "BTCUSDT", 100, via="approved")
+    assert ok, msg
+    o = svc.db.get(Order, oid)
+    assert o.status == "filled" and o.qty > 0
+    assert len(svc.client.live_orders) == 1          # exactly one order on the exchange, no duplicate
+
+
+def test_live_timeout_order_missing_marks_unknown_and_counts(svc, monkeypatch):
+    from binanceclaw.exchange.binance_spot import ExchangeError
+    _live(svc, monkeypatch)
+    svc.client.place_error = ExchangeError("POST /api/v3/order: ConnectError")
+    ok, _msg, oid = svc.execute("BUY", "BTCUSDT", 100, via="approved")
+    assert not ok and svc.db.get(Order, oid).status == "unknown"
+    assert svc.risk_state().today_orders == 1          # still counted, so no blind re-buy
+    # later the order shows up on the exchange -> reconciler fixes the record
+    o = svc.db.get(Order, oid)
+    svc.client.orders[o.client_order_id] = {"status": "FILLED", "executedQty": "0.00125", "cummulativeQuoteQty": "100"}
+    assert svc.reconcile_orders() == 1
+    assert svc.db.get(Order, oid).status == "filled"
+
+
+def test_live_definite_rejection_is_failed_not_retried(svc, monkeypatch):
+    from binanceclaw.exchange.binance_spot import ExchangeError
+    _live(svc, monkeypatch)
+    svc.client.place_error = ExchangeError("Account has insufficient balance", -2010)
+    ok, msg, oid = svc.execute("BUY", "BTCUSDT", 100, via="approved")
+    assert not ok and "insufficient" in msg and svc.db.get(Order, oid).status == "failed"

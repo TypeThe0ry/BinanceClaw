@@ -87,6 +87,10 @@ class BinanceSpot:
         data = self._request("GET", "/api/v3/ticker/price", {"symbols": json.dumps(symbols, separators=(",", ":"))})
         return {d["symbol"]: float(d["price"]) for d in data}
 
+    def all_prices(self) -> dict[str, float]:
+        """Every spot pair's last price (one request, ~2k rows)."""
+        return {d["symbol"]: float(d["price"]) for d in self._request("GET", "/api/v3/ticker/price")}
+
     def ticker_24h(self, symbols: list[str]) -> dict[str, dict]:
         data = self._request("GET", "/api/v3/ticker/24hr", {"symbols": json.dumps(symbols, separators=(",", ":"))})
         return {d["symbol"]: {"price": float(d["lastPrice"]), "change_pct": float(d["priceChangePercent"]) / 100,

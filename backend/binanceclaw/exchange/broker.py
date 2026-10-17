@@ -3,12 +3,22 @@ paper ledger or the live Binance account. The rest of the app only talks to this
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 
 from sqlmodel import select
 
 from ..db import Database, PaperBalance
 from .binance_spot import BinanceSpot, ExchangeError, SymbolRules
+
+# Binance error codes that mean "we don't know whether the order went through".
+AMBIGUOUS_CODES = {None, -1000, -1001, -1006, -1007}
+NOT_FOUND = -2013
+
+
+class OrderUnknown(ExchangeError):
+    """The order request failed ambiguously and the order could not be found afterwards.
+    It may still exist; it must be treated as live until reconciled."""
 
 
 @dataclass
@@ -72,6 +82,37 @@ class Broker:
                 s.add(row)
             s.commit()
 
+    # ---- live order helpers ----
+    def _place_live(self, place, symbol: str, cid: str) -> dict:
+        """Place an order; on an ambiguous failure look it up by client id instead of assuming it failed."""
+        try:
+            return place()
+        except ExchangeError as e:
+            if e.code not in AMBIGUOUS_CODES:
+                raise                                   # definite rejection (e.g. insufficient balance)
+            first = e
+        for wait in (0.5, 1.5, 3.0):
+            time.sleep(wait)
+            try:
+                return self.client.order_status(symbol, cid)
+            except ExchangeError as e:
+                if e.code != NOT_FOUND and e.code not in AMBIGUOUS_CODES:
+                    break
+        raise OrderUnknown(f"下单结果未知（{first}），已按订单号查询 3 次未找到，稍后自动对账", None)
+
+    @staticmethod
+    def parse_live(r: dict, base: str) -> Fill:
+        qty = float(r.get("executedQty", 0) or 0)
+        spent = float(r.get("cummulativeQuoteQty", 0) or 0)
+        fills = r.get("fills") or []
+        fee = sum(float(f["commission"]) for f in fills)
+        fee_asset = fills[0].get("commissionAsset", base) if fills else base
+        st = r.get("status", "")
+        status = {"FILLED": "filled", "CANCELED": "canceled", "EXPIRED": "canceled", "REJECTED": "failed"}.get(st, "submitted")
+        if status == "canceled" and qty > 0:
+            status = "filled"                            # partially filled then expired: keep what filled
+        return Fill(status, qty, spent / qty if qty else 0, spent, fee, fee_asset, r)
+
     # ---- trading ----
     def buy(self, symbol: str, quote_usd: float, client_order_id: str) -> Fill:
         rule = self.rules([symbol]).get(symbol)
@@ -80,13 +121,9 @@ class Broker:
         if quote_usd < rule.min_notional:
             raise ExchangeError(f"{symbol}: ${quote_usd:.2f} below exchange minimum ${rule.min_notional}")
         if self.mode == "live":
-            r = self.client.market_buy_quote(symbol, quote_usd, client_order_id)
-            qty = float(r.get("executedQty", 0))
-            spent = float(r.get("cummulativeQuoteQty", 0))
-            fee = sum(float(f["commission"]) for f in r.get("fills", []))
-            fee_asset = (r.get("fills") or [{}])[0].get("commissionAsset", rule.base)
-            status = "filled" if r.get("status") == "FILLED" else "submitted"
-            return Fill(status, qty, spent / qty if qty else 0, spent, fee, fee_asset, r)
+            r = self._place_live(lambda: self.client.market_buy_quote(symbol, quote_usd, client_order_id),
+                                 symbol, client_order_id)
+            return self.parse_live(r, rule.base)
         # paper: fill at best ask + slippage, fee charged in base asset (like Binance without BNB)
         _bid, ask = self.client.book([symbol])[symbol]
         price = ask * (1 + self.paper_cfg.slippage)
@@ -103,11 +140,10 @@ class Broker:
         rule = self.rules([symbol])[symbol]
         qty = floor_step(qty, rule.step_size)
         if self.mode == "live":
-            r = self.client.market_sell_qty(symbol, f"{qty:.8f}".rstrip("0").rstrip("."), client_order_id)
-            got = float(r.get("cummulativeQuoteQty", 0))
-            fee = sum(float(f["commission"]) for f in r.get("fills", []))
-            return Fill("filled" if r.get("status") == "FILLED" else "submitted", qty,
-                        got / qty if qty else 0, -got, fee, rule.quote, r)
+            r = self._place_live(lambda: self.client.market_sell_qty(symbol, f"{qty:.8f}".rstrip("0").rstrip("."), client_order_id),
+                                 symbol, client_order_id)
+            f = self.parse_live(r, rule.quote)
+            return Fill(f.status, f.qty, f.avg_price, -f.quote_spent, f.fee, f.fee_asset, r)
         bid, _ask = self.client.book([symbol])[symbol]
         price = bid * (1 - self.paper_cfg.slippage)
         got = qty * price

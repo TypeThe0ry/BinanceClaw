@@ -7,7 +7,7 @@ from binanceclaw.brain.providers import Completion, Provider, ProviderError
 from binanceclaw.config import Secrets
 from binanceclaw.exchange.binance_spot import SymbolRules
 
-PRICES = {"BTCUSDT": 80000.0, "ETHUSDT": 2500.0, "QQQBUSDT": 700.0, "NVDABUSDT": 200.0}
+PRICES = {"BTCUSDT": 80000.0, "ETHUSDT": 2500.0, "QQQBUSDT": 700.0, "NVDABUSDT": 200.0, "SOLUSDT": 150.0}
 
 SAFE_RESTRICTIONS = {
     "ipRestrict": True, "enableReading": True, "enableSpotAndMarginTrading": True,
@@ -25,6 +25,9 @@ class FakeSpot:
         self.restrictions = dict(SAFE_RESTRICTIONS)
         self.fail = False
         self.live_orders = []
+        self.orders = {}            # client id -> order response (what the exchange "knows")
+        self.place_error = None      # ExchangeError raised by the next order placement
+        self.place_error_after_fill = False   # order is created on the exchange, then the response is lost
 
     def _chk(self):
         from binanceclaw.exchange.binance_spot import ExchangeError
@@ -34,6 +37,9 @@ class FakeSpot:
     def prices(self, symbols):
         self._chk()
         return {s: self.prices_map[s] for s in symbols if s in self.prices_map}
+
+    def all_prices(self):
+        return dict(self.prices_map)
 
     def ticker_24h(self, symbols):
         self._chk()
@@ -53,6 +59,8 @@ class FakeSpot:
     def symbol_rules(self, symbols):
         out = {}
         for s in symbols:
+            if s not in PRICES:
+                continue                      # unknown pair, like Binance's exchangeInfo would omit it
             base = s[:-4]
             out[s] = SymbolRules(s, base, "USDT", "TRADING", 1e-5 if base == "BTC" else 1e-3, 1e-5, 5.0, 0.01, 8)
         return out
@@ -65,11 +73,25 @@ class FakeSpot:
         return {"USDT": 1000.0}
 
     def market_buy_quote(self, symbol, quote_usd, client_order_id):
-        self.live_orders.append((symbol, quote_usd, client_order_id))
         p = self.prices_map[symbol]
         q = quote_usd / p
-        return {"status": "FILLED", "executedQty": str(q), "cummulativeQuoteQty": str(quote_usd),
+        resp = {"status": "FILLED", "executedQty": str(q), "cummulativeQuoteQty": str(quote_usd),
                 "fills": [{"commission": str(q * 0.001), "commissionAsset": symbol[:-4]}]}
+        if self.place_error is not None:
+            err, self.place_error = self.place_error, None
+            if self.place_error_after_fill:
+                self.orders[client_order_id] = {k: v for k, v in resp.items() if k != "fills"}
+                self.live_orders.append((symbol, quote_usd, client_order_id))
+            raise err
+        self.live_orders.append((symbol, quote_usd, client_order_id))
+        self.orders[client_order_id] = {k: v for k, v in resp.items() if k != "fills"}
+        return resp
+
+    def order_status(self, symbol, client_order_id):
+        from binanceclaw.exchange.binance_spot import ExchangeError
+        if client_order_id not in self.orders:
+            raise ExchangeError("Order does not exist.", -2013)
+        return self.orders[client_order_id]
 
 
 class FakeProvider(Provider):

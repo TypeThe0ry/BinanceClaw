@@ -137,7 +137,7 @@ export function Band({ w, lo, hi, target, color }: { w: number; lo: number; hi: 
   return (
     <div className="relative h-1 w-full min-w-[90px] rounded-full bg-line" title={`区间 ${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}%`}>
       <div className="absolute inset-y-0 rounded-full bg-line-strong" style={{ left: `${lo * 100}%`, width: `${(hi - lo) * 100}%` }} />
-      <div className="absolute -top-1 h-3 w-px bg-fg-2" style={{ left: `${target * 100}%` }} />
+      {target >= 0 && <div className="absolute -top-1 h-3 w-px bg-fg-2" style={{ left: `${target * 100}%` }} />}
       <div className={`absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-bg transition-[left] duration-700 ease-out ${inBand ? "" : "outline outline-1 outline-warn"}`}
         style={{ left: `${Math.min(Math.max(w, 0), 1) * 100}%`, background: color }} />
     </div>

@@ -12,7 +12,9 @@ SYSTEM = """你是 BinanceClaw 的投资决策模型，为一位长期投资者�
 
 决策原则：
 - 只做现货，只交易白名单内的币种（以 USDT 计价）。
-- 以目标配置和允许区间为锚，结合行情判断这一轮是否需要买入、买什么、买多少；没有把握时 actions 留空。
+- 按 allocation.mode 决策：targets 模式以目标配置和允许区间为锚；ai 模式由你在 universe 内自主决定配置。结合行情判断这一轮是否需要买入、买什么、买多少；没有把握时 actions 留空。
+- 可选 alerts：最多 3 个价格提醒（below/above + 价位），通常对应你写的 invalidation 关键价位；触发时会通知账户主人，不会自动交易。不需要时留空。
+- 只能动用 portfolio 里的资金，并遵守 capital.budget_remaining_usd（如有）。
 - 每个动作写清 reason（理由）和 invalidation（什么可观察的情况说明这个判断错了）。
 - 不承诺收益，不做价格预测式的保证。
 - 系统会用代码强制执行风控（单笔/每日上限、稳定币下限、区间上限、暂停条件等）。超出限制的部分会被截断或拒绝，所以请在限制内提出合理方案。
@@ -36,7 +38,19 @@ def build_context(settings: Settings, pf, state, market: dict, recent: list[dict
             "token_weights": {k: round(v, 4) for k, v in pf.token_weights().items()},
             "category_weights": {k: round(v, 4) for k, v in pf.category_weights().items()},
         },
-        "targets": {name: {"tokens": c.tokens, "band": list(c.band)} for name, c in settings.categories.items()},
+        "allocation": (
+            {"mode": "targets", "targets": settings.group_targets(),
+             "rule": "以目标配置和允许区间为锚；band 是整个类别的允许区间"}
+            if settings.allocation.mode == "targets" else
+            {"mode": "ai", "universe": settings.tradable_tokens(), "max_asset_weight": settings.allocation.max_asset_weight,
+             "stable_floor": settings.limits.stable_floor,
+             "rule": "没有固定目标：由你在 universe 内自主决定配置，单币占比不超过 max_asset_weight，并说明你的配置思路"}),
+        "capital": {
+            "note": "portfolio 只包含你管理的部分；主人锁定的资产不在其中，也不能使用",
+            "budget_usd": settings.capital.budget_usd,
+            "budget_remaining_usd": None if settings.capital.budget_usd is None
+            else round(settings.capital.budget_usd - getattr(state, "deployed_usd", 0.0), 2),
+        },
         "whitelist": settings.symbols(),
         "limits": {
             "max_order_usd": lim.max_order_usd,

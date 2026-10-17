@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import queue
+import secrets as pysecrets
 import threading
 import time
 from pathlib import Path
@@ -19,7 +21,7 @@ from pydantic import BaseModel
 from sqlmodel import desc, select
 
 from ..brain.providers import PROVIDERS, ProviderError
-from ..config import HARD_BOUNDS, ProviderSettings
+from ..config import CANDIDATE_TOKENS, HARD_BOUNDS, RISK_PRESETS, ProviderSettings
 from ..db import Approval, ChatMessage, Cycle, Order, Report
 from ..exchange.binance_spot import ExchangeError
 from ..risk.gate import CONFIRM_PHRASE
@@ -31,7 +33,8 @@ DEVICE_DAYS = 180
 _ph = PasswordHasher()
 
 # Login throttling (module-level so tests can shrink the waits).
-LOGIN_LIMITS = {"per_ip": 5, "global": 20, "window": 900, "slow_lane_wait": 3.0, "fail_delay": 1.0, "queue_timeout": 10.0}
+LOGIN_LIMITS = {"per_ip": 5, "global": 20, "trusted_global": 10, "window": 900, "slow_lane_wait": 3.0, "fail_delay": 1.0,
+                "queue_timeout": 10.0}
 
 
 class Login(BaseModel):
@@ -40,6 +43,17 @@ class Login(BaseModel):
 
 class ChatIn(BaseModel):
     text: str
+
+
+class PresetIn(BaseModel):
+    name: str
+
+
+class AlertIn(BaseModel):
+    symbol: str
+    op: str
+    price: float
+    note: str = ""
 
 
 class ModeIn(BaseModel):
@@ -52,6 +66,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     signer = TimestampSigner(svc.secrets.session_secret or os.urandom(32).hex())
     failures: dict[str, list[float]] = {}
     global_failures: list[float] = []
+    trusted_failures: list[float] = []     # separate, small budget for devices with a device token
     attempts_lock = threading.Lock()
     slow_lane = asyncio.Lock()
     device_signer = TimestampSigner((svc.secrets.session_secret or os.urandom(32).hex()) + ":device")
@@ -70,13 +85,37 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
                 failures[ip].remove(ts)
             if ts in global_failures:
                 global_failures.remove(ts)
+            if ts in trusted_failures:
+                trusted_failures.remove(ts)
 
-    def known_device(request: Request) -> bool:
+    # Device trust: the signed token holds a random device id and a fingerprint of the current
+    # password hash. Ids live in a server-side registry, so a device can be revoked (logout, "revoke
+    # all"), and changing the password invalidates every device token at once.
+    def pw_fingerprint() -> str:
+        return hashlib.sha256((svc.secrets.admin_password_hash or "").encode()).hexdigest()[:16]
+
+    def devices() -> dict:
+        return svc.db.kv_get("trusted_devices", {})
+
+    def known_device(request: Request) -> str | None:
         tok = request.cookies.get(DEVICE_COOKIE, "")
         try:
-            return device_signer.unsign(tok, max_age=DEVICE_DAYS * 86400) == b"owner-device"
-        except (BadSignature, SignatureExpired):
-            return False
+            raw = device_signer.unsign(tok, max_age=DEVICE_DAYS * 86400).decode()
+        except (BadSignature, SignatureExpired, UnicodeDecodeError):
+            return None
+        did, _, fp = raw.partition(":")
+        if fp != pw_fingerprint() or did not in devices():
+            return None
+        return did
+
+    def register_device(request: Request, did: str | None) -> str:
+        reg = devices()
+        did = did or pysecrets.token_hex(12)
+        ua = (request.headers.get("user-agent") or "")[:160]
+        reg[did] = {**reg.get(did, {"created": time.time()}), "last_login": time.time(), "ua": ua,
+                    "ip": request.client.host if request.client else "?"}
+        svc.db.kv_set("trusted_devices", reg)
+        return did
 
     @app.post("/api/auth/login")
     async def login(body: Login, request: Request, response: Response):
@@ -85,7 +124,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         L = LOGIN_LIMITS
         ip = request.client.host if request.client else "?"
         now = time.time()
-        trusted = known_device(request)
+        device_id = known_device(request)
         # Check-and-reserve atomically: the attempt is counted *before* verifying, so concurrent
         # requests cannot all slip past the per-IP limit.
         with attempts_lock:
@@ -93,7 +132,14 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             global_failures[:] = [t for t in global_failures if now - t < L["window"]]
             if len(recent) >= L["per_ip"]:
                 raise HTTPException(429, "尝试次数过多，请 15 分钟后再试")
-            pressure = len(global_failures) >= L["global"] and not trusted
+            trusted_failures[:] = [t for t in trusted_failures if now - t < L["window"]]
+            # Trusted devices skip the global slow lane, but share their own small budget so a
+            # single leaked device token cannot buy unlimited distributed attempts.
+            if device_id:
+                pressure = len(trusted_failures) >= L["trusted_global"]
+                trusted_failures.append(now)
+            else:
+                pressure = len(global_failures) >= L["global"]
             failures[ip] = recent + [now]
             global_failures.append(now)
 
@@ -130,16 +176,36 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         secure = request.url.scheme == "https"
         response.set_cookie(COOKIE, signer.sign("owner").decode(), max_age=SESSION_DAYS * 86400,
                             httponly=True, samesite="strict", secure=secure)
-        response.set_cookie(DEVICE_COOKIE, device_signer.sign("owner-device").decode(), max_age=DEVICE_DAYS * 86400,
-                            httponly=True, samesite="strict", secure=secure)
+        did = register_device(request, device_id)
+        response.set_cookie(DEVICE_COOKIE, device_signer.sign(f"{did}:{pw_fingerprint()}").decode(),
+                            max_age=DEVICE_DAYS * 86400, httponly=True, samesite="strict", secure=secure)
         return {"ok": True}
 
     @app.post("/api/auth/logout")
-    def logout(response: Response):
+    def logout(request: Request, response: Response):
+        did = known_device(request)
+        if did:
+            reg = devices()
+            reg.pop(did, None)
+            svc.db.kv_set("trusted_devices", reg)
         response.delete_cookie(COOKIE)
+        response.delete_cookie(DEVICE_COOKIE)
         return {"ok": True}
 
     auth = [Depends(require_auth)]
+
+    @app.get("/api/devices", dependencies=auth)
+    def list_devices(request: Request):
+        me = known_device(request)
+        return [{"id": k[:6], "current": k == me, **{f: v.get(f) for f in ("created", "last_login", "ua", "ip")}}
+                for k, v in sorted(devices().items(), key=lambda kv: -kv[1].get("last_login", 0))]
+
+    @app.post("/api/devices/revoke-others", dependencies=auth)
+    def revoke_others(request: Request):
+        me = known_device(request)
+        reg = devices()
+        svc.db.kv_set("trusted_devices", {k: v for k, v in reg.items() if k == me})
+        return {"ok": True, "revoked": len(reg) - (1 if me in reg else 0)}
 
     @app.get("/api/auth/me", dependencies=auth)
     def me():
@@ -209,6 +275,32 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
                     raise HTTPException(502, str(e)) from e
         return ticker_cache["data"]
 
+    @app.get("/api/performance", dependencies=auth)
+    def performance():
+        try:
+            return svc.performance()
+        except ExchangeError as e:
+            raise HTTPException(502, str(e)) from e
+
+    @app.get("/api/alerts", dependencies=auth)
+    def alerts(status: str = "active", limit: int = 100):
+        from ..db import PriceAlert
+        stmt = select(PriceAlert).order_by(desc(PriceAlert.created)).limit(min(limit, 500))
+        if status != "all":
+            stmt = stmt.where(PriceAlert.status == status)
+        return [a.model_dump() for a in svc.db.all(stmt)]
+
+    @app.post("/api/alerts", dependencies=auth)
+    def add_alert(body: AlertIn):
+        try:
+            return svc.add_alert(body.symbol, body.op, body.price, body.note, "manual").model_dump()
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.delete("/api/alerts/{aid}", dependencies=auth)
+    def del_alert(aid: str):
+        return {"ok": svc.cancel_alert(aid)}
+
     @app.get("/api/klines", dependencies=auth)
     def klines(symbol: str, interval: str = "1d", limit: int = 120):
         if symbol not in svc.settings.symbols():
@@ -248,6 +340,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             ok, msg = p.available()
             avail[name] = {"ok": ok, "message": msg if not ok else "", "default_model": cls.default_model}
         return {"settings": s.model_dump(), "secrets": svc.secrets.configured(), "providers": avail,
+                "presets": RISK_PRESETS, "candidates": CANDIDATE_TOKENS, "deployed_usd": round(svc.deployed_usd(), 2),
                 "bounds": HARD_BOUNDS, "confirm_phrase": CONFIRM_PHRASE,
                 "telegram": bool(svc.secrets.telegram_bot_token and svc.secrets.telegram_chat_id)}
 
@@ -255,6 +348,13 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     def put_settings(patch: dict):
         try:
             return svc.update_settings(patch).model_dump()
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.post("/api/risk-preset", dependencies=auth)
+    def risk_preset(body: PresetIn):
+        try:
+            return svc.apply_preset(body.name).model_dump()
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
@@ -327,8 +427,16 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/api/health")
-    def health():
-        return {"ok": True, "mode": svc.settings.mode}
+    def health(response: Response):
+        h = svc.health()
+        h["ok"] = h["scheduler_alive"] or not h["heartbeat_age_s"]   # not started yet counts as ok
+        if not h["ok"]:
+            response.status_code = 503
+        return {"ok": h["ok"], "scheduler_alive": h["scheduler_alive"]}
+
+    @app.get("/api/health/detail", dependencies=auth)
+    def health_detail():
+        return svc.health()
 
     # ------------------------------------------------------------------ static SPA
     if static_dir and static_dir.exists():

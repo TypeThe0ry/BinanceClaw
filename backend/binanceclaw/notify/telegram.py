@@ -28,6 +28,13 @@ HELP = """BinanceClaw 指令
 /log     最近 5 轮决策
 /report  立即生成日报
 /chart   K 线图，例：/chart ETH
+/alert   价格提醒：/alert BTC < 76000 备注
+/alerts  提醒列表 · /unalert 编号 删除
+/pnl     成本与盈亏
+/preset  风险预设：/preset conservative|balanced|aggressive
+/budget  AI 投入预算：/budget 3000，/budget off
+/lock    锁定资产：/lock BTC 0.5，/lock BTC 0 解除
+/assets  可交易资产：/assets BTC,ETH；/assets ai 或 /assets targets 切换分配方式
 /new     开始新的对话
 其他文字：直接和当前模型对话（只读，不能下单）"""
 
@@ -43,12 +50,27 @@ class TelegramBot:
         svc.events.on(lambda k, d: self._outbox.put((k, d)))
 
     # ------------------------------------------------------------------ API
-    def _call(self, method, payload, timeout=40):
-        r = self.http.post(f"{self.api}/{method}", json=payload, timeout=timeout)
-        body = r.json()
-        if not body.get("ok"):
+    def _call(self, method, payload, timeout=40, files=None):
+        """Telegram call with retries: honours 429 retry_after and retries transient network errors."""
+        last = None
+        for attempt in range(4):
+            try:
+                if files:
+                    r = self.http.post(f"{self.api}/{method}", data=payload, files=files, timeout=timeout)
+                else:
+                    r = self.http.post(f"{self.api}/{method}", json=payload, timeout=timeout)
+                body = r.json()
+            except (httpx.HTTPError, ValueError) as e:
+                last = e
+                time.sleep(min(2 ** attempt, 8))
+                continue
+            if body.get("ok"):
+                return body["result"]
+            if body.get("error_code") == 429 and attempt < 3:
+                time.sleep(min(float((body.get("parameters") or {}).get("retry_after", 2)), 30))
+                continue
             raise RuntimeError(f"telegram {method}: {body.get('description')}")
-        return body["result"]
+        raise RuntimeError(f"telegram {method}: {type(last).__name__}")
 
     def send(self, text: str, buttons=None) -> int | None:
         text = text.replace("**", "")   # Telegram plain text: drop Markdown bold markers
@@ -70,11 +92,7 @@ class TelegramBot:
         if buttons:
             data["reply_markup"] = json.dumps({"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in buttons]})
         try:
-            r = self.http.post(f"{self.api}/sendPhoto", data=data, files={"photo": ("chart.png", png, "image/png")}, timeout=60)
-            body = r.json()
-            if body.get("ok"):
-                return body["result"]["message_id"]
-            log.warning("sendPhoto failed: %s", body.get("description"))
+            return self._call("sendPhoto", data, timeout=60, files={"photo": ("chart.png", png, "image/png")})["message_id"]
         except Exception as e:
             log.warning("sendPhoto failed: %s", e)
         return self.send(caption, buttons)          # fall back to text so nothing is lost
@@ -144,6 +162,18 @@ class TelegramBot:
             self.send(f"🔁 已切换到{'实盘 🔴' if d.get('mode') == 'live' else '模拟盘'}")
         elif kind == "alert":
             self.send("⚠️ " + d.get("text", ""))
+        elif kind == "price_alert":
+            arrow = "跌破" if d.get("op") == "below" else "涨破"
+            who = "AI 设置的" if d.get("source") == "ai" else ""
+            cap = (f"🔔 {who}价格提醒：{d['symbol']} {arrow} {d['price']:,.2f}\n现价 {d['now']:,.2f}"
+                   + (f"\n{d['note']}" if d.get("note") else ""))
+            png = None
+            try:
+                kl = self.svc.client.klines(d["symbol"], "4h", 90)
+                png = charts.candles(d["symbol"], kl, [], title="ALERT", level=d["price"])
+            except Exception as e:
+                log.warning("alert chart failed: %s", e)
+            self.photo(png, cap) if png else self.send(cap)
         elif kind == "report":
             self._send_report(d.get("text", ""))
         elif kind == "cycle" and d.get("status") == "done":
@@ -185,9 +215,10 @@ class TelegramBot:
                  f"模型：{ov['provider']['name']} {ov['provider']['model'] or ''}".strip()]
         for cat, w in (ov.get("category_weights") or {}).items():
             spec = ov["targets"].get(cat, {})
-            tgt = sum(spec.get("tokens", {}).values())
+            tv = [v for v in spec.get("tokens", {}).values() if v is not None]
             lo, hi = spec.get("band", [0, 0])
-            lines.append(f"· {cat} {w:.1%}（目标 {tgt:.0%}，区间 {lo:.0%}–{hi:.0%}）")
+            lines.append(f"· {cat} {w:.1%}（目标 {sum(tv):.0%}，区间 {lo:.0%}–{hi:.0%}）" if tv
+                         else f"· {cat} {w:.1%}（AI 自主，上限 {hi:.0%}）")
         if ov.get("btc_change_7d") is not None:
             lines.append(f"BTC 7 日 {ov['btc_change_7d']:+.1%}")
         t = ov["today"]
@@ -195,6 +226,13 @@ class TelegramBot:
         lines.append("状态：" + (f"⏸ 暂停（{ov['pause_reason']}）" if ov["paused"] else "▶️ 运行中"))
         if ov.get("next_cycle_at"):
             lines.append(f"下一轮：{dt.datetime.fromtimestamp(ov['next_cycle_at'], self.svc.tz()):%H:%M}")
+        al, cap = ov.get("allocation", {}), ov.get("capital", {})
+        lines.append(f"资产：{', '.join(al.get('enabled', []))} · {'AI 自主分配' if al.get('mode') == 'ai' else '按目标配置'}"
+                     f" · 风险 {ov.get('risk_preset')}")
+        if cap.get("budget_usd") is not None:
+            lines.append(f"AI 预算：已投入 ${cap['deployed_usd']:,.0f} / ${cap['budget_usd']:,.0f}")
+        if cap.get("locked"):
+            lines.append("锁定：" + "，".join(f"{k} {v:g}" for k, v in cap["locked"].items()))
         if ov["pending_approvals"]:
             lines.append(f"待审批：{ov['pending_approvals']} 笔（/pending）")
         return "\n".join(lines)
@@ -242,6 +280,46 @@ class TelegramBot:
                 interval = parts[2] if len(parts) > 2 and parts[2] in ("1h", "4h", "1d") else "4h"
                 png = self.chart_png(sym, interval)
                 self.photo(png, f"{sym} · {interval}") if png else self.send("图表生成失败")
+        elif cmd == "/alert":
+            parts = text.replace("<", " < ").replace(">", " > ").split()
+            try:
+                tok, sign, price = parts[1], parts[2], float(parts[3].replace(",", ""))
+                note = " ".join(parts[4:])
+                a = svc.add_alert(tok, {"<": "below", ">": "above"}[sign], price, note, "telegram")
+                self.send(f"✅ 已设置提醒 #{a.id[:6]}：{a.symbol} {'跌破' if a.op == 'below' else '涨破'} {a.price:,.2f}")
+            except (IndexError, KeyError, ValueError) as e:
+                self.send(f"格式：/alert BTC < 76000 备注（{e}）" if str(e) else "格式：/alert BTC < 76000 备注")
+        elif cmd == "/alerts":
+            al = svc.active_alerts()
+            self.send("\n".join(f"#{a.id[:6]} {a.symbol} {'<' if a.op == 'below' else '>'} {a.price:,.2f}"
+                                f"{' · AI' if a.source == 'ai' else ''}{(' · ' + a.note) if a.note else ''}" for a in al)
+                      or "没有生效中的提醒")
+        elif cmd == "/unalert":
+            key = (text.split() + [""])[1]
+            hits = [a for a in svc.active_alerts() if a.id.startswith(key)] if key else []
+            if len(hits) == 1 and svc.cancel_alert(hits[0].id):
+                self.send(f"✅ 已删除提醒 #{key}")
+            else:
+                self.send("没找到这个提醒，用 /alerts 查看编号")
+        elif cmd == "/pnl":
+            try:
+                pf = svc.performance()
+            except Exception as e:
+                self.send(f"获取失败：{e}")
+                return
+            lines = [f"成本与盈亏（{'模拟盘' if pf['mode'] == 'paper' else '实盘'}，只统计 BinanceClaw 的成交）",
+                     f"累计买入 ${pf['invested']:,.2f} · 现值 ${pf['value']:,.2f}",
+                     f"盈亏 ${pf['pnl']:+,.2f}" + (f"（{pf['roi']:+.2%}）" if pf["roi"] is not None else "")]
+            b = pf["benchmark"]
+            if b["pnl"] is not None:
+                lines.append(f"同样的钱全买 BTC：${b['pnl']:+,.2f}" + (f"（{b['roi']:+.2%}）" if b["roi"] is not None else ""))
+            for tok, a in pf["assets"].items():
+                if a["qty"] > 1e-12:
+                    lines.append(f"· {tok} 成本 {a['avg_cost']:,.2f} · 浮盈 ${a['unrealized'] or 0:+,.2f}"
+                                 + (f"（{a['unrealized_pct']:+.1%}）" if a["unrealized_pct"] is not None else ""))
+            self.send("\n".join(lines))
+        elif cmd in ("/preset", "/budget", "/lock", "/assets"):
+            self._intervene(cmd, text.split()[1:])
         elif cmd == "/new":
             svc.db.kv_set("chat_cut_ts", time.time())
             self.send("已开始新的对话。")
@@ -249,6 +327,48 @@ class TelegramBot:
             self.send("未知指令\n\n" + HELP)
         else:
             threading.Thread(target=self._safe, args=(lambda: self.send(svc.chat(text, "telegram")),), daemon=True).start()
+
+    def _intervene(self, cmd: str, args: list[str]):
+        svc = self.svc
+        try:
+            if cmd == "/preset":
+                if not args:
+                    self.send(f"当前风险预设：{svc.settings.risk_preset}")
+                    return
+                svc.apply_preset(args[0].lower())
+                self.send(f"✅ 已套用风险预设：{args[0].lower()}")
+            elif cmd == "/budget":
+                if not args:
+                    b = svc.settings.capital.budget_usd
+                    self.send(f"AI 投入预算：{'不限' if b is None else f'${b:,.0f}'}，已投入 ${svc.deployed_usd():,.0f}")
+                    return
+                val = None if args[0].lower() in ("off", "none", "不限") else float(args[0].replace(",", ""))
+                svc.update_settings({"capital": {"budget_usd": val}})
+                self.send("✅ 已取消 AI 投入预算" if val is None else f"✅ AI 投入预算设为 ${val:,.0f}")
+            elif cmd == "/lock":
+                if len(args) < 2:
+                    lk = svc.settings.capital.locked
+                    self.send("锁定资产：" + ("，".join(f"{k} {v:g}" for k, v in lk.items()) or "无"))
+                    return
+                asset, amt = args[0].upper(), float(args[1].replace(",", ""))
+                locked = dict(svc.settings.capital.locked)
+                locked[asset] = amt
+                svc.update_settings({"capital": {"locked": {k: v for k, v in locked.items() if v > 0}}})
+                self.send(f"✅ 已解除 {asset} 锁定" if amt == 0 else f"✅ 已锁定 {amt:g} {asset}，AI 不会看到也不会使用")
+            elif cmd == "/assets":
+                if not args:
+                    al = svc.settings.allocation
+                    self.send(f"可交易：{', '.join(al.enabled)}；分配：{'AI 自主' if al.mode == 'ai' else '按目标配置'}")
+                    return
+                if args[0].lower() in ("ai", "targets"):
+                    svc.update_settings({"allocation": {"mode": args[0].lower()}})
+                    self.send(f"✅ 分配方式：{'AI 自主分配' if args[0].lower() == 'ai' else '按目标配置'}")
+                else:
+                    toks = [t for t in " ".join(args).replace("，", ",").replace(" ", ",").split(",") if t]
+                    svc.update_settings({"allocation": {"enabled": toks}})
+                    self.send(f"✅ 可交易资产：{', '.join(svc.settings.allocation.enabled)}")
+        except (ValueError, TypeError) as e:
+            self.send(f"⚠️ 没有生效：{e}")
 
     def _safe(self, fn):
         try:

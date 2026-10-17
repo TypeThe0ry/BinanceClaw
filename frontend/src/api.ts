@@ -31,7 +31,7 @@ export async function api<T = unknown>(path: string, init?: RequestInit & { json
 export const post = <T = unknown>(path: string, json: unknown = {}) => api<T>(path, { method: "POST", json });
 
 // ---------------------------------------------------------------- types
-export interface Category { tokens: Record<string, number>; band: [number, number] }
+export interface Category { tokens: Record<string, number | null>; band: [number, number] }
 
 export interface Overview {
   mode: "paper" | "live";
@@ -53,7 +53,24 @@ export interface Overview {
   balances?: Record<string, number>;
   token_weights?: Record<string, number>;
   category_weights?: Record<string, number>;
+  account_total?: number;
+  account_values?: Record<string, number>;
+  account_balances?: Record<string, number>;
+  allocation?: { mode: "targets" | "ai"; enabled: string[]; max_asset_weight: number };
+  capital?: { locked: Record<string, number>; budget_usd: number | null; deployed_usd: number };
+  risk_preset?: string;
 }
+
+export interface PerfAsset { qty: number; avg_cost: number | null; cost: number; value: number | null; price: number | null;
+  realized: number; unrealized: number | null; unrealized_pct: number | null }
+export interface Performance {
+  mode: string; assets: Record<string, PerfAsset>; invested: number; open_cost: number; value: number;
+  unrealized: number; realized: number; pnl: number; roi: number | null;
+  benchmark: { name: string; value: number | null; pnl: number | null; roi: number | null };
+}
+
+export interface PriceAlert { id: string; created: number; symbol: string; op: "below" | "above"; price: number; note: string;
+  source: string; status: string; triggered_at: number | null; trigger_price: number | null }
 
 export interface RiskCheck { name: string; ok: boolean; detail: string }
 export interface RiskRow {

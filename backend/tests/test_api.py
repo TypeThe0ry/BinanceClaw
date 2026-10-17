@@ -79,6 +79,11 @@ def _ip_app(app):
     return asgi
 
 
+def _dev(tc):
+    vals = [c.value for c in tc.cookies.jar if c.name == "bclaw_device" and c.value]
+    return vals[-1] if vals else None
+
+
 def _login(tc, ip, pw, device=None):
     tc.cookies.clear()
     if device:
@@ -117,7 +122,7 @@ def test_queue_timeout_does_not_consume_attempts_and_known_device_skips_lane(cli
     with TestClient(_ip_app(client.app)) as tc:
         r = _login(tc, "192.0.2.7", "correct-horse-1")
         assert r.status_code == 200
-        device = tc.cookies.get("bclaw_device")
+        device = _dev(tc)
         assert device
         monkeypatch.setitem(appmod.LOGIN_LIMITS, "global", 1)
         monkeypatch.setitem(appmod.LOGIN_LIMITS, "slow_lane_wait", 0.6)
@@ -135,3 +140,52 @@ def test_queue_timeout_does_not_consume_attempts_and_known_device_skips_lane(cli
         t0 = _t.time()
         assert _login(tc, "192.0.2.7", "correct-horse-1", device=device).status_code == 200
         assert _t.time() - t0 < 0.5
+
+
+def test_device_trust_is_revocable(client, monkeypatch):
+    from argon2 import PasswordHasher
+    from fastapi.testclient import TestClient
+
+    from binanceclaw.api import app as appmod
+    with TestClient(_ip_app(client.app)) as tc:
+        assert _login(tc, "192.0.2.8", "correct-horse-1").status_code == 200
+        dev = _dev(tc)
+        assert len(tc.get("/api/devices").json()) == 1
+        # logout revokes the device on the server and clears the cookie
+        tc.cookies.clear()
+        tc.cookies.set("bclaw_device", dev)
+        tc.post("/api/auth/logout")
+        assert client.svc.db.kv_get("trusted_devices") == {}
+        # a revoked token no longer skips the slow lane
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "global", 0)
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "slow_lane_wait", 0.4)
+        import time as _t
+        t0 = _t.time()
+        assert _login(tc, "192.0.2.8", "correct-horse-1", device=dev).status_code == 200
+        assert _t.time() - t0 >= 0.4
+        # changing the password invalidates every existing device token
+        dev2 = _dev(tc)
+        client.svc.secrets.admin_password_hash = PasswordHasher().hash("another-pass-99")
+        t0 = _t.time()
+        assert _login(tc, "192.0.2.8", "another-pass-99", device=dev2).status_code == 200
+        assert _t.time() - t0 >= 0.4
+
+
+def test_trusted_devices_have_their_own_budget(client, monkeypatch):
+    import time as _t
+
+    from fastapi.testclient import TestClient
+
+    from binanceclaw.api import app as appmod
+    with TestClient(_ip_app(client.app)) as tc:
+        assert _login(tc, "192.0.2.9", "correct-horse-1").status_code == 200
+        dev = _dev(tc)
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "global", 0)
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "trusted_global", 2)
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "slow_lane_wait", 0.4)
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "fail_delay", 0.0)
+        for i in range(2):   # leaked token used from other addresses
+            _login(tc, f"203.0.113.{20 + i}", "wrong", device=dev)
+        t0 = _t.time()
+        _login(tc, "203.0.113.30", "wrong", device=dev)
+        assert _t.time() - t0 >= 0.4          # budget spent: even the device token now waits in line

@@ -1,9 +1,9 @@
 import { ColorType, CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import type { Approval, Kline, Order, Overview } from "../api";
+import { api, post, type Approval, type Kline, type Order, type Overview, type PriceAlert } from "../api";
 import { Change, Empty, FlashNum, Page, Seg, Side, Tabs } from "../components/ui";
-import { clock, fmtPrice, token, usd, useApi, useTicker } from "../lib";
+import { clock, fmtPrice, token, usd, useApi, useTicker, useToast } from "../lib";
 
 type Iv = "15m" | "1h" | "4h" | "1d";
 const IV: { k: Iv; label: string; limit: number }[] = [
@@ -11,7 +11,7 @@ const IV: { k: Iv; label: string; limit: number }[] = [
   { k: "4h", label: "4时", limit: 300 }, { k: "1d", label: "1日", limit: 300 },
 ];
 
-function Chart({ symbol, iv, orders }: { symbol: string; iv: Iv; orders: Order[] }) {
+function Chart({ symbol, iv, orders, alerts }: { symbol: string; iv: Iv; orders: Order[]; alerts: PriceAlert[] }) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi>();
   const limit = IV.find((x) => x.k === iv)!.limit;
@@ -53,11 +53,15 @@ function Chart({ symbol, iv, orders }: { symbol: string; iv: Iv; orders: Order[]
         shape: o.side === "BUY" ? ("arrowUp" as const) : ("arrowDown" as const),
         text: usd(o.quote_usd, 0),
       })).sort((a, b) => a.time - b.time));
+    for (const a of alerts.filter((x) => x.symbol === symbol)) {
+      candle.createPriceLine({ price: a.price, color: "#F0A23B", lineWidth: 1, lineStyle: 2, axisLabelVisible: true,
+        title: `${a.op === "below" ? "↓" : "↑"} ${a.source === "ai" ? "AI" : "提醒"}` });
+    }
     c.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 120), to: data.length + 4 });
     return () => {
       try { c.removeSeries(candle); c.removeSeries(vol); } catch { /* chart disposed */ }
     };
-  }, [data, orders, symbol]);
+  }, [data, orders, symbol, alerts]);
 
   return <div ref={el} className="h-[420px] w-full md:h-[520px]" />;
 }
@@ -66,7 +70,11 @@ export default function Trade() {
   const ov = useApi<Overview>("/overview", { poll: 60000 });
   const orders = useApi<Order[]>("/orders?limit=500", { kinds: ["order"] });
   const approvals = useApi<Approval[]>("/approvals?limit=200", { kinds: ["approval", "approval_created"] });
+  const alerts = useApi<PriceAlert[]>("/alerts", { kinds: ["alerts", "price_alert", "cycle"] });
   const tick = useTicker();
+  const toast = useToast();
+  const [aop, setAop] = useState<"below" | "above">("below");
+  const [apx, setApx] = useState("");
   const [params, setParams] = useSearchParams();
   const symbols = Object.keys(ov.data?.market ?? {}).map((t) => `${t}USDT`);
   const sym = params.get("s") ?? "BTCUSDT";
@@ -102,7 +110,7 @@ export default function Trade() {
       <section className="grid min-w-0 gap-6 lg:grid-cols-[1fr_300px]">
         <div className="min-w-0">
           <div className="mb-2"><Seg id="iv" items={IV.map((x) => ({ k: x.k, label: x.label }))} value={iv} onChange={setIv} /></div>
-          <Chart symbol={sym} iv={iv} orders={orders.data ?? []} />
+          <Chart symbol={sym} iv={iv} orders={orders.data ?? []} alerts={alerts.data ?? []} />
         </div>
         <aside>
           <p className="border-b border-line pb-2.5 text-[14px] font-semibold">AI 成交</p>
@@ -114,6 +122,30 @@ export default function Trade() {
               <span className="num text-right">{o.price ? fmtPrice(o.price) : "—"}</span>
             </div>
           )) : <Empty text="暂无成交" />}
+
+          <p className="mt-6 border-b border-line pb-2.5 text-[14px] font-semibold">价格提醒</p>
+          <form className="mt-3 flex gap-1.5" onSubmit={async (e) => {
+            e.preventDefault();
+            const price = parseFloat(apx);
+            if (!(price > 0)) return;
+            try { await post("/alerts", { symbol: sym, op: aop, price }); setApx(""); alerts.reload(); toast("已设置提醒"); }
+            catch (x) { toast((x as Error).message, "err"); }
+          }}>
+            <select className="input h-9 w-[72px] px-2 text-[13px]" value={aop} onChange={(e) => setAop(e.target.value as "below" | "above")}>
+              <option value="below">跌破</option><option value="above">涨破</option>
+            </select>
+            <input className="input num h-9 flex-1 text-[13px]" type="number" step="any" placeholder={fmtPrice(t?.price)} value={apx} onChange={(e) => setApx(e.target.value)} />
+            <button className="btn-secondary h-9 px-3">添加</button>
+          </form>
+          {(alerts.data ?? []).filter((a) => a.symbol === sym).map((a) => (
+            <div key={a.id} className="flex items-center gap-2 border-b border-line py-2 text-[13px]">
+              <span className={a.op === "below" ? "text-down" : "text-up"}>{a.op === "below" ? "跌破" : "涨破"}</span>
+              <span className="num">{fmtPrice(a.price)}</span>
+              {a.source === "ai" && <span className="tag bg-hover text-fg-2" title={a.note}>AI</span>}
+              <button className="ml-auto text-fg-3 hover:text-fg" aria-label="删除提醒"
+                onClick={async () => { await api(`/alerts/${a.id}`, { method: "DELETE" }); alerts.reload(); }}>×</button>
+            </div>
+          ))}
         </aside>
       </section>
 

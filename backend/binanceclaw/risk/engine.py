@@ -37,10 +37,11 @@ class Portfolio:
         return {k: v / t for k, v in self.values().items()} if t > 0 else {}
 
     def category_weights(self) -> dict[str, float]:
-        out = {name: 0.0 for name in self.settings.categories}
+        """Weights per risk group (category in "targets" mode, token in "ai" mode)."""
+        out = {name: 0.0 for name in self.settings.group_targets()}
         for tok, w in self.token_weights().items():
-            cat = self.settings.category_of(tok)
-            out[cat] = out.get(cat, 0.0) + w
+            g = self.settings.group_of(tok)
+            out[g] = out.get(g, 0.0) + w
         return out
 
     def stable_value(self) -> float:
@@ -74,6 +75,7 @@ class RiskState:
     today_orders: int = 0
     today_notional: float = 0.0
     today_auto_notional: float = 0.0
+    deployed_usd: float = 0.0          # net capital the AI has put to work so far (buys - sells, at cost)
     paused: bool = False
     pause_reason: str = ""
     btc_change_7d: float | None = None
@@ -111,6 +113,8 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
     orders_left = lim.max_orders_per_day - st.today_orders
     notional_left = lim.max_daily_notional_usd - st.today_notional
     auto_left = lim.max_auto_daily_usd - st.today_auto_notional
+    budget = s.capital.budget_usd
+    budget_left = (budget - st.deployed_usd) if budget is not None else float("inf")
     allowed = set(s.symbols())
     verdicts: list[Verdict] = []
 
@@ -180,11 +184,15 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
         if amt > spendable:
             caps.append(f"稳定币下限 {lim.stable_floor:.0%}（可用 ${max(spendable, 0):,.0f}）")
             amt = spendable
-        cat = s.category_of(token)
-        high = s.categories[cat].band[1] if cat in s.categories else 0
+        if amt > budget_left:
+            caps.append(f"AI 投入预算剩余 ${max(budget_left, 0):,.0f}")
+            amt = budget_left
+        cat = s.group_of(token)
+        high = s.group_ceiling(cat)
         room = (high - cat_w.get(cat, 0.0)) * total
         if amt > room:
-            caps.append(f"{cat} 区间上限 {high:.0%}（剩余空间 ${max(room, 0):,.0f}）")
+            label = "单币占比" if s.allocation.mode == "ai" else "区间"
+            caps.append(f"{cat} {label}上限 {high:.0%}（剩余空间 ${max(room, 0):,.0f}）")
             amt = room
         amt = math.floor(max(amt, 0))
         if amt < 10:
@@ -208,6 +216,7 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
         # apply to simulated state
         orders_left -= 1
         notional_left -= amt
+        budget_left -= amt
         quote_bal -= amt
         stable_val -= amt
         tok_val[token] = tok_val.get(token, 0.0) + amt
