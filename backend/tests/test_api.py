@@ -189,3 +189,28 @@ def test_trusted_devices_have_their_own_budget(client, monkeypatch):
         t0 = _t.time()
         _login(tc, "203.0.113.30", "wrong", device=dev)
         assert _t.time() - t0 >= 0.4          # budget spent: even the device token now waits in line
+
+
+
+def test_revoking_devices_ends_their_sessions(client):
+    from argon2 import PasswordHasher
+    from fastapi.testclient import TestClient
+    with TestClient(_ip_app(client.app)) as a, TestClient(_ip_app(client.app)) as b:
+        assert _login(a, "192.0.2.21", "correct-horse-1").status_code == 200
+        assert _login(b, "192.0.2.22", "correct-horse-1").status_code == 200
+        assert a.get("/api/overview").status_code == 200 and b.get("/api/overview").status_code == 200
+        assert a.post("/api/devices/revoke-others").json()["revoked"] == 1
+        assert a.get("/api/overview").status_code == 200
+        assert b.get("/api/overview").status_code == 401          # revoked device: session gone
+        a.post("/api/auth/logout")
+        assert a.get("/api/overview").status_code == 401
+        assert _login(a, "192.0.2.21", "correct-horse-1").status_code == 200
+        client.svc.secrets.admin_password_hash = PasswordHasher().hash("rotated-pass-123")
+        assert a.get("/api/overview").status_code == 401          # password change: every session ends
+
+
+def test_legacy_session_cookie_rejected(client):
+    from itsdangerous import TimestampSigner
+    legacy = TimestampSigner("x" * 64).sign("owner").decode()
+    client.cookies.set("bclaw_session", legacy)
+    assert client.get("/api/overview").status_code == 401

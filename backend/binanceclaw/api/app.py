@@ -73,11 +73,17 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
 
     # ------------------------------------------------------------------ auth
     def require_auth(request: Request):
+        """A session is valid only while its device is still registered and the password is unchanged,
+        so revoking a device (logout / revoke-others) or changing the password ends its session at once."""
         tok = request.cookies.get(COOKIE, "")
         try:
-            signer.unsign(tok, max_age=SESSION_DAYS * 86400)
-        except (BadSignature, SignatureExpired):
+            raw = signer.unsign(tok, max_age=SESSION_DAYS * 86400).decode()
+        except (BadSignature, SignatureExpired, UnicodeDecodeError):
             raise HTTPException(401, "未登录") from None
+        kind, _, rest = raw.partition(":")
+        did, _, fp = rest.partition(":")
+        if kind != "owner" or not did or fp != pw_fingerprint() or did not in devices():
+            raise HTTPException(401, "未登录")
 
     def release(ip: str, ts: float):
         with attempts_lock:
@@ -174,9 +180,9 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             failures.pop(ip, None)
         release(ip, now)
         secure = request.url.scheme == "https"
-        response.set_cookie(COOKIE, signer.sign("owner").decode(), max_age=SESSION_DAYS * 86400,
-                            httponly=True, samesite="strict", secure=secure)
         did = register_device(request, device_id)
+        response.set_cookie(COOKIE, signer.sign(f"owner:{did}:{pw_fingerprint()}").decode(), max_age=SESSION_DAYS * 86400,
+                            httponly=True, samesite="strict", secure=secure)
         response.set_cookie(DEVICE_COOKIE, device_signer.sign(f"{did}:{pw_fingerprint()}").decode(),
                             max_age=DEVICE_DAYS * 86400, httponly=True, samesite="strict", secure=secure)
         return {"ok": True}
