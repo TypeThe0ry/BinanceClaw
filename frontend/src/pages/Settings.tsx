@@ -2,7 +2,8 @@ import { Check, Warning, X } from "@phosphor-icons/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, post, type Category } from "../api";
 import { Page, Seg, SectionHead, Skeleton, Spinner } from "../components/ui";
-import { CATEGORY_LABEL, useApi, useToast } from "../lib";
+import { useApi, useToast } from "../lib";
+import AllocationEditor from "../components/AllocationEditor";
 import TokenPicker from "../components/TokenPicker";
 
 interface SettingsResp {
@@ -369,33 +370,10 @@ export default function Settings() {
       </section>
 
       <section>
-        <SectionHead title="目标配置" doc="decisions-and-risk" />
-        {Object.entries(d.categories).map(([cat, c]) => (
-          <div key={cat} className="border-b border-line py-3">
-            <p className="text-[14px] font-medium">{CATEGORY_LABEL[cat] ?? cat}</p>
-            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
-              {Object.entries(c.tokens).map(([tok, w]) => (
-                <label key={tok} className="flex items-center gap-2 text-[13px] text-fg-2">{tok}
-                  <Num unit="%" value={Math.round((w ?? 0) * 1000) / 10} step={0.5}
-                    onChange={(x) => setD({ ...d, categories: { ...d.categories, [cat]: { ...c, tokens: { ...c.tokens, [tok]: x / 100 } } } })} />
-                </label>
-              ))}
-              <label className="flex items-center gap-2 text-[13px] text-fg-2">下限
-                <Num unit="%" value={Math.round(c.band[0] * 1000) / 10} step={0.5}
-                  onChange={(x) => setD({ ...d, categories: { ...d.categories, [cat]: { ...c, band: [x / 100, c.band[1]] } } })} />
-              </label>
-              <label className="flex items-center gap-2 text-[13px] text-fg-2">上限
-                <Num unit="%" value={Math.round(c.band[1] * 1000) / 10} step={0.5}
-                  onChange={(x) => setD({ ...d, categories: { ...d.categories, [cat]: { ...c, band: [c.band[0], x / 100] } } })} />
-              </label>
-            </div>
-          </div>
-        ))}
-        <div className="border-b border-line py-3">
-          <p className="text-[14px] font-medium">投资说明</p>
-          <textarea className="input mt-2 h-20 py-2" value={d.investor_notes} onChange={(e) => setD({ ...d, investor_notes: e.target.value })} />
-        </div>
-        <div className="pt-4"><button className="btn-primary" onClick={() => save({ categories: d.categories, investor_notes: d.investor_notes })}>保存</button></div>
+        <SectionHead title="目标配置" doc="capital-and-allocation" />
+        <AllocationEditor key={JSON.stringify([data.settings.categories, data.settings.investor_notes])} categories={data.settings.categories}
+          enabled={data.settings.allocation.enabled} notes={data.settings.investor_notes} stables={d.stables}
+          mode={data.settings.allocation.mode} onSaved={reload} />
       </section>
 
       <section>
