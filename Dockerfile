@@ -1,8 +1,9 @@
 # ---------- frontend ----------
 FROM node:22-bookworm-slim AS web
-WORKDIR /web
+WORKDIR /web/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+COPY docs/ /web/docs/
 COPY frontend/ ./
 RUN npm run build
 
@@ -18,7 +19,7 @@ WORKDIR /app
 COPY backend/ ./backend/
 RUN python3 -m venv /venv && /venv/bin/pip install ./backend
 ENV PATH="/venv/bin:$PATH"
-COPY --from=web /web/dist ./frontend/dist
+COPY --from=web /web/frontend/dist ./frontend/dist
 VOLUME ["/data"]
 EXPOSE 8686
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

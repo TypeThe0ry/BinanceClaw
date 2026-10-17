@@ -1,30 +1,51 @@
 import {
-  ChartLineUp, ChatCircleDots, Gauge, GearSix, Newspaper, Sparkle, Stamp, Stop,
+  BookOpen, ChartLineUp, ChatCircle, DotsThreeOutline, GearSix, Newspaper, Sparkle, Stamp, Stop, Wallet,
 } from "@phosphor-icons/react";
 import { motion } from "framer-motion";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { post, type Overview } from "../api";
-import { useApi, useLive, useToast } from "../lib";
-import { ModeBadge, RunState } from "./ui";
+import { fmtPrice, token, useApi, useLive, useTicker, useToast } from "../lib";
+import { Change, FlashNum, ModePill, RunPill } from "./ui";
 
-const NAV = [
-  { to: "/", label: "总览", icon: Gauge },
-  { to: "/decisions", label: "AI 决策", icon: Sparkle },
+const MAIN = [
+  { to: "/", label: "资产", icon: Wallet },
+  { to: "/trade", label: "交易", icon: ChartLineUp },
+  { to: "/ai", label: "AI", icon: Sparkle },
   { to: "/approvals", label: "审批", icon: Stamp },
-  { to: "/trades", label: "交易", icon: ChartLineUp },
-  { to: "/chat", label: "对话", icon: ChatCircleDots },
+  { to: "/chat", label: "对话", icon: ChatCircle },
   { to: "/reports", label: "日报", icon: Newspaper },
-  { to: "/settings", label: "设置", icon: GearSix },
+];
+const MOBILE = [
+  { to: "/", label: "资产", icon: Wallet },
+  { to: "/trade", label: "交易", icon: ChartLineUp },
+  { to: "/ai", label: "AI", icon: Sparkle },
+  { to: "/approvals", label: "审批", icon: Stamp },
+  { to: "/more", label: "更多", icon: DotsThreeOutline },
 ];
 
 function Logo() {
   return (
-    <div className="flex items-center gap-2.5">
-      <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden>
-        <rect width="64" height="64" rx="16" fill="#0E1A2E" />
-        <path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="#5EF2C4" strokeWidth="4" strokeLinecap="round" fill="none" />
+    <Link to="/" className="flex items-center gap-2">
+      <svg width="22" height="22" viewBox="0 0 64 64" aria-hidden>
+        <path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="#fff" strokeWidth="5" strokeLinecap="round" fill="none" />
       </svg>
-      <span className="font-display text-[22px] leading-none tracking-tight">BinanceClaw</span>
+      <span className="text-[16px] font-semibold tracking-tight">BinanceClaw</span>
+    </Link>
+  );
+}
+
+function TickerBar() {
+  const t = useTicker();
+  const nav = useNavigate();
+  return (
+    <div className="no-scrollbar flex h-9 items-center gap-6 overflow-x-auto border-b border-line px-4 text-[13px] md:px-6">
+      {Object.entries(t).map(([sym, x]) => (
+        <button key={sym} onClick={() => nav(`/trade?s=${sym}`)} className="flex shrink-0 items-center gap-2 hover:opacity-80">
+          <span className="text-fg-2">{token(sym)}</span>
+          <FlashNum value={x.price}>{fmtPrice(x.price)}</FlashNum>
+          <Change v={x.change_pct} />
+        </button>
+      ))}
     </div>
   );
 }
@@ -34,72 +55,81 @@ export function Layout() {
   const { connected } = useLive();
   const toast = useToast();
   const loc = useLocation();
-  const current = NAV.find((n) => (n.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(n.to)))?.to ?? "/";
+  const active = (to: string) => (to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(to));
 
   async function kill() {
-    if (!window.confirm("紧急停止：暂停自动执行，并作废所有待审批订单。确定吗？")) return;
+    if (!window.confirm("紧急停止：暂停自动执行并作废所有待审批？")) return;
     await post("/control/kill");
     toast("已紧急停止");
     reload();
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-[1440px]">
-      {/* desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-[232px] shrink-0 flex-col px-5 py-7 md:flex">
-        <Logo />
-        <nav className="mt-10 flex flex-col gap-1">
-          {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === "/"}
-              className="relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14.5px] text-ink-soft transition-colors hover:text-ink">
-              {current === n.to && (
-                <motion.span layoutId="nav-pill" className="absolute inset-0 rounded-xl border border-white/[0.08] bg-white/[0.06]"
-                  transition={{ type: "spring", stiffness: 380, damping: 32 }} />
-              )}
-              <n.icon size={19} weight="light" className="relative" />
-              <span className={`relative ${current === n.to ? "text-ink" : ""}`}>{n.label}</span>
-              {n.to === "/approvals" && !!ov?.pending_approvals && (
-                <span className="relative ml-auto rounded-full bg-amber px-1.5 text-[11.5px] font-semibold leading-5 text-[#2a1c00]">{ov.pending_approvals}</span>
-              )}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="mt-auto flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-[12.5px] text-ink-mute">
-            <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-mint" : "bg-ink-faint"}`} />
-            {connected ? "实时连接" : "正在重连…"}
+    <div className="flex min-h-screen flex-col">
+      <header className="sticky top-0 z-40 bg-bg/95 backdrop-blur">
+        <div className="flex h-14 items-center gap-8 border-b border-line px-4 md:px-6">
+          <Logo />
+          <nav className="hidden h-full items-center gap-6 md:flex">
+            {MAIN.map((n) => (
+              <NavLink key={n.to} to={n.to} end={n.to === "/"}
+                className={`relative flex h-full items-center text-[14px] font-medium transition-colors ${active(n.to) ? "text-fg" : "text-fg-2 hover:text-fg"}`}>
+                {n.label}
+                {n.to === "/approvals" && !!ov?.pending_approvals && (
+                  <span className="num ml-1 rounded bg-warn px-1 text-[11px] font-semibold leading-4 text-bg">{ov.pending_approvals}</span>
+                )}
+                {active(n.to) && <motion.span layoutId="nav-underline" className="absolute inset-x-0 bottom-0 h-[2px] bg-fg" />}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="ml-auto flex items-center gap-2.5">
+            <span className={`hidden h-1.5 w-1.5 rounded-full md:block ${connected ? "bg-up" : "bg-fg-3"}`} title={connected ? "实时" : "重连中"} />
+            {ov && <ModePill mode={ov.mode} />}
+            {ov && <RunPill paused={ov.paused} />}
+            <Link to="/docs" aria-label="文档" className={`hidden rounded-md p-1.5 md:block ${active("/docs") ? "text-fg" : "text-fg-2 hover:text-fg"}`}><BookOpen size={18} /></Link>
+            <Link to="/settings" aria-label="设置" className={`hidden rounded-md p-1.5 md:block ${active("/settings") ? "text-fg" : "text-fg-2 hover:text-fg"}`}><GearSix size={18} /></Link>
+            <button onClick={kill} aria-label="紧急停止" title="紧急停止"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-down/15 text-down transition-colors hover:bg-down/25 active:scale-95">
+              <Stop size={14} weight="fill" />
+            </button>
           </div>
-          <button onClick={kill} className="btn-danger w-full justify-start">
-            <Stop size={18} weight="fill" />紧急停止
-          </button>
         </div>
-      </aside>
+        <TickerBar />
+      </header>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-white/[0.05] bg-abyss/70 px-4 py-3 backdrop-blur-xl md:border-none md:bg-transparent md:px-8 md:pt-7 md:backdrop-blur-0">
-          <div className="md:hidden"><Logo /></div>
-          <div className="ml-auto flex items-center gap-2">
-            {ov && <ModeBadge mode={ov.mode} />}
-            {ov && <RunState paused={ov.paused} reason={ov.pause_reason} />}
-            <button onClick={kill} className="btn-danger px-2.5 py-1.5 md:hidden" aria-label="紧急停止"><Stop size={16} weight="fill" /></button>
-          </div>
-        </header>
-        <main className="flex-1 px-4 pb-28 pt-4 md:px-8 md:pb-12">
-          <Outlet />
-        </main>
-      </div>
+      <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 pb-24 pt-6 md:px-6 md:pb-12">
+        <Outlet />
+      </main>
 
-      {/* mobile tab bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex justify-around border-t border-white/[0.06] bg-[#070d19]/90 px-1 pb-[max(env(safe-area-inset-bottom),8px)] pt-1.5 backdrop-blur-xl md:hidden">
-        {NAV.filter((n) => n.to !== "/reports").map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === "/"} className="relative flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[11px] text-ink-mute">
-            {current === n.to && <motion.span layoutId="tab-pill" className="absolute inset-x-2 inset-y-0 rounded-xl bg-white/[0.06]" />}
-            <n.icon size={21} weight={current === n.to ? "regular" : "light"} className={`relative ${current === n.to ? "text-mint" : ""}`} />
-            <span className={`relative ${current === n.to ? "text-ink" : ""}`}>{n.label}</span>
-            {n.to === "/approvals" && !!ov?.pending_approvals && <span className="absolute right-[22%] top-1 h-2 w-2 rounded-full bg-amber" />}
-          </NavLink>
-        ))}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-bg pb-[max(env(safe-area-inset-bottom),6px)] pt-1.5 md:hidden">
+        {MOBILE.map((n) => {
+          const on = n.to === "/more" ? ["/more", "/chat", "/reports", "/settings", "/docs"].some((p) => loc.pathname.startsWith(p)) : active(n.to);
+          return (
+            <NavLink key={n.to} to={n.to} end={n.to === "/"} className={`relative flex flex-1 flex-col items-center gap-0.5 py-1 text-[11px] ${on ? "text-fg" : "text-fg-3"}`}>
+              <n.icon size={22} weight={on ? "fill" : "regular"} />
+              {n.label}
+              {n.to === "/approvals" && !!ov?.pending_approvals && <span className="absolute right-[26%] top-0.5 h-2 w-2 rounded-full bg-warn" />}
+            </NavLink>
+          );
+        })}
       </nav>
+    </div>
+  );
+}
+
+export function More() {
+  const items = [
+    { to: "/chat", label: "对话", icon: ChatCircle },
+    { to: "/reports", label: "日报", icon: Newspaper },
+    { to: "/settings", label: "设置", icon: GearSix },
+    { to: "/docs", label: "文档", icon: BookOpen },
+  ];
+  return (
+    <div className="divide-y divide-line">
+      {items.map((x) => (
+        <Link key={x.to} to={x.to} className="flex items-center gap-3 py-4 text-[15px] active:bg-hover">
+          <x.icon size={20} className="text-fg-2" />{x.label}<span className="ml-auto text-fg-3">›</span>
+        </Link>
+      ))}
     </div>
   );
 }

@@ -1,0 +1,13 @@
+# BinanceClaw 文档
+
+| 文档 | 内容 |
+|---|---|
+| [快速开始](getting-started.md) | 安装、设置向导、自检、访问 |
+| [界面指南](dashboard.md) | 每个页面看什么、能做什么 |
+| [AI 决策与风控](decisions-and-risk.md) | 一轮决策怎么跑、每条硬限制的含义 |
+| [审批](approvals.md) | 什么会进审批、怎么批、过期与重新检查 |
+| [模拟盘与实盘](live-mode.md) | 两种模式的区别、实盘准入、权限豁免 |
+| [模型](models.md) | Claude 订阅、OpenAI、兼容接口、Anthropic API |
+| [Telegram](telegram.md) | 推送、图表、指令、对话 |
+| [常见问题](faq.md) | 暂停、恢复、重置、排障 |
+| [安全](../SECURITY.md) | 威胁模型与密钥处理 |

@@ -1,46 +1,52 @@
 import { AnimatePresence } from "framer-motion";
+import { useState } from "react";
 import type { Approval } from "../api";
-import { ApprovalCard } from "../components/ApprovalCard";
-import { Card, Empty, PageTitle, SideTag, Skeleton } from "../components/ui";
-import { ago, token, usd, useApi } from "../lib";
+import { ApprovalRow } from "../components/ApprovalRow";
+import { DocLink, Empty, Page, Side, Skeleton, Tabs } from "../components/ui";
+import { clock, token, usd, useApi } from "../lib";
 
-const STATUS: Record<string, { t: string; c: string }> = {
-  approved: { t: "已批准", c: "text-mint" },
-  rejected: { t: "已拒绝", c: "text-ink-soft" },
-  expired: { t: "已过期", c: "text-ink-mute" },
-  failed: { t: "批准后未执行", c: "text-rose" },
+const STATUS: Record<string, [string, string]> = {
+  approved: ["已批准", "text-up"], rejected: ["已拒绝", "text-fg-2"], expired: ["已过期", "text-fg-3"], failed: ["未执行", "text-down"],
 };
-const BY: Record<string, string> = { web: "网页", telegram: "Telegram", system: "系统" };
 
 export default function Approvals() {
   const pending = useApi<Approval[]>("/approvals?status=pending", { kinds: ["approval", "approval_created"] });
-  const all = useApi<Approval[]>("/approvals?limit=80", { kinds: ["approval", "approval_created"] });
+  const all = useApi<Approval[]>("/approvals?limit=200", { kinds: ["approval", "approval_created"] });
+  const [tab, setTab] = useState<"pending" | "history">("pending");
   const history = (all.data ?? []).filter((a) => a.status !== "pending");
   return (
-    <div>
-      <PageTitle title="审批" sub="超过自动执行额度的交易会停在这里，Telegram 里同步推送，哪边先处理都可以。" />
-      <div className="grid gap-4">
-        {pending.loading ? <Skeleton className="h-52" /> : (
+    <Page>
+      <div className="mb-1 flex items-center gap-1.5"><h1 className="text-[20px] font-semibold">审批</h1><DocLink to="approvals" /></div>
+      <Tabs id="appr" value={tab} onChange={setTab} items={[
+        { k: "pending", label: <>待处理{!!pending.data?.length && <span className="num ml-1 text-warn">{pending.data.length}</span>}</> },
+        { k: "history", label: "历史" }]} />
+      {tab === "pending" ? (
+        pending.loading ? <Skeleton className="mt-4 h-24" /> : pending.data?.length ? (
           <AnimatePresence mode="popLayout" initial={false}>
-            {(pending.data ?? []).map((a) => <ApprovalCard key={a.id} a={a} onDone={() => { pending.reload(); all.reload(); }} />)}
+            {pending.data.map((a) => <ApprovalRow key={a.id} a={a} onDone={() => { pending.reload(); all.reload(); }} />)}
           </AnimatePresence>
-        )}
-        {!pending.loading && !pending.data?.length && <Card><Empty title="没有待审批的交易" hint="AI 提出超过自动执行额度的买入时，会出现在这里。" /></Card>}
-      </div>
-      <h2 className="mb-3 mt-10 font-display text-[26px]">历史</h2>
-      <Card className="divide-y divide-white/[0.05]">
-        {history.length ? history.map((a) => (
-          <div key={a.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3.5 text-[14px]">
-            <SideTag side={a.side} />
-            <span className="w-16 font-semibold">{token(a.symbol)}</span>
-            <span className="num w-20 text-ink-soft">{usd(a.quote_usd, 0)}</span>
-            <span className={STATUS[a.status]?.c}>{STATUS[a.status]?.t ?? a.status}</span>
-            {a.resolved_by && <span className="text-ink-mute">· {BY[a.resolved_by] ?? a.resolved_by}</span>}
-            <span className="ml-auto text-[13px] text-ink-mute">{ago(a.created)}</span>
-            {a.result && <p className="w-full text-[13px] text-ink-mute">{a.result}</p>}
-          </div>
-        )) : <Empty title="还没有审批记录" />}
-      </Card>
-    </div>
+        ) : <Empty text="没有待处理的审批" />
+      ) : history.length ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px]">
+            <thead><tr className="border-b border-line">
+              <th className="th">时间</th><th className="th">交易对</th><th className="th">方向</th><th className="th text-right">金额</th><th className="th pl-6">结果</th><th className="th">备注</th>
+            </tr></thead>
+            <tbody>
+              {history.map((a) => (
+                <tr key={a.id} className="border-b border-line">
+                  <td className="td num text-fg-2">{clock(a.created)}</td>
+                  <td className="td font-semibold">{token(a.symbol)}/USDT</td>
+                  <td className="td"><Side side={a.side} /></td>
+                  <td className="td num text-right">{usd(a.quote_usd, 0)}</td>
+                  <td className={`td pl-6 ${STATUS[a.status]?.[1]}`}>{STATUS[a.status]?.[0] ?? a.status}</td>
+                  <td className="td max-w-[320px] truncate text-[13px] text-fg-3" title={a.result}>{a.result}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <Empty text="暂无记录" />}
+    </Page>
   );
 }

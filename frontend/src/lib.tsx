@@ -28,7 +28,7 @@ export const token = (symbol: string) => symbol.replace(/USDT$/, "");
 
 export const CATEGORY_LABEL: Record<string, string> = { BTC: "比特币", ETH: "以太坊", US_STOCK: "美股代币", STABLE: "稳定币", OTHER: "其他" };
 export const CATEGORY_COLOR: Record<string, string> = {
-  BTC: "#F7B955", ETH: "#8EA2FF", US_STOCK: "#5EF2C4", STABLE: "#8796B2", OTHER: "#3A4458",
+  BTC: "#F7931A", ETH: "#8C8CFF", US_STOCK: "#20B26C", STABLE: "#8C8C8C", OTHER: "#3A3A3A",
 };
 
 // ---------------------------------------------------------------- live events (SSE)
@@ -121,7 +121,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div className="pointer-events-none fixed inset-x-0 top-4 z-[60] flex flex-col items-center gap-2 px-4">
         {items.map((t) => (
           <div key={t.id}
-            className={`glass-strong pointer-events-auto max-w-md px-4 py-3 text-[14px] ${t.tone === "err" ? "border-rose/40 text-rose" : "text-ink"}`}
+            className={`pointer-events-auto max-w-md rounded-lg border border-line-strong bg-raise px-4 py-2.5 text-[14px] shadow-2xl ${t.tone === "err" ? "text-down" : "text-fg"}`}
             role="status">
             {t.msg}
           </div>
@@ -129,4 +129,42 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       </div>
     </ToastCtx.Provider>
   );
+}
+
+// ---------------------------------------------------------------- live ticker (shared, polled)
+export interface Tick { price: number; change_pct: number; high: number; low: number; quote_volume: number }
+const TickerCtx = createContext<Record<string, Tick>>({});
+export const useTicker = () => useContext(TickerCtx);
+
+export function TickerProvider({ children }: { children: ReactNode }) {
+  const [data, setData] = useState<Record<string, Tick>>({});
+  useEffect(() => {
+    let alive = true;
+    const load = () => api<Record<string, Tick>>("/ticker").then((d) => alive && setData(d)).catch(() => {});
+    load();
+    const id = window.setInterval(() => { if (!document.hidden) load(); }, 4000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, []);
+  return <TickerCtx.Provider value={data}>{children}</TickerCtx.Provider>;
+}
+
+/** Remembers the previous value and returns "up" | "down" for one render after it changes. */
+export function useFlash(value: number | undefined) {
+  const prev = useRef<number | undefined>(value);
+  const [dir, setDir] = useState<"up" | "down" | null>(null);
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (value != null && prev.current != null && value !== prev.current) {
+      setDir(value > prev.current ? "up" : "down");
+      setN((x) => x + 1);
+    }
+    prev.current = value;
+  }, [value]);
+  return { dir, key: n };
+}
+
+export function fmtPrice(v: number | undefined) {
+  if (v == null) return "—";
+  const d = v >= 1000 ? 2 : v >= 1 ? 2 : 4;
+  return v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 }

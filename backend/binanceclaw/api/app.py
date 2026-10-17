@@ -69,10 +69,15 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         with attempts_lock:
             recent = [t for t in failures.get(ip, []) if now - t < WINDOW]
             global_failures[:] = [t for t in global_failures if now - t < WINDOW]
-            if len(recent) >= PER_IP or len(global_failures) >= GLOBAL:
+            if len(recent) >= PER_IP:
                 raise HTTPException(429, "尝试次数过多，请 15 分钟后再试")
+            # Global pressure only slows everyone down; it never hard-locks the owner out
+            # (a hard global block would let anyone deny access by spraying bad passwords).
+            backoff = 3.0 if len(global_failures) >= GLOBAL else 0.0
             failures[ip] = recent + [now]
             global_failures.append(now)
+        if backoff:
+            time.sleep(backoff)
         try:
             _ph.verify(svc.secrets.admin_password_hash, body.password)
         except VerifyMismatchError:
@@ -147,6 +152,19 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     @app.get("/api/orders", dependencies=auth)
     def orders(limit: int = 100):
         return [o.model_dump() for o in svc.db.all(select(Order).order_by(desc(Order.ts)).limit(min(limit, 1000)))]
+
+    ticker_cache: dict = {"ts": 0.0, "data": {}}
+
+    @app.get("/api/ticker", dependencies=auth)
+    def ticker():
+        if time.time() - ticker_cache["ts"] > 3:
+            try:
+                ticker_cache["data"] = svc.client.ticker_24h(svc.settings.symbols())
+                ticker_cache["ts"] = time.time()
+            except ExchangeError as e:
+                if not ticker_cache["data"]:
+                    raise HTTPException(502, str(e)) from e
+        return ticker_cache["data"]
 
     @app.get("/api/klines", dependencies=auth)
     def klines(symbol: str, interval: str = "1d", limit: int = 120):

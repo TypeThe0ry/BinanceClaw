@@ -35,6 +35,10 @@ class FakeSpot:
         self._chk()
         return {s: self.prices_map[s] for s in symbols if s in self.prices_map}
 
+    def ticker_24h(self, symbols):
+        self._chk()
+        return {s: {"price": self.prices_map[s], "change_pct": 0.01, "high": 0, "low": 0, "quote_volume": 0} for s in symbols}
+
     def book(self, symbols):
         self._chk()
         return {s: (self.prices_map[s] * 0.9999, self.prices_map[s] * 1.0001) for s in symbols}

@@ -3,6 +3,7 @@ Only the bound chat id (the owner) is ever served."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import queue
 import threading
@@ -11,7 +12,8 @@ import time
 import httpx
 from sqlmodel import desc, select
 
-from ..db import Approval, Cycle
+from ..db import Approval, Cycle, Order
+from . import charts
 
 log = logging.getLogger("binanceclaw.telegram")
 MAX = 4000
@@ -25,6 +27,7 @@ HELP = """BinanceClaw 指令
 /pending 待审批列表
 /log     最近 5 轮决策
 /report  立即生成日报
+/chart   K 线图，例：/chart ETH
 /new     开始新的对话
 其他文字：直接和当前模型对话（只读，不能下单）"""
 
@@ -61,13 +64,51 @@ class TelegramBot:
                 log.warning("send failed: %s", e)
         return mid
 
+    def photo(self, png: bytes, caption: str = "", buttons=None) -> int | None:
+        caption = caption.replace("**", "")
+        data = {"chat_id": str(self.chat_id), "caption": caption[:1024]}
+        if buttons:
+            data["reply_markup"] = json.dumps({"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in buttons]})
+        try:
+            r = self.http.post(f"{self.api}/sendPhoto", data=data, files={"photo": ("chart.png", png, "image/png")}, timeout=60)
+            body = r.json()
+            if body.get("ok"):
+                return body["result"]["message_id"]
+            log.warning("sendPhoto failed: %s", body.get("description"))
+        except Exception as e:
+            log.warning("sendPhoto failed: %s", e)
+        return self.send(caption, buttons)          # fall back to text so nothing is lost
+
     def edit(self, mid: int | None, text: str):
         if not mid:
             return self.send(text)
+        for method, field, limit in (("editMessageText", "text", MAX), ("editMessageCaption", "caption", 1024)):
+            try:
+                self._call(method, {"chat_id": self.chat_id, "message_id": mid, field: text[:limit]})
+                return
+            except Exception:
+                continue
+        self.send(text)
+
+    # ------------------------------------------------------------------ charts
+    def chart_png(self, symbol: str, interval: str = "4h", limit: int = 90, pending: tuple[float, float] | None = None,
+                  title: str = "") -> bytes | None:
         try:
-            self._call("editMessageText", {"chat_id": self.chat_id, "message_id": mid, "text": text[:MAX]})
-        except Exception:
-            self.send(text)
+            kl = self.svc.client.klines(symbol, interval, limit)
+        except Exception as e:
+            log.warning("klines for chart failed: %s", e)
+            return None
+        since = kl[0]["t"] if kl else 0
+        orders = self.svc.db.all(select(Order).where(Order.symbol == symbol, Order.ts >= since,
+                                                     Order.status.in_(("filled", "submitted"))))
+        marks = [{"t": o.ts, "side": o.side, "label": f"${o.quote_usd:,.0f}"} for o in orders]
+        if pending:
+            marks.append({"t": pending[0], "side": "BUY", "label": f"${pending[1]:,.0f}?", "pending": True})
+        try:
+            return charts.candles(symbol, kl, marks, title=title)
+        except Exception as e:
+            log.warning("chart render failed: %s", e)
+            return None
 
     def answer(self, cid, text=""):
         try:
@@ -81,7 +122,10 @@ class TelegramBot:
 
     def on_event(self, kind: str, d: dict):
         if kind == "order" and d.get("via") == "auto" and d.get("text"):
-            self.send(f"🟢 自动执行\n{d['text']}")
+            o = self.svc.db.get(Order, d["id"])
+            png = self.chart_png(o.symbol, title="AUTO") if o else None
+            cap = f"🟢 自动执行\n{d['text']}"
+            self.photo(png, cap) if png else self.send(cap)
         elif kind == "order" and d.get("status") == "failed":
             self.send("⚠️ 下单失败，详见网页「交易」页")
         elif kind == "approval_created":
@@ -101,7 +145,7 @@ class TelegramBot:
         elif kind == "alert":
             self.send("⚠️ " + d.get("text", ""))
         elif kind == "report":
-            self.send(d.get("text", ""))
+            self._send_report(d.get("text", ""))
         elif kind == "cycle" and d.get("status") == "done":
             c = self.svc.db.get(Cycle, d["id"])
             if c and not c.risk:
@@ -114,8 +158,25 @@ class TelegramBot:
         mins = int((a.expires - time.time()) / 60)
         text = (f"🟡 待批准 [{self.label()}]\n{a.side} {a.symbol}  ${a.quote_usd:,.0f}\n\n"
                 f"理由：{a.reason}\n\n判断错了的信号：{a.invalidation}\n\n{mins} 分钟内有效。批准时会用最新价格重新做风控检查。")
-        mid = self.send(text, [[("✅ 批准", f"ap:{aid}"), ("❌ 拒绝", f"rj:{aid}")]])
+        buttons = [[("✅ 批准", f"ap:{aid}"), ("❌ 拒绝", f"rj:{aid}")]]
+        png = self.chart_png(a.symbol, pending=(time.time(), a.quote_usd), title="PENDING")
+        if png:
+            cap = (f"🟡 待批准 [{self.label()}]\n{a.side} {a.symbol}  ${a.quote_usd:,.0f}\n\n"
+                   f"理由：{a.reason[:330]}\n\n判断错了的信号：{a.invalidation[:250]}\n\n{mins} 分钟内有效")
+            mid = self.photo(png, cap, buttons)
+        else:
+            mid = self.send(text, buttons)
         self.svc.db.update(Approval, aid, tg_message_id=mid)
+
+    def _send_report(self, text: str):
+        try:
+            ov = self.svc.overview()
+            self.photo(charts.equity(self.svc.equity_series(500)), "📈 资产曲线")
+            if ov.get("category_weights"):
+                self.photo(charts.allocation(ov["category_weights"], ov["targets"]), "🧭 配置 vs 目标")
+        except Exception as e:
+            log.warning("report charts failed: %s", e)
+        self.send(text)
 
     # ------------------------------------------------------------------ commands
     def status_text(self) -> str:
@@ -171,6 +232,16 @@ class TelegramBot:
         elif cmd == "/report":
             self.send("正在生成日报…")
             threading.Thread(target=self._safe, args=(svc.daily_report,), daemon=True).start()
+        elif cmd == "/chart":
+            parts = text.split()
+            tok = (parts[1] if len(parts) > 1 else "BTC").upper().replace("USDT", "")
+            sym = f"{tok}{svc.settings.quote}"
+            if sym not in svc.settings.symbols():
+                self.send(f"只支持：{', '.join(t for t in svc.settings.tradable_tokens())}")
+            else:
+                interval = parts[2] if len(parts) > 2 and parts[2] in ("1h", "4h", "1d") else "4h"
+                png = self.chart_png(sym, interval)
+                self.photo(png, f"{sym} · {interval}") if png else self.send("图表生成失败")
         elif cmd == "/new":
             svc.db.kv_set("chat_cut_ts", time.time())
             self.send("已开始新的对话。")

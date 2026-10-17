@@ -66,3 +66,15 @@ def test_concurrent_login_cannot_bypass_lockout(client):
     with ThreadPoolExecutor(max_workers=20) as ex:
         codes = list(ex.map(lambda _: client.post("/api/auth/login", json={"password": "nope"}).status_code, range(20)))
     assert codes.count(401) <= 5 and codes.count(429) >= 15
+
+
+def test_global_pressure_does_not_lock_out_owner(client):
+    # 30 bad attempts spread over many "IPs" must not block a correct password
+    from binanceclaw.api import app as appmod  # noqa: F401
+    for i in range(6):
+        for _ in range(5):
+            client.post("/api/auth/login", json={"password": "nope"}, headers={"X-Forwarded-For": f"10.0.0.{i}"})
+    # TestClient always reports the same client host, so emulate a fresh source by a new client
+    from fastapi.testclient import TestClient
+    fresh = TestClient(client.app, client=("203.0.113.9", 50000))
+    assert fresh.post("/api/auth/login", json={"password": "correct-horse-1"}).status_code == 200
