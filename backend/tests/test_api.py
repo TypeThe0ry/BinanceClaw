@@ -68,6 +68,24 @@ def test_concurrent_login_cannot_bypass_lockout(client):
     assert codes.count(401) <= 5 and codes.count(429) >= 15
 
 
+def _ip_app(app):
+    """Test-only ASGI wrapper: take the client address from an X-Test-IP header."""
+    async def asgi(scope, receive, send):
+        if scope["type"] == "http":
+            ip = dict(scope["headers"]).get(b"x-test-ip")
+            if ip:
+                scope = dict(scope, client=(ip.decode(), 1))
+        await app(scope, receive, send)
+    return asgi
+
+
+def _login(tc, ip, pw, device=None):
+    tc.cookies.clear()
+    if device:
+        tc.cookies.set("bclaw_device", device)
+    return tc.post("/api/auth/login", json={"password": pw}, headers={"X-Test-IP": ip})
+
+
 def test_global_pressure_serialises_and_never_locks_out_owner(client, monkeypatch):
     import time as _t
     from concurrent.futures import ThreadPoolExecutor
@@ -78,12 +96,42 @@ def test_global_pressure_serialises_and_never_locks_out_owner(client, monkeypatc
     monkeypatch.setitem(appmod.LOGIN_LIMITS, "global", 2)
     monkeypatch.setitem(appmod.LOGIN_LIMITS, "slow_lane_wait", 0.5)
     monkeypatch.setitem(appmod.LOGIN_LIMITS, "fail_delay", 0.0)
-    src = lambda i: TestClient(client.app, client=(f"198.51.100.{i}", 40000 + i))  # noqa: E731
-    for i in range(2):                                   # push the service under global pressure
-        src(i).post("/api/auth/login", json={"password": "nope"})
-    t0 = _t.time()
-    with ThreadPoolExecutor(max_workers=4) as ex:        # 4 different "attackers" at once
-        list(ex.map(lambda i: src(10 + i).post("/api/auth/login", json={"password": "nope"}), range(4)))
-    assert _t.time() - t0 >= 4 * 0.5 - 0.05               # serialised, not parallel sleeps
-    # the owner is queued, not locked out
-    assert src(99).post("/api/auth/login", json={"password": "correct-horse-1"}).status_code == 200
+    with TestClient(_ip_app(client.app)) as tc:           # one event loop, like uvicorn
+        for i in range(2):                                 # push the service under global pressure
+            tc.post("/api/auth/login", json={"password": "nope"}, headers={"X-Test-IP": f"198.51.100.{i}"})
+        t0 = _t.time()
+        with ThreadPoolExecutor(max_workers=4) as ex:      # 4 different "attackers" at once
+            list(ex.map(lambda i: tc.post("/api/auth/login", json={"password": "nope"},
+                                          headers={"X-Test-IP": f"198.51.100.{10 + i}"}), range(4)))
+        assert _t.time() - t0 >= 4 * 0.5 - 0.05             # serialised, not parallel sleeps
+        assert _login(tc, "198.51.100.99", "correct-horse-1").status_code == 200   # queued, not locked out
+
+
+def test_queue_timeout_does_not_consume_attempts_and_known_device_skips_lane(client, monkeypatch):
+    import time as _t
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi.testclient import TestClient
+
+    from binanceclaw.api import app as appmod
+    with TestClient(_ip_app(client.app)) as tc:
+        r = _login(tc, "192.0.2.7", "correct-horse-1")
+        assert r.status_code == 200
+        device = tc.cookies.get("bclaw_device")
+        assert device
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "global", 1)
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "slow_lane_wait", 0.6)
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "queue_timeout", 0.05)
+        monkeypatch.setitem(appmod.LOGIN_LIMITS, "fail_delay", 0.0)
+        tc.cookies.clear()
+        tc.post("/api/auth/login", json={"password": "nope"}, headers={"X-Test-IP": "198.51.100.1"})   # pressure on
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            codes = list(ex.map(lambda _: tc.post("/api/auth/login", json={"password": "nope"},
+                                                  headers={"X-Test-IP": "203.0.113.5"}).status_code, range(6)))
+        assert codes.count(429) >= 4                      # most could not get a slot ...
+        # ... and those timeouts were not charged, so this source is not locked out
+        assert _login(tc, "203.0.113.5", "correct-horse-1").status_code == 200
+        # a known device skips the slow lane entirely
+        t0 = _t.time()
+        assert _login(tc, "192.0.2.7", "correct-horse-1", device=device).status_code == 200
+        assert _t.time() - t0 < 0.5

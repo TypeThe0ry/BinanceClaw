@@ -26,6 +26,8 @@ from ..risk.gate import CONFIRM_PHRASE
 
 COOKIE = "bclaw_session"
 SESSION_DAYS = 7
+DEVICE_COOKIE = "bclaw_device"
+DEVICE_DAYS = 180
 _ph = PasswordHasher()
 
 # Login throttling (module-level so tests can shrink the waits).
@@ -51,7 +53,8 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     failures: dict[str, list[float]] = {}
     global_failures: list[float] = []
     attempts_lock = threading.Lock()
-    slow_lane = threading.Lock()
+    slow_lane = asyncio.Lock()
+    device_signer = TimestampSigner((svc.secrets.session_secret or os.urandom(32).hex()) + ":device")
 
     # ------------------------------------------------------------------ auth
     def require_auth(request: Request):
@@ -61,25 +64,40 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         except (BadSignature, SignatureExpired):
             raise HTTPException(401, "未登录") from None
 
+    def release(ip: str, ts: float):
+        with attempts_lock:
+            if ts in failures.get(ip, []):
+                failures[ip].remove(ts)
+            if ts in global_failures:
+                global_failures.remove(ts)
+
+    def known_device(request: Request) -> bool:
+        tok = request.cookies.get(DEVICE_COOKIE, "")
+        try:
+            return device_signer.unsign(tok, max_age=DEVICE_DAYS * 86400) == b"owner-device"
+        except (BadSignature, SignatureExpired):
+            return False
+
     @app.post("/api/auth/login")
-    def login(body: Login, request: Request, response: Response):
+    async def login(body: Login, request: Request, response: Response):
         if not svc.secrets.admin_password_hash:
             raise HTTPException(503, "尚未设置登录密码：请运行 binanceclaw setup")
+        L = LOGIN_LIMITS
         ip = request.client.host if request.client else "?"
         now = time.time()
+        trusted = known_device(request)
         # Check-and-reserve atomically: the attempt is counted *before* verifying, so concurrent
-        # requests cannot all slip past the limit. A global cap covers rotating source addresses.
+        # requests cannot all slip past the per-IP limit.
         with attempts_lock:
-            L = LOGIN_LIMITS
             recent = [t for t in failures.get(ip, []) if now - t < L["window"]]
             global_failures[:] = [t for t in global_failures if now - t < L["window"]]
             if len(recent) >= L["per_ip"]:
                 raise HTTPException(429, "尝试次数过多，请 15 分钟后再试")
-            pressure = len(global_failures) >= L["global"]
+            pressure = len(global_failures) >= L["global"] and not trusted
             failures[ip] = recent + [now]
             global_failures.append(now)
 
-        def verify() -> bool:
+        def check() -> bool:
             try:
                 _ph.verify(svc.secrets.admin_password_hash, body.password)
                 return True
@@ -87,28 +105,33 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
                 return False
 
         if pressure:
-            # Under global pressure every attempt goes through ONE slow lane (wait + verify while
-            # holding the lock), capping total throughput at ~1 attempt / 3 s regardless of how many
-            # source addresses are used. The owner is queued, never hard-locked out; requests that
-            # cannot get a slot within 10 s are refused so they cannot pile up and exhaust workers.
-            if not slow_lane.acquire(timeout=L["queue_timeout"]):
-                raise HTTPException(429, "登录繁忙，请稍后再试")
+            # Under global pressure unknown devices share ONE fair (FIFO) slow lane: wait + verify
+            # while holding an asyncio lock, so total throughput stays ~1 attempt / 3 s however many
+            # addresses are used, and waiting costs no worker threads. Devices that have logged in
+            # before carry a signed device cookie and skip the lane, so the owner is never starved.
             try:
-                time.sleep(L["slow_lane_wait"])
-                ok = verify()
+                await asyncio.wait_for(slow_lane.acquire(), timeout=L["queue_timeout"])
+            except TimeoutError:
+                release(ip, now)            # never verified: don't charge this attempt
+                raise HTTPException(429, "登录繁忙，请稍后再试") from None
+            try:
+                await asyncio.sleep(L["slow_lane_wait"])
+                ok = await asyncio.to_thread(check)
             finally:
                 slow_lane.release()
         else:
-            ok = verify()
+            ok = await asyncio.to_thread(check)
         if not ok:
-            time.sleep(L["fail_delay"])
+            await asyncio.sleep(L["fail_delay"])
             raise HTTPException(401, "密码错误")
-        with attempts_lock:   # success: release the reserved attempt
+        with attempts_lock:   # success: clear this source's failures and the reserved slot
             failures.pop(ip, None)
-            if now in global_failures:
-                global_failures.remove(now)
+        release(ip, now)
+        secure = request.url.scheme == "https"
         response.set_cookie(COOKIE, signer.sign("owner").decode(), max_age=SESSION_DAYS * 86400,
-                            httponly=True, samesite="strict", secure=request.url.scheme == "https")
+                            httponly=True, samesite="strict", secure=secure)
+        response.set_cookie(DEVICE_COOKIE, device_signer.sign("owner-device").decode(), max_age=DEVICE_DAYS * 86400,
+                            httponly=True, samesite="strict", secure=secure)
         return {"ok": True}
 
     @app.post("/api/auth/logout")
