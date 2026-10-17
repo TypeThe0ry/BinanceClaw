@@ -28,6 +28,9 @@ COOKIE = "bclaw_session"
 SESSION_DAYS = 7
 _ph = PasswordHasher()
 
+# Login throttling (module-level so tests can shrink the waits).
+LOGIN_LIMITS = {"per_ip": 5, "global": 20, "window": 900, "slow_lane_wait": 3.0, "fail_delay": 1.0, "queue_timeout": 10.0}
+
 
 class Login(BaseModel):
     password: str
@@ -48,7 +51,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     failures: dict[str, list[float]] = {}
     global_failures: list[float] = []
     attempts_lock = threading.Lock()
-    PER_IP, GLOBAL, WINDOW = 5, 20, 900
+    slow_lane = threading.Lock()
 
     # ------------------------------------------------------------------ auth
     def require_auth(request: Request):
@@ -67,22 +70,39 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         # Check-and-reserve atomically: the attempt is counted *before* verifying, so concurrent
         # requests cannot all slip past the limit. A global cap covers rotating source addresses.
         with attempts_lock:
-            recent = [t for t in failures.get(ip, []) if now - t < WINDOW]
-            global_failures[:] = [t for t in global_failures if now - t < WINDOW]
-            if len(recent) >= PER_IP:
+            L = LOGIN_LIMITS
+            recent = [t for t in failures.get(ip, []) if now - t < L["window"]]
+            global_failures[:] = [t for t in global_failures if now - t < L["window"]]
+            if len(recent) >= L["per_ip"]:
                 raise HTTPException(429, "尝试次数过多，请 15 分钟后再试")
-            # Global pressure only slows everyone down; it never hard-locks the owner out
-            # (a hard global block would let anyone deny access by spraying bad passwords).
-            backoff = 3.0 if len(global_failures) >= GLOBAL else 0.0
+            pressure = len(global_failures) >= L["global"]
             failures[ip] = recent + [now]
             global_failures.append(now)
-        if backoff:
-            time.sleep(backoff)
-        try:
-            _ph.verify(svc.secrets.admin_password_hash, body.password)
-        except VerifyMismatchError:
-            time.sleep(1)
-            raise HTTPException(401, "密码错误") from None
+
+        def verify() -> bool:
+            try:
+                _ph.verify(svc.secrets.admin_password_hash, body.password)
+                return True
+            except VerifyMismatchError:
+                return False
+
+        if pressure:
+            # Under global pressure every attempt goes through ONE slow lane (wait + verify while
+            # holding the lock), capping total throughput at ~1 attempt / 3 s regardless of how many
+            # source addresses are used. The owner is queued, never hard-locked out; requests that
+            # cannot get a slot within 10 s are refused so they cannot pile up and exhaust workers.
+            if not slow_lane.acquire(timeout=L["queue_timeout"]):
+                raise HTTPException(429, "登录繁忙，请稍后再试")
+            try:
+                time.sleep(L["slow_lane_wait"])
+                ok = verify()
+            finally:
+                slow_lane.release()
+        else:
+            ok = verify()
+        if not ok:
+            time.sleep(L["fail_delay"])
+            raise HTTPException(401, "密码错误")
         with attempts_lock:   # success: release the reserved attempt
             failures.pop(ip, None)
             if now in global_failures:

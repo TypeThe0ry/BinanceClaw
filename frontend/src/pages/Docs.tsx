@@ -33,7 +33,7 @@ export default function Docs() {
           </NavLink>
         ))}
       </nav>
-      <article className="min-w-0 max-w-[760px]">{text ? <Md text={text} /> : <Empty text="找不到这篇文档" />}</article>
+      <article className="min-w-0 max-w-[760px]">{text ? <Md text={text} trusted /> : <Empty text="找不到这篇文档" />}</article>
     </Page>
   );
 }

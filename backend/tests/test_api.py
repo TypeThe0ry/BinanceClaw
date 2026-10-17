@@ -68,13 +68,22 @@ def test_concurrent_login_cannot_bypass_lockout(client):
     assert codes.count(401) <= 5 and codes.count(429) >= 15
 
 
-def test_global_pressure_does_not_lock_out_owner(client):
-    # 30 bad attempts spread over many "IPs" must not block a correct password
-    from binanceclaw.api import app as appmod  # noqa: F401
-    for i in range(6):
-        for _ in range(5):
-            client.post("/api/auth/login", json={"password": "nope"}, headers={"X-Forwarded-For": f"10.0.0.{i}"})
-    # TestClient always reports the same client host, so emulate a fresh source by a new client
+def test_global_pressure_serialises_and_never_locks_out_owner(client, monkeypatch):
+    import time as _t
+    from concurrent.futures import ThreadPoolExecutor
+
     from fastapi.testclient import TestClient
-    fresh = TestClient(client.app, client=("203.0.113.9", 50000))
-    assert fresh.post("/api/auth/login", json={"password": "correct-horse-1"}).status_code == 200
+
+    from binanceclaw.api import app as appmod
+    monkeypatch.setitem(appmod.LOGIN_LIMITS, "global", 2)
+    monkeypatch.setitem(appmod.LOGIN_LIMITS, "slow_lane_wait", 0.5)
+    monkeypatch.setitem(appmod.LOGIN_LIMITS, "fail_delay", 0.0)
+    src = lambda i: TestClient(client.app, client=(f"198.51.100.{i}", 40000 + i))  # noqa: E731
+    for i in range(2):                                   # push the service under global pressure
+        src(i).post("/api/auth/login", json={"password": "nope"})
+    t0 = _t.time()
+    with ThreadPoolExecutor(max_workers=4) as ex:        # 4 different "attackers" at once
+        list(ex.map(lambda i: src(10 + i).post("/api/auth/login", json={"password": "nope"}), range(4)))
+    assert _t.time() - t0 >= 4 * 0.5 - 0.05               # serialised, not parallel sleeps
+    # the owner is queued, not locked out
+    assert src(99).post("/api/auth/login", json={"password": "correct-horse-1"}).status_code == 200
