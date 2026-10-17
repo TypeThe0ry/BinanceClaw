@@ -13,6 +13,7 @@ import Approvals from "./pages/Approvals";
 import Assets from "./pages/Assets";
 import Chat from "./pages/Chat";
 import Docs from "./pages/Docs";
+import Futures from "./pages/Futures";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import Trade from "./pages/Trade";
@@ -61,6 +62,7 @@ function App() {
             <Route element={<Layout />}>
               <Route index element={<Assets />} />
               <Route path="trade" element={<Trade />} />
+              <Route path="futures" element={<Futures />} />
               <Route path="ai" element={<AIList />} />
               <Route path="ai/:id" element={<AIDetail />} />
               <Route path="approvals" element={<Approvals />} />

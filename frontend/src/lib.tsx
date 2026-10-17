@@ -163,8 +163,9 @@ export function useFlash(value: number | undefined) {
   return { dir, key: n };
 }
 
-export function fmtPrice(v: number | undefined) {
+export function fmtPrice(v: number | null | undefined) {
   if (v == null) return "—";
-  const d = v >= 1000 ? 2 : v >= 1 ? 2 : 4;
+  if (v !== 0 && Math.abs(v) < 0.01) return v.toPrecision(4);         // meme coins: keep 4 significant digits
+  const d = v >= 1 ? 2 : 4;
   return v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 }

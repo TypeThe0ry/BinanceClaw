@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, post, type Category } from "../api";
 import { Page, Seg, SectionHead, Skeleton, Spinner } from "../components/ui";
 import { CATEGORY_LABEL, useApi, useToast } from "../lib";
+import TokenPicker from "../components/TokenPicker";
 
 interface SettingsResp {
   settings: {
@@ -17,6 +18,9 @@ interface SettingsResp {
     capital: { locked: Record<string, number>; budget_usd: number | null };
     allocation: { mode: "targets" | "ai"; enabled: string[]; max_asset_weight: number };
     provider_fallback: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number } | null;
+    stables: string[];
+    futures: FuturesCfg;
+    earn: { enabled: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
   };
   presets: Record<string, unknown>;
   candidates: string[];
@@ -26,6 +30,22 @@ interface SettingsResp {
   bounds: Record<string, [number, number]>;
   confirm_phrase: string;
 }
+interface FuturesCfg {
+  enabled: boolean; symbols: string[]; max_leverage: number; max_position_margin_usd: number; max_total_margin_usd: number;
+  max_loss_per_trade_usd: number; max_stop_distance: number; allow_short: boolean; auto_open: boolean;
+  auto_open_max_margin_usd: number; max_opens_per_day: number;
+}
+interface EarnResp { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }>;
+  products: Record<string, { apr?: string | null; error?: string }> }
+const FUT_LIMITS: { k: keyof FuturesCfg; label: string; unit: string; pct?: boolean }[] = [
+  { k: "max_leverage", label: "最大杠杆", unit: "x" },
+  { k: "max_position_margin_usd", label: "单仓保证金上限", unit: "USD" },
+  { k: "max_total_margin_usd", label: "总保证金上限", unit: "USD" },
+  { k: "max_loss_per_trade_usd", label: "单笔止损最大亏损", unit: "USD" },
+  { k: "max_stop_distance", label: "止损最远距离", unit: "%", pct: true },
+  { k: "max_opens_per_day", label: "每日开仓次数", unit: "次" },
+];
+
 interface LiveCheck { ok: boolean; blockers: string[]; rows: { label: string; field: string; expected: boolean; actual: boolean | null; ok: boolean; waived: boolean; waivable: boolean }[] }
 
 const PRESET_LABEL: Record<string, string> = { conservative: "保守", balanced: "均衡", aggressive: "积极", custom: "自定义" };
@@ -72,7 +92,7 @@ export default function Settings() {
   const { data, reload } = useApi<SettingsResp>("/settings", { kinds: ["settings", "mode"] });
   const live = useApi<LiveCheck>("/live/check");
   const devs = useApi<Device[]>("/devices");
-  const [newTok, setNewTok] = useState("");
+  const earn = useApi<EarnResp>("/earn", { kinds: ["earn", "settings"] });
   const [lockAsset, setLockAsset] = useState("");
   const [lockAmt, setLockAmt] = useState("");
   const toast = useToast();
@@ -204,9 +224,9 @@ export default function Settings() {
                 </button>
               );
             })}
-            <form className="flex gap-1" onSubmit={(e) => { e.preventDefault(); const t = newTok.trim().toUpperCase(); if (t && !d.allocation.enabled.includes(t)) setD({ ...d, allocation: { ...d.allocation, enabled: [...d.allocation.enabled, t] } }); setNewTok(""); }}>
-              <input className="input h-8 w-24 text-[13px]" placeholder="+ 代币" value={newTok} onChange={(e) => setNewTok(e.target.value)} />
-            </form>
+          </div>
+          <div className="mt-3">
+            <TokenPicker selected={d.allocation.enabled} onToggle={(t) => setD({ ...d, allocation: { ...d.allocation, enabled: d.allocation.enabled.includes(t) ? d.allocation.enabled.filter((x) => x !== t) : [...d.allocation.enabled, t] } })} />
           </div>
         </div>
         {d.allocation.mode === "ai" && (
@@ -246,6 +266,87 @@ export default function Settings() {
           <button className="btn-secondary h-9">添加</button>
         </form>
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ capital: d.capital })}>保存</button></div>
+      </section>
+
+      <section id="futures">
+        <SectionHead title="合约" doc="futures" />
+        <Row label="USDⓈ-M 永续合约">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.futures.enabled}
+            onChange={(e) => setD({ ...d, futures: { ...d.futures, enabled: e.target.checked } })} />
+        </Row>
+        <div className="border-b border-line py-3">
+          <p className="text-[14px] text-fg-2">可交易合约</p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {d.futures.symbols.map((t) => (
+              <button key={t} onClick={() => setD({ ...d, futures: { ...d.futures, symbols: d.futures.symbols.filter((x) => x !== t) } })}
+                className="rounded-md border border-fg bg-fg px-2.5 py-1 text-[13px] font-medium text-bg">{t}</button>
+            ))}
+          </div>
+          <div className="mt-3">
+            <TokenPicker endpoint="/futures/markets" placeholder="搜索 USDT 永续合约" selected={d.futures.symbols}
+              onToggle={(t) => setD({ ...d, futures: { ...d.futures, symbols: d.futures.symbols.includes(t) ? d.futures.symbols.filter((x) => x !== t) : [...d.futures.symbols, t] } })} />
+          </div>
+        </div>
+        {FUT_LIMITS.map((f) => {
+          const v = d.futures[f.k] as number;
+          const [lo, hi] = b[f.k] ?? [undefined, undefined];
+          return (
+            <Row key={f.k} label={f.label}>
+              <Num unit={f.unit} value={f.pct ? Math.round(v * 1000) / 10 : v} step={f.pct ? 0.5 : 1}
+                min={lo != null ? (f.pct ? lo * 100 : lo) : undefined} max={hi != null ? (f.pct ? hi * 100 : hi) : undefined}
+                onChange={(x) => setD({ ...d, futures: { ...d.futures, [f.k]: f.pct ? x / 100 : x } })} />
+            </Row>
+          );
+        })}
+        <Row label="允许做空">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.futures.allow_short}
+            onChange={(e) => setD({ ...d, futures: { ...d.futures, allow_short: e.target.checked } })} />
+        </Row>
+        <Row label="小额自动开仓">
+          <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={d.futures.auto_open}
+            onChange={(e) => setD({ ...d, futures: { ...d.futures, auto_open: e.target.checked } })} />
+          {d.futures.auto_open && <Num unit="USD" value={d.futures.auto_open_max_margin_usd} min={0}
+            onChange={(x) => setD({ ...d, futures: { ...d.futures, auto_open_max_margin_usd: x } })} />}
+        </Row>
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ futures: d.futures })}>保存</button></div>
+      </section>
+
+      <section>
+        <SectionHead title="理财" doc="earn" />
+        <Row label="闲置稳定币自动申购活期">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.earn.enabled}
+            onChange={(e) => setD({ ...d, earn: { ...d.earn, enabled: e.target.checked } })} />
+        </Row>
+        <Row label="稳定币">
+          <div className="flex flex-wrap gap-1.5">
+            {d.stables.map((a) => {
+              const on = d.earn.assets.includes(a);
+              return (
+                <button key={a} onClick={() => setD({ ...d, earn: { ...d.earn, assets: on ? d.earn.assets.filter((x) => x !== a) : [...d.earn.assets, a] } })}
+                  className={`rounded-md border px-2.5 py-1 text-[13px] font-medium ${on ? "border-fg bg-fg text-bg" : "border-line-strong text-fg-2 hover:text-fg"}`}>
+                  {a}{earn.data?.products?.[a]?.apr ? <span className={on ? "text-bg/70" : "text-up"}> {(parseFloat(earn.data.products[a].apr as string) * 100).toFixed(2)}%</span> : null}
+                </button>
+              );
+            })}
+          </div>
+        </Row>
+        <Row label="现货保留"><Num unit="USD" value={d.earn.keep_liquid_usd} min={0} onChange={(x) => setD({ ...d, earn: { ...d.earn, keep_liquid_usd: x } })} /></Row>
+        <Row label="最小划转"><Num unit="USD" value={d.earn.min_move_usd} min={1} onChange={(x) => setD({ ...d, earn: { ...d.earn, min_move_usd: x } })} /></Row>
+        {Object.entries(earn.data?.positions ?? {}).map(([a, p]) => (
+          <Row key={a} label={<>活期 <b className="text-fg">{a}</b></>}>
+            <span className="num text-[14px]">{p.amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>
+            <button className="btn-secondary btn-sm" onClick={async () => {
+              const r = await post<{ ok: boolean; message: string }>("/earn/move", { asset: a, amount: p.amount, direction: "redeem" });
+              toast(r.message, r.ok ? "ok" : "err"); earn.reload();
+            }}>全部赎回</button>
+          </Row>
+        ))}
+        <div className="flex gap-2 pt-4">
+          <button className="btn-primary" onClick={() => save({ earn: d.earn })}>保存</button>
+          {d.earn.enabled && <button className="btn-secondary" onClick={async () => {
+            const r = await post<{ ok: boolean; message: string }>("/earn/sweep"); toast(r.message); earn.reload();
+          }}>立即申购闲置</button>}
+        </div>
       </section>
 
       <section>

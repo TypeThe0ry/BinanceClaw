@@ -26,6 +26,8 @@
 | `/report` | 立即生成日报 |
 | `/chart BTC 4h` | K 线图，币种和周期（1h、4h、1d）都可以省略 |
 | `/pnl` | 成本价与盈亏，以及「全买 BTC」的对比 |
+| `/positions` | 合约持仓：方向、杠杆、浮盈、止损止盈 |
+| `/flat yes` | 平掉 BinanceClaw 开的全部合约仓位 |
 | `/alert BTC < 76000 备注` | 设置价格提醒（`>` 表示涨破） |
 | `/alerts` · `/unalert 编号` | 查看或删除提醒 |
 | `/preset 名称` | 套用风险预设 |

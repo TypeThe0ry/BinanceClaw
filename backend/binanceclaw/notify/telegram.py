@@ -35,6 +35,8 @@ HELP = """BinanceClaw 指令
 /budget  AI 投入预算：/budget 3000，/budget off
 /lock    锁定资产：/lock BTC 0.5，/lock BTC 0 解除
 /assets  可交易资产：/assets BTC,ETH；/assets ai 或 /assets targets 切换分配方式
+/positions 合约持仓
+/flat yes 平掉 BinanceClaw 的全部合约仓位
 /new     开始新的对话
 其他文字：直接和当前模型对话（只读，不能下单）"""
 
@@ -153,7 +155,14 @@ class TelegramBot:
             if a:
                 icon = {"approved": "✅", "rejected": "❌", "expired": "⌛", "failed": "⚪"}.get(a.status, "•")
                 by = {"web": "（网页）", "telegram": "（Telegram）"}.get(a.resolved_by, "")
-                self.edit(a.tg_message_id, f"{icon} {a.side} {a.symbol} ${a.quote_usd:,.0f} — {a.status}{by}\n{a.result}")
+                self.edit(a.tg_message_id, f"{icon} {self._ap_title(a)} — {a.status}{by}\n{a.result}")
+        elif kind == "futures" and d.get("text"):
+            icon = "🟢" if d.get("ok") else "⚠️"
+            if d.get("op") in ("STOP_HIT", "LIQUIDATED", "STOP_FAILED"):
+                icon = "🔴"
+            elif d.get("op") == "TP_HIT":
+                icon = "🎯"
+            self.send(f"{icon} 合约 {d['text']}")
         elif kind == "paused":
             self.send(f"⏸ 已暂停自动执行\n{d.get('reason')}\n\n确认无误后发送 /resume 恢复。")
         elif kind == "resumed":
@@ -181,11 +190,36 @@ class TelegramBot:
             if c and not c.risk:
                 self.send(f"🧠 本轮决策：不操作\n{c.summary[:600]}")
 
+    @staticmethod
+    def _ap_title(a) -> str:
+        if a.kind != "futures":
+            return f"{a.side} {a.symbol}  ${a.quote_usd:,.0f}"
+        p = a.payload or {}
+        name = {"OPEN_LONG": "合约开多", "OPEN_SHORT": "合约开空"}.get(a.side, a.side)
+        out = f"{name} {a.symbol}  保证金 ${a.quote_usd:,.0f} × {p.get('leverage')}x\n止损 {p.get('stop_loss')}"
+        return out + (f"  止盈 {p['take_profit']}" if p.get("take_profit") else "")
+
+    def futures_chart(self, symbol: str, level: float | None, title: str = "") -> bytes | None:
+        try:
+            kl = self.svc.fclient.klines(symbol, "1h", 120)
+            return charts.candles(symbol + " PERP", kl, [], title=title, level=level)
+        except Exception as e:
+            log.warning("futures chart failed: %s", e)
+            return None
+
     def _send_approval(self, aid):
         a = self.svc.db.get(Approval, aid)
         if not a:
             return
         mins = int((a.expires - time.time()) / 60)
+        if a.kind == "futures":
+            buttons = [[("✅ 批准", f"ap:{aid}"), ("❌ 拒绝", f"rj:{aid}")]]
+            cap = (f"🟡 待批准 [{self.label()}]\n{self._ap_title(a)}\n\n理由：{a.reason[:330]}\n\n"
+                   f"判断错了的信号：{a.invalidation[:250]}\n\n{mins} 分钟内有效。批准时会用最新价格重新做风控检查。")
+            png = self.futures_chart(a.symbol, (a.payload or {}).get("stop_loss"), "PENDING")
+            mid = self.photo(png, cap[:1024], buttons) if png else self.send(cap, buttons)
+            self.svc.db.update(Approval, aid, tg_message_id=mid)
+            return
         text = (f"🟡 待批准 [{self.label()}]\n{a.side} {a.symbol}  ${a.quote_usd:,.0f}\n\n"
                 f"理由：{a.reason}\n\n判断错了的信号：{a.invalidation}\n\n{mins} 分钟内有效。批准时会用最新价格重新做风控检查。")
         buttons = [[("✅ 批准", f"ap:{aid}"), ("❌ 拒绝", f"rj:{aid}")]]
@@ -264,9 +298,29 @@ class TelegramBot:
             out = []
             for c in rows:
                 t = dt.datetime.fromtimestamp(c.ts, svc.tz()).strftime("%m-%d %H:%M")
-                acts = "；".join(f"{r['side']} {r['symbol']} ${r['approved_usd']:.0f}→{r['decision']}" for r in (c.risk or [])) or "无动作"
+                acts = "；".join(f"{r.get('side') or r.get('op')} {r.get('symbol')} ${(r.get('approved_usd') or r.get('margin') or 0):.0f}"
+                                f"→{r.get('decision')}" for r in (c.risk or [])) or "无动作"
                 out.append(f"{t} [{c.status}] {(c.summary or c.error)[:160]}\n   {acts}")
             self.send("\n\n".join(out) or "暂无记录")
+        elif cmd == "/positions":
+            try:
+                ps = svc.fbroker.snapshot() if svc.fbroker.open_rows() else []
+            except Exception as e:
+                self.send(f"读取合约持仓失败：{e}")
+                return
+            if not ps:
+                self.send("没有合约持仓" + ("" if svc.settings.futures.enabled else "（合约未开启）"))
+            for p in ps:
+                self.send(f"{p['symbol']} {'多' if p['side'] == 'LONG' else '空'} {p['leverage']}x  {p['qty']:g} @ {p['entry']:,.4g}\n"
+                          f"标记 {p['mark']:,.4g}  浮盈 ${p['upnl']:+,.2f}（{(p['roe'] or 0):+.1%}）\n"
+                          f"保证金 ${p['margin']:,.2f}  止损 {p['stop']:g}"
+                          + (f"  止盈 {p['take_profit']:g}" if p.get("take_profit") else ""))
+        elif cmd == "/flat":
+            if (text.split() + [""])[1].lower() != "yes":
+                self.send("确认平掉 BinanceClaw 开的全部合约仓位？发送 /flat yes")
+            else:
+                msgs = svc.flatten_futures("telegram")
+                self.send("\n".join(msgs) or "没有合约持仓")
         elif cmd == "/report":
             self.send("正在生成日报…")
             threading.Thread(target=self._safe, args=(svc.daily_report,), daemon=True).start()

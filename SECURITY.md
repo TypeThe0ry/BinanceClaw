@@ -30,7 +30,11 @@ pause after repeated market-data anomalies · kill switch. Every limit is clampe
 Switching to live requires a confirmation phrase **and** a passing check of
 `/sapi/v1/account/apiRestrictions`: reading + spot trading on, IP whitelist on, and withdrawals,
 futures, margin, internal transfer, universal transfer, options and portfolio margin **off**.
-The exchange client has no withdrawal, transfer, margin or futures endpoints at all.
+The exchange clients have no withdrawal, margin-borrow or sub-account endpoints at all. Futures endpoints and
+spot<->USDⓈ-M transfers (`MAIN_UMFUTURE` / `UMFUTURE_MAIN` only, enforced in code) are used only when the owner
+enables futures; then the live gate requires the futures and universal-transfer permissions instead of waiving them.
+Every live futures position gets an exchange-side stop-loss right after the fill; if it cannot be placed the position
+is closed immediately.
 The owner may knowingly waive futures, margin, internal/universal transfer, options and portfolio-margin
 in Settings (`live_gate_allow`); BinanceClaw still never calls those endpoints, but a leaked key would then
 carry those powers. Withdrawals, the IP whitelist, reading and spot trading can never be waived.

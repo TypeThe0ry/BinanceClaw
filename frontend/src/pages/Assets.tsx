@@ -43,7 +43,7 @@ export default function Assets() {
   const rows = tokens.map((t) => {
     const cat = catOf(t);
     const value = acct[t] ?? o?.values?.[t] ?? 0;
-    const price = t.startsWith("USD") || t === "FDUSD" ? 1 : tick[`${t}USDT`]?.price ?? o?.market?.[t]?.price;
+    const price = t.startsWith("USD") || t === "FDUSD" || t === "FUTURES" ? 1 : tick[`${t}USDT`]?.price ?? o?.market?.[t]?.price;
     const target = s[cat]?.tokens?.[t];
     return { t, cat, value, qty: o?.account_balances?.[t] ?? o?.balances?.[t] ?? 0, price, w: o?.token_weights?.[t] ?? 0,
       target: target === undefined ? 0 : target, locked: o?.capital?.locked?.[t] ?? 0, pf: perf.data?.assets?.[t] };
@@ -139,17 +139,19 @@ export default function Assets() {
                 const catT = tv.length ? tv.reduce((a, b) => a + b, 0) : null;
                 return (
                   <tr key={r.t} className="border-b border-line">
-                    <td className="td"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ background: CATEGORY_COLOR[r.cat] ?? "#8C8C8C" }} /><b className="font-semibold">{r.t}</b>
+                    <td className="td"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ background: CATEGORY_COLOR[r.cat] ?? "#8C8C8C" }} />
+                      {r.t === "FUTURES" ? <Link to="/futures" className="font-semibold hover:underline">合约权益</Link> : <b className="font-semibold">{r.t}</b>}
+                      {!!o?.earn?.positions?.[r.t]?.amount && <span className="tag bg-hover text-fg-2" title="活期理财">理财 {o.earn.positions[r.t].amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>}
                       {r.locked > 0 && <span className="tag bg-hover text-fg-3" title={`锁定 ${r.locked}`}>锁定 {r.locked}</span>}</span></td>
-                    <td className="td num text-right text-fg-2">{r.qty ? r.qty.toLocaleString("en-US", { maximumFractionDigits: 8 }) : "0"}</td>
-                    <td className="td text-right"><FlashNum value={r.price}>{r.price ? fmtPrice(r.price) : "—"}</FlashNum></td>
+                    <td className="td num text-right text-fg-2">{r.t === "FUTURES" ? "—" : r.qty ? r.qty.toLocaleString("en-US", { maximumFractionDigits: 8 }) : "0"}</td>
+                    <td className="td text-right"><FlashNum value={r.price}>{r.price && r.t !== "FUTURES" ? fmtPrice(r.price) : "—"}</FlashNum></td>
                     <td className="td num text-right">{r.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="td num text-right text-fg-2">{r.pf?.avg_cost ? fmtPrice(r.pf.avg_cost) : "—"}</td>
                     <td className="td num text-right">{r.pf?.unrealized != null && r.pf.qty > 1e-12
                       ? <span className={r.pf.unrealized >= 0 ? "text-up" : "text-down"}>{r.pf.unrealized >= 0 ? "+" : ""}{r.pf.unrealized.toFixed(2)}</span>
                       : <span className="text-fg-3">—</span>}</td>
-                    <td className="td num text-right"><span>{(r.w * 100).toFixed(1)}%</span><span className="text-fg-3"> / {r.target == null ? "AI" : `${(r.target * 100).toFixed(0)}%`}</span></td>
-                    <td className="td pl-8">{s[r.cat] ? <Band w={catW} lo={band[0]} hi={band[1]} target={catT ?? -1} color={CATEGORY_COLOR[r.cat] ?? "#8C8C8C"} /> : <span className="text-[12px] text-fg-3">不在管理范围</span>}</td>
+                    <td className="td num text-right"><span>{(r.w * 100).toFixed(1)}%</span>{r.t !== "FUTURES" && <span className="text-fg-3"> / {r.target == null ? "AI" : `${(r.target * 100).toFixed(0)}%`}</span>}</td>
+                    <td className="td pl-8">{r.t === "FUTURES" ? <span className="text-[12px] text-fg-3">保证金 + 浮动盈亏</span> : s[r.cat] ? <Band w={catW} lo={band[0]} hi={band[1]} target={catT ?? -1} color={CATEGORY_COLOR[r.cat] ?? "#8C8C8C"} /> : <span className="text-[12px] text-fg-3">不在管理范围</span>}</td>
                   </tr>
                 );
               })}
@@ -168,7 +170,7 @@ export default function Assets() {
             <span className="min-w-0 flex-1 truncate text-[14px]">{c.summary || c.error || "…"}</span>
             <span className="flex shrink-0 flex-wrap gap-x-4 text-[13px]">
               {c.risk?.length ? c.risk.map((r) => (
-                <span key={r.index} className="flex items-center gap-1.5"><Side side={r.side} />{token(r.symbol)} <span className="num">{usd(r.approved_usd || r.requested_usd, 0)}</span> <Decision d={r.decision} /></span>
+                <span key={`${r.kind ?? "spot"}-${r.index}`} className="flex items-center gap-1.5"><Side side={r.side ?? r.op} />{token(r.symbol)} <span className="num">{usd(r.approved_usd || r.requested_usd || r.margin || r.requested_margin, 0)}</span> <Decision d={r.decision} /></span>
               )) : <span className={c.status === "error" ? "text-down" : "text-fg-3"}>{c.status === "error" ? "失败" : c.status === "skipped" ? "跳过" : "不操作"}</span>}
             </span>
           </Link>

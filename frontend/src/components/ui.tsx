@@ -77,8 +77,17 @@ export function RunPill({ paused }: { paused: boolean }) {
     : <span className="tag gap-1 bg-up/10 text-up"><span className="h-1.5 w-1.5 rounded-full bg-up" />运行中</span>;
 }
 
-export function Side({ side }: { side: string }) {
-  return <span className={`font-medium ${side === "BUY" ? "text-up" : "text-down"}`}>{side === "BUY" ? "买入" : "卖出"}</span>;
+const SIDE: Record<string, [string, string]> = {
+  BUY: ["买入", "text-up"], SELL: ["卖出", "text-down"],
+  OPEN_LONG: ["开多", "text-up"], OPEN_SHORT: ["开空", "text-down"], LONG: ["多", "text-up"], SHORT: ["空", "text-down"],
+  CLOSE: ["平仓", "text-fg"], REDUCE: ["减仓", "text-fg"], SET_STOP: ["调止损", "text-fg-2"],
+  STOP_HIT: ["止损", "text-down"], TP_HIT: ["止盈", "text-up"], LIQUIDATED: ["强平", "text-down"],
+  EXCHANGE_CLOSED: ["交易所平仓", "text-fg-2"], STOP_RESTORED: ["补挂止损", "text-warn"], STOP_FAILED: ["止损失败", "text-down"],
+  ADOPTED: ["确认成交", "text-fg-2"],
+};
+export function Side({ side }: { side: string | undefined }) {
+  const [t, c] = SIDE[side ?? ""] ?? [side ?? "", "text-fg-2"];
+  return <span className={`font-medium ${c}`}>{t}</span>;
 }
 
 const DECISION: Record<string, [string, string]> = {

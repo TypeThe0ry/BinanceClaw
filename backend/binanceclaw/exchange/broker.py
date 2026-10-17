@@ -63,7 +63,7 @@ class Broker:
                 self.db.add(PaperBalance(asset=asset, free=float(amt)))
             self.db.kv_set("paper_initialized", True)
             rows = self.db.all(select(PaperBalance))
-        return {r.asset: r.free for r in rows if r.free > 1e-12}
+        return {r.asset: r.free for r in rows if r.free > 1e-12 and ":" not in r.asset}   # EARN:* lives in core.earn
 
     def reset_paper(self):
         with self.db.write_lock, self.db.session() as s:

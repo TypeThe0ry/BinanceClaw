@@ -96,3 +96,20 @@ def test_ai_mode_cycle_end_to_end(svc):
     c = svc.run_cycle("manual")
     assert [r["decision"] for r in c.risk] == ["execute", "reject"]   # ETH not selected
     assert '"mode": "ai"' in p.calls[0][1][0]["content"]
+
+
+
+def test_market_search(svc):
+    rows = svc.markets("SO")
+    assert [r["token"] for r in rows] == ["SOL"]
+    allr = svc.markets("")
+    assert {r["token"] for r in allr} >= {"BTC", "ETH", "SOL"}
+    assert allr[0]["enabled"] is True                      # selected tokens first
+
+
+def test_any_spot_token_can_be_added_to_targets(svc):
+    svc.update_settings({"allocation": {"enabled": ["BTC", "SOL"]},
+                         "categories": {**{k: v.model_dump() for k, v in svc.settings.categories.items() if k != "ETH"},
+                                        "ALTS": {"tokens": {"SOL": 0.05}, "band": [0.0, 0.1]}}})
+    assert svc.settings.tradable_tokens() == ["BTC", "SOL"]
+    assert svc.settings.group_of("SOL") == "ALTS"

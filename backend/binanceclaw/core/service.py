@@ -14,24 +14,33 @@ from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
 from ..config import DATA_DIR, Secrets, SettingsStore
-from ..db import Approval, ChatMessage, Cycle, Database, Order, PriceAlert, Report
+from ..db import Approval, ChatMessage, Cycle, Database, FuturesPosition, FuturesTrade, Order, PriceAlert, Report
+from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
 from ..exchange.broker import Broker, OrderUnknown
+from ..exchange.futures_broker import FuturesBroker
 from ..risk import gate
 from ..risk.engine import Portfolio, RiskState, evaluate, pause_trigger
+from ..risk.futures import OPEN_OPS, FuturesView, evaluate_futures, perp_symbol
+from .earn import EarnManager
 from .events import EventBus
+
+FUTURES_ASSET = "FUTURES"          # pseudo-asset: equity of BinanceClaw's futures positions, in USD
 
 log = logging.getLogger("binanceclaw")
 
 
 class Service:
-    def __init__(self, data_dir=DATA_DIR, secrets: Secrets | None = None, client: BinanceSpot | None = None):
+    def __init__(self, data_dir=DATA_DIR, secrets: Secrets | None = None, client: BinanceSpot | None = None,
+                 fclient: BinanceFutures | None = None):
         self.data_dir = data_dir
         self.settings_store = SettingsStore(data_dir / "settings.json")
         self.secrets = secrets or Secrets.from_env()
         self.db = Database(data_dir / "binanceclaw.db")
         self.events = EventBus()
         self.client = client or BinanceSpot(self.secrets.binance_api_key, self.secrets.binance_api_secret)
+        self.fclient = fclient or BinanceFutures(self.secrets.binance_api_key, self.secrets.binance_api_secret)
+        self.earn = EarnManager(self)
         self._cycle_lock = threading.Lock()
         self._exec_lock = threading.RLock()
         self._chat_lock = threading.Lock()
@@ -41,6 +50,9 @@ class Service:
     def _rebuild(self):
         s = self.settings_store.get()
         self.broker = Broker(self.client, self.db, s.mode, s.paper)
+        self.fbroker = FuturesBroker(self.fclient, self.client, self.db, s.mode, s.paper)
+        if hasattr(self, "earn"):
+            self.earn._pos = None
         self.provider = make_provider(s.provider, self.secrets)
         self.fallback = make_provider(s.provider_fallback, self.secrets) if s.provider_fallback else None
 
@@ -75,6 +87,13 @@ class Service:
     def update_settings(self, patch: dict):
         if "allocation" in patch and "enabled" in (patch.get("allocation") or {}):
             self._validate_tokens(patch["allocation"]["enabled"])
+        fut = patch.get("futures") or {}
+        if "symbols" in fut:
+            self._validate_perps(fut["symbols"])
+        if fut.get("enabled") and not self.settings.futures.enabled and self.settings.mode == "live":
+            chk = self.live_check(features=["futures"])
+            if not chk["ok"]:
+                raise ValueError("实盘下开启合约需要 Key 权限：" + "；".join(chk["blockers"]))
         if ("limits" in patch or "schedule" in patch) and "risk_preset" not in patch:
             patch = {**patch, "risk_preset": "custom"}
         s = self.settings_store.update(patch)
@@ -94,6 +113,15 @@ class Service:
         bad = [t for t in toks if f"{t}{s.quote}" not in rules or rules[f"{t}{s.quote}"].status != "TRADING"]
         if bad:
             raise ValueError(f"币安没有可交易的 {', '.join(t + s.quote for t in bad)}")
+
+    def _validate_perps(self, tokens: list[str]):
+        try:
+            rules = self.fbroker.rules()
+        except ExchangeError as e:
+            raise ValueError(f"无法读取币安合约列表：{e}") from e
+        bad = [t for t in tokens if perp_symbol(t) not in rules]
+        if bad:
+            raise ValueError(f"币安没有可交易的 USDT 永续合约：{', '.join(perp_symbol(t) for t in bad)}")
 
     def apply_preset(self, name: str):
         from ..config import RISK_PRESETS
@@ -168,6 +196,30 @@ class Service:
                     anomaly = anomaly or "BTC 实时价与日线收盘价偏离过大"
         return prices, market, btc_change, anomaly
 
+    def markets(self, q: str = "", limit: int = 50) -> list[dict]:
+        """Searchable list of every TRADING <TOKEN>USDT spot pair with 24h stats (cached)."""
+        now = time.time()
+        mk = getattr(self, "_markets", None)
+        if not mk or now - mk[0] > 3600:
+            mk = (now, self.client.spot_markets(self.settings.quote))
+            self._markets = mk
+        tk = getattr(self, "_tickers", None)
+        if not tk or now - tk[0] > 120:
+            tk = (now, self.client.all_tickers_24h())
+            self._tickers = tk
+        held = set(self.broker.balances())
+        enabled = set(self.settings.allocation.enabled)
+        q = q.strip().upper()
+        rows = []
+        for m in mk[1]:
+            if q and q not in m["base"]:
+                continue
+            t = tk[1].get(m["symbol"], {})
+            rows.append({"token": m["base"], "symbol": m["symbol"], "price": t.get("price"), "change_pct": t.get("change_pct"),
+                         "quote_volume": t.get("quote_volume", 0.0), "held": m["base"] in held, "enabled": m["base"] in enabled})
+        rows.sort(key=lambda r: (not r["enabled"], not r["held"], r["token"] != q, -(r["quote_volume"] or 0)))
+        return rows[:limit]
+
     def asset_prices(self, assets) -> dict[str, float]:
         """USD prices for arbitrary held assets (not just tradable ones), cached 60 s."""
         cached = getattr(self, "_all_px", None)
@@ -180,9 +232,27 @@ class Service:
         q = self.settings.quote
         return {a: cached[1][f"{a}{q}"] for a in assets if f"{a}{q}" in cached[1]}
 
+    def spot_balances(self) -> dict[str, float]:
+        """Spot balances without Binance's LD<asset> Earn mirrors (Earn is counted from its own endpoint)."""
+        st = set(self.settings.stables)
+        return {a: v for a, v in self.broker.balances().items() if not (a.startswith("LD") and a[2:] in st)}
+
+    def futures_equity(self, marks: dict | None = None) -> float:
+        if not self.fbroker.open_rows():
+            return 0.0
+        try:
+            return self.fbroker.equity(marks)
+        except ExchangeError:
+            return sum(p.margin for p in self.fbroker.open_rows())
+
     def account_portfolio(self, prices: dict) -> Portfolio:
-        raw = self.broker.balances()
+        raw = self.spot_balances()
+        for a, pos in self.earn.positions().items():
+            raw[a] = raw.get(a, 0.0) + pos["amount"]
         px = {**self.asset_prices([a for a in raw if a not in self.settings.stables]), **prices}
+        eq = self.futures_equity()
+        if eq > 0:
+            raw[FUTURES_ASSET], px[FUTURES_ASSET] = eq, 1.0
         return Portfolio(raw, px, self.settings)
 
     def risk_state(self, btc_change=None, anomaly=None) -> RiskState:
@@ -190,7 +260,7 @@ class Service:
         buys = [o for o in orders if o.side == "BUY"]
         paused, reason = self.paused()
         return RiskState(today_orders=len(buys), today_notional=sum(o.quote_usd for o in buys),
-                         deployed_usd=self.deployed_usd(),
+                         deployed_usd=self.deployed_usd() + sum(p.margin for p in self.fbroker.open_rows()),
                          today_auto_notional=sum(o.quote_usd for o in buys if o.via == "auto"),
                          paused=paused, pause_reason=reason, btc_change_7d=btc_change, anomaly=anomaly)
 
@@ -213,7 +283,63 @@ class Service:
         return out
 
     def portfolio(self, prices) -> Portfolio:
-        return Portfolio(self.managed_balances(self.broker.balances()), prices, self.settings)
+        raw = self.spot_balances()
+        for a, amt in self.earn.managed_amounts().items():
+            raw[a] = raw.get(a, 0.0) + amt
+        bal = self.managed_balances(raw)
+        eq = self.futures_equity()
+        if eq > 0:
+            bal[FUTURES_ASSET] = eq
+            prices = {**prices, FUTURES_ASSET: 1.0}
+        return Portfolio(bal, prices, self.settings)
+
+    # ------------------------------------------------------------------ futures state
+    def futures_view(self, pf: Portfolio, st: RiskState, fresh: bool = False) -> FuturesView:
+        s = self.settings
+        fb = self.fbroker
+        marks = fb.marks(0 if fresh else 5)
+        rules = fb.rules()
+        rows = fb.open_rows()
+        positions = {p.symbol: {"side": p.side, "qty": p.qty, "entry": p.entry, "margin": p.margin, "stop": p.stop}
+                     for p in rows if p.status == "open"}
+        try:
+            foreign = fb.foreign_symbols()
+        except ExchangeError:
+            foreign = set(rules)                       # can't see the account: allow no new opens
+        total = pf.total()
+        quote_bal = float(pf.balances.get(s.quote, 0.0))
+        spendable = min(quote_bal, pf.stable_value() - s.limits.stable_floor * total) - total * s.limits.fee_buffer_ratio
+        opens = self.db.all(select(FuturesTrade).where(FuturesTrade.mode == s.mode, FuturesTrade.day == self.today(),
+                                                       FuturesTrade.action.in_(OPEN_OPS),
+                                                       FuturesTrade.status.in_(("filled", "unknown"))))
+        budget = s.capital.budget_usd
+        return FuturesView(settings=s, marks=marks, rules=rules, positions=positions, foreign=foreign,
+                           spendable_usd=max(spendable, 0.0), margin_used=sum(p.margin for p in rows),
+                           opens_today=len(opens), paused=st.paused, pause_reason=st.pause_reason,
+                           trigger=pause_trigger(s, st),
+                           budget_left=(budget - st.deployed_usd) if budget is not None else float("inf"))
+
+    def futures_context(self, fv: FuturesView | None) -> dict:
+        f = self.settings.futures
+        if not f.enabled:
+            return {"enabled": False}
+        out = {"enabled": True, "rules": {
+            "max_leverage": f.max_leverage, "max_position_margin_usd": f.max_position_margin_usd,
+            "max_total_margin_usd": f.max_total_margin_usd, "max_loss_per_trade_usd": f.max_loss_per_trade_usd,
+            "max_stop_distance": f.max_stop_distance, "allow_short": f.allow_short, "auto_open": f.auto_open,
+            "max_opens_per_day": f.max_opens_per_day, "margin_type": "ISOLATED"}}
+        if fv is None:
+            return out
+        prem = self.fbroker.premium()
+        out["whitelist"] = [f"{t}USDT" for t in f.symbols]
+        out["markets"] = {sym: {"mark": round(prem[sym]["mark"], 6), "funding_rate_8h": prem[sym]["funding_rate"]}
+                          for sym in out["whitelist"] if sym in prem}
+        out["positions"] = [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in p.items()
+                             if k in ("symbol", "side", "qty", "entry", "mark", "margin", "leverage", "stop",
+                                      "take_profit", "upnl", "liq_est")} for p in self.fbroker.snapshot(fv.marks)]
+        out["margin_available_usd"] = round(min(fv.spendable_usd, f.max_total_margin_usd - fv.margin_used), 2)
+        out["opens_today"] = fv.opens_today
+        return out
 
     # ------------------------------------------------------------------ cycle
     def run_cycle(self, trigger: str = "schedule") -> Cycle | None:
@@ -257,6 +383,18 @@ class Service:
 
         recent = self.recent_decisions(5)
         context = build_context(s, pf, st, market, recent)
+        fv = None
+        if s.futures.enabled:
+            try:
+                fv = self.futures_view(pf, st, fresh=True)
+            except ExchangeError as e:
+                log.warning("futures data unavailable: %s", e)
+        context["futures"] = self.futures_context(fv)
+        if s.futures.enabled and fv is None:
+            context["futures"]["note"] = "合约数据暂不可用，本轮不要提出合约动作"
+        if s.earn.enabled:
+            context["earn"] = {"enabled": True, "in_earn": {a: round(v, 2) for a, v in self.earn.managed_amounts().items()},
+                               "note": "活期理财里的稳定币已计入 portfolio 余额，买入时系统自动赎回；不需要你操作理财"}
         try:
             context["account_total_usd"] = round(self.account_portfolio(prices).total(), 2)
         except ExchangeError:
@@ -302,9 +440,183 @@ class Service:
                 row["approval_id"] = ap.id
                 row["result"] = "等待批准"
             risk.append(row)
+        if plan.futures:
+            risk.extend(self._handle_futures(plan.futures, fv, c.id))
         if plan.alerts:
             self._replace_ai_alerts(plan.alerts, prices)
         return finish(status="done", plan=plan.model_dump(), risk=risk, summary=plan.summary)
+
+    def _handle_futures(self, acts, fv: FuturesView | None, cycle_id: str) -> list[dict]:
+        actions = [a.model_dump() for a in acts]
+        if fv is None:
+            return [{"kind": "futures", "op": a["op"], "symbol": a["symbol"], "decision": "reject",
+                     "reason": "合约未开启或数据不可用", "checks": [], "reason_model": a["reason"],
+                     "invalidation": a["invalidation"]} for a in actions]
+        out = []
+        for a, v in zip(actions, evaluate_futures(actions, fv), strict=True):
+            row = v.to_dict()
+            row["reason_model"] = a["reason"]
+            row["invalidation"] = a["invalidation"]
+            act = self._capped_action(a, v)
+            if v.decision == "execute":
+                ok, msg = self.execute_futures(act, via="auto", cycle_id=cycle_id)
+                row["result"] = msg
+                if not ok:
+                    row["decision"] = "failed"
+            elif v.decision == "approve":
+                ap = self.create_approval(cycle_id, v.op, v.symbol, v.margin, a["reason"], a["invalidation"],
+                                          kind="futures", payload=act)
+                row["approval_id"] = ap.id
+                row["result"] = "等待批准"
+            out.append(row)
+        return out
+
+    @staticmethod
+    def _capped_action(a: dict, v) -> dict:
+        """The action as the risk engine allowed it (capped margin/leverage), for execution or approval."""
+        act = {**a, "symbol": v.symbol}
+        if v.op in OPEN_OPS:
+            act.update(margin_usd=v.margin, leverage=v.leverage, stop_loss=v.stop_loss, take_profit=v.take_profit)
+        if v.op == "REDUCE":
+            act["fraction"] = v.fraction
+        return act
+
+    def execute_futures(self, action: dict, via: str, cycle_id: str = "") -> tuple[bool, str]:
+        """Re-check on fresh data, then act. Approved opens may shrink but never grow."""
+        with self._exec_lock:
+            s = self.settings
+            try:
+                prices, _m, btc_change, anomaly = self.market_snapshot(max_age=0)
+                pf = self.portfolio(prices)
+                st = self.risk_state(btc_change, anomaly)
+                fv = self.futures_view(pf, st, fresh=True)
+            except ExchangeError as e:
+                return False, f"未执行：获取最新数据失败：{e}"
+            v = evaluate_futures([action], fv)[0]
+            allowed = v.decision == "execute" or (v.decision == "approve" and via in ("approved", "manual"))
+            if not allowed:
+                return False, f"未执行：{v.reason}"
+            op, sym = v.op, v.symbol
+            label = "模拟盘" if s.mode == "paper" else "实盘"
+            cid = "bclawf" + uuid.uuid4().hex[:18]
+            fb = self.fbroker
+            row = next((p for p in fb.open_rows() if p.symbol == sym and p.status == "open"), None)
+            try:
+                if op in OPEN_OPS:
+                    margin = min(v.margin, float(action.get("margin_usd") or v.margin))
+                    self.earn.ensure_liquid(s.quote, margin * 1.03)
+                    side = "LONG" if op == "OPEN_LONG" else "SHORT"
+                    pos, fill = fb.open(sym, side, margin, v.leverage, v.stop_loss, v.take_profit, cid,
+                                        {"cycle_id": cycle_id, "reason": str(action.get("reason", ""))[:1500],
+                                         "invalidation": str(action.get("invalidation", ""))[:800]})
+                    self._ftrade(op, sym, pos.id, fill.qty, fill.price, pos.margin, 0, fill.fee, via, cid, cycle_id, fill.raw)
+                    msg = (f"[{label}] {'开多' if side == 'LONG' else '开空'} {sym} {fill.qty:g} @ {fill.price:,.4g}，"
+                           f"保证金 ${pos.margin:,.2f} × {v.leverage}x，止损 {v.stop_loss:g}"
+                           + (f"，止盈 {v.take_profit:g}" if v.take_profit else ""))
+                elif op in ("CLOSE", "REDUCE"):
+                    fill = fb.close(row, v.fraction, "AI 平仓" if via == "auto" else "手动平仓", cid=cid)
+                    self._ftrade(op, sym, row.id, fill.qty, fill.price, 0, fill.pnl, fill.fee, via, cid, cycle_id, fill.raw)
+                    msg = (f"[{label}] {'平仓' if op == 'CLOSE' else f'减仓 {v.fraction:.0%}'} {sym} {fill.qty:g} @ "
+                           f"{fill.price:,.4g}，盈亏 ${fill.pnl:+,.2f}")
+                else:
+                    old = row.stop
+                    fb.set_stop(row, v.stop_loss)
+                    self._ftrade(op, sym, row.id, 0, v.stop_loss, 0, 0, 0, via, "", cycle_id, {"old": old})
+                    msg = f"[{label}] {sym} 止损 {old:g} → {v.stop_loss:g}"
+            except OrderUnknown as e:
+                self._ftrade(op, sym, row.id if row else "", 0, 0, 0, 0, 0, via, cid, cycle_id, {"error": str(e)}, "unknown")
+                self.events.emit("alert", {"text": f"{sym} 合约下单结果未知，稍后自动对账：{e}"})
+                return False, str(e)
+            except ExchangeError as e:
+                self._ftrade(op, sym, row.id if row else "", 0, 0, 0, 0, 0, via, cid, cycle_id, {"error": str(e)}, "failed")
+                self.events.emit("futures", {"symbol": sym, "op": op, "ok": False, "text": f"{sym} {op} 失败：{e}"})
+                return False, f"执行失败：{e}"
+            self.events.emit("futures", {"symbol": sym, "op": op, "ok": True, "text": msg, "via": via})
+            return True, msg
+
+    def _ftrade(self, action, symbol, pid, qty, price, margin, pnl, fee, via, cid, cycle_id, detail, status="filled"):
+        self.db.add(FuturesTrade(day=self.today(), mode=self.settings.mode, position_id=pid, symbol=symbol, action=action,
+                                 qty=qty, price=price, margin=margin, pnl=pnl, fee=fee, status=status, via=via,
+                                 client_order_id=cid, cycle_id=cycle_id, detail=detail or {}))
+
+    def close_position(self, pid: str, by: str = "web", fraction: float = 1.0) -> tuple[bool, str]:
+        p = self.db.get(FuturesPosition, pid)
+        if not p or p.status != "open" or p.mode != self.settings.mode:
+            return False, "仓位不存在或已平仓"
+        act = {"op": "CLOSE" if fraction >= 1 else "REDUCE", "symbol": p.symbol, "fraction": fraction,
+               "reason": f"{by} 手动平仓", "invalidation": "-"}
+        # closing is allowed even when futures is switched off, so the owner can always get out
+        if not self.settings.futures.enabled:
+            with self._exec_lock:
+                try:
+                    fill = self.fbroker.close(p, fraction, "手动平仓")
+                except ExchangeError as e:
+                    return False, f"平仓失败：{e}"
+                self._ftrade(act["op"], p.symbol, p.id, fill.qty, fill.price, 0, fill.pnl, fill.fee, "manual", "", "", fill.raw)
+                msg = f"平仓 {p.symbol} {fill.qty:g} @ {fill.price:,.4g}，盈亏 ${fill.pnl:+,.2f}"
+                self.events.emit("futures", {"symbol": p.symbol, "op": "CLOSE", "ok": True, "text": msg, "via": "manual"})
+                return True, msg
+        return self.execute_futures(act, via="manual")
+
+    def flatten_futures(self, by: str = "web") -> list[str]:
+        return [self.close_position(p.id, by)[1] for p in self.fbroker.open_rows() if p.status == "open"]
+
+    def futures_watch(self):
+        """Paper: fire stops / take-profits / liquidations. Live: sync with the exchange, keep every stop in place."""
+        fb = self.fbroker
+        if not fb.open_rows():
+            return
+        with self._exec_lock:
+            if self.settings.mode == "live":
+                for p, kind, text in fb.live_sync():
+                    self._ftrade(kind, p.symbol, p.id, p.qty, 0, 0, 0, 0, "exchange", "", "", {"text": text})
+                    self.events.emit("futures", {"symbol": p.symbol, "op": kind, "ok": kind != "STOP_FAILED",
+                                                 "text": f"[实盘] {p.symbol} {text}"})
+                return
+            for p, kind, fill in fb.paper_triggers(fb.marks(0)):
+                self._ftrade(kind, p.symbol, p.id, fill.qty, fill.price, 0, fill.pnl, fill.fee, "exchange", "", "", fill.raw)
+                name = {"LIQUIDATED": "强平", "STOP_HIT": "触发止损", "TP_HIT": "触发止盈"}[kind]
+                self.events.emit("futures", {"symbol": p.symbol, "op": kind, "ok": True,
+                                             "text": f"[模拟盘] {p.symbol} {name} @ {fill.price:,.4g}，盈亏 ${fill.pnl:+,.2f}"})
+
+    def futures_overview(self) -> dict:
+        s = self.settings
+        rows = self.db.all(select(FuturesPosition).where(FuturesPosition.mode == s.mode, FuturesPosition.status == "closed")
+                           .order_by(desc(FuturesPosition.closed)).limit(50))
+        try:
+            pos = self.fbroker.snapshot() if self.fbroker.open_rows() else []
+            err = None
+        except ExchangeError as e:
+            pos, err = [], str(e)
+        trades = self.db.all(select(FuturesTrade).where(FuturesTrade.mode == s.mode).order_by(desc(FuturesTrade.ts)).limit(100))
+        realized = sum(r.realized for r in self.db.all(select(FuturesPosition).where(
+            FuturesPosition.mode == s.mode, FuturesPosition.status == "closed")))
+        return {"enabled": s.futures.enabled, "settings": s.futures.model_dump(), "positions": pos, "error": err,
+                "closed": [r.model_dump() for r in rows], "trades": [t.model_dump() for t in trades],
+                "realized": realized, "unrealized": sum(p["upnl"] for p in pos),
+                "margin_used": sum(p["margin"] for p in pos), "equity": sum(max(p["margin"] + p["upnl"], 0) for p in pos)}
+
+    def futures_markets(self, q: str = "", limit: int = 50) -> list[dict]:
+        rules = self.fbroker.rules()
+        tk = getattr(self, "_ftickers", None)
+        if not tk or time.time() - tk[0] > 120:
+            tk = (time.time(), self.fclient.tickers_24h())
+            self._ftickers = tk
+        q = q.strip().upper()
+        on = {f"{t}USDT" for t in self.settings.futures.symbols}
+        rows = [{"token": r.base, "symbol": sym, "price": tk[1].get(sym, {}).get("price"),
+                 "change_pct": tk[1].get(sym, {}).get("change_pct"), "quote_volume": tk[1].get(sym, {}).get("quote_volume", 0.0),
+                 "enabled": sym in on, "held": False}
+                for sym, r in rules.items() if not q or q in r.base]
+        rows.sort(key=lambda r: (not r["enabled"], r["token"] != q, -(r["quote_volume"] or 0)))
+        return rows[:limit]
+
+    def reset_paper(self):
+        self.broker.reset_paper()
+        for p in self.db.all(select(FuturesPosition).where(FuturesPosition.mode == "paper",
+                                                           FuturesPosition.status.in_(("open", "pending")))):
+            self.db.update(FuturesPosition, p.id, status="closed", closed=time.time(), close_reason="模拟盘重置")
+        self.earn._pos = None
 
     def recent_decisions(self, n: int) -> list[dict]:
         rows = self.db.all(select(Cycle).where(Cycle.status == "done").order_by(desc(Cycle.ts)).limit(n))
@@ -313,7 +625,8 @@ class Service:
             out.append({
                 "time": dt.datetime.fromtimestamp(r.ts, self.tz()).strftime("%m-%d %H:%M"),
                 "summary": r.summary[:300],
-                "actions": [{"side": x.get("side"), "symbol": x.get("symbol"), "usd": x.get("approved_usd"),
+                "actions": [{"side": x.get("side") or x.get("op"), "symbol": x.get("symbol"),
+                             "usd": x.get("approved_usd", x.get("margin")),
                              "decision": x.get("decision"), "result": x.get("result")} for x in (r.risk or [])],
             })
         return out
@@ -338,6 +651,7 @@ class Service:
             btc_ref = prices.get("BTC")
             try:
                 if side == "BUY":
+                    self.earn.ensure_liquid(s.quote, amount)
                     fill = self.broker.buy(symbol, amount, cid)
                 else:
                     token = symbol[: -len(s.quote)]
@@ -415,7 +729,14 @@ class Service:
             realized += p["realized"]
         pnl = value - cost + realized
         bench_value = btc_equiv * prices["BTC"] if prices.get("BTC") else None
-        return {"mode": s.mode, "assets": assets, "invested": bought, "open_cost": cost, "value": value,
+        closed = self.db.all(select(FuturesPosition).where(FuturesPosition.mode == s.mode, FuturesPosition.status == "closed"))
+        fut = {"realized": sum(p.realized for p in closed), "trades": len(closed),
+               "wins": len([p for p in closed if p.realized > 0])}
+        try:
+            fut["unrealized"] = sum(p["upnl"] for p in self.fbroker.snapshot()) if self.fbroker.open_rows() else 0.0
+        except ExchangeError:
+            fut["unrealized"] = None
+        return {"mode": s.mode, "futures": fut, "assets": assets, "invested": bought, "open_cost": cost, "value": value,
                 "unrealized": value - cost, "realized": realized, "pnl": pnl,
                 "roi": pnl / bought if bought else None,
                 "benchmark": {"name": "全部买 BTC", "value": bench_value, "covered_usd": bench_bought,
@@ -512,10 +833,11 @@ class Service:
         return fixed
 
     # ------------------------------------------------------------------ approvals
-    def create_approval(self, cycle_id, side, symbol, usd, reason, invalidation) -> Approval:
+    def create_approval(self, cycle_id, side, symbol, usd, reason, invalidation, kind: str = "spot",
+                        payload: dict | None = None) -> Approval:
         ttl = self.settings.schedule.approval_timeout_minutes * 60
         a = self.db.add(Approval(expires=time.time() + ttl, cycle_id=cycle_id, side=side, symbol=symbol,
-                                 quote_usd=usd, reason=reason, invalidation=invalidation))
+                                 quote_usd=usd, reason=reason, invalidation=invalidation, kind=kind, payload=payload or {}))
         self.events.emit("approval_created", {"id": a.id})
         return a
 
@@ -535,7 +857,10 @@ class Service:
             return False, "这笔已处理"
         if not self.db.claim_approval(aid, "approved", by):
             return False, "这笔已处理"
-        ok, msg, _oid = self.execute(a.side, a.symbol, a.quote_usd, via="approved", cycle_id=a.cycle_id)
+        if a.kind == "futures":
+            ok, msg = self.execute_futures(a.payload or {}, via="approved", cycle_id=a.cycle_id)
+        else:
+            ok, msg, _oid = self.execute(a.side, a.symbol, a.quote_usd, via="approved", cycle_id=a.cycle_id)
         self.db.update(Approval, aid, result=msg, status="approved" if ok else "failed")
         self.events.emit("approval", {"id": aid, "status": "approved" if ok else "failed", "text": msg, "by": by})
         return ok, msg
@@ -548,7 +873,7 @@ class Service:
                 self.events.emit("approval", {"id": a.id, "status": "expired"})
 
     # ------------------------------------------------------------------ live gate
-    def live_check(self) -> dict:
+    def live_check(self, features: list[str] | None = None) -> dict:
         if not (self.secrets.binance_api_key and self.secrets.binance_api_secret):
             return {"ok": False, "rows": [], "blockers": ["未配置币安 API Key"]}
         try:
@@ -556,8 +881,11 @@ class Service:
         except ExchangeError as e:
             return {"ok": False, "rows": [], "blockers": [f"无法读取 Key 权限：{e}"]}
         allow = self.settings.live_gate_allow
-        b = gate.blockers(r, allow)
-        return {"ok": not b, "rows": gate.check_restrictions(r, allow), "blockers": b}
+        if features is None:
+            features = ["futures"] if self.settings.futures.enabled else []
+        need = gate.needed(features)
+        b = gate.blockers(r, allow, need)
+        return {"ok": not b, "rows": gate.check_restrictions(r, allow, need), "blockers": b}
 
     def set_mode(self, mode: str, confirm: str = "", by: str = "web") -> tuple[bool, str]:
         if mode == "paper":
@@ -602,6 +930,8 @@ class Service:
                         "deployed_usd": round(self.deployed_usd(), 2)},
             "risk_preset": s.risk_preset,
             "limits": s.limits.model_dump(),
+            "futures": {"enabled": s.futures.enabled, "open": len([p for p in self.fbroker.open_rows() if p.status == "open"])},
+            "earn": {"enabled": s.earn.enabled, "positions": self.earn.positions() if s.earn.enabled else {}},
         }
         if pf:
             out.update(total=pf.total(), values=pf.values(), balances=pf.balances,
@@ -656,6 +986,13 @@ class Service:
             lines.append(f"· {cat} {w:.1%}（区间 {band[0]:.0%}–{band[1]:.0%}）")
         if ov.get("btc_change_7d") is not None:
             lines.append(f"BTC 7 日 {ov['btc_change_7d']:+.1%}")
+        if s.futures.enabled or self.fbroker.open_rows():
+            try:
+                for p in self.fbroker.snapshot():
+                    lines.append(f"合约 {p['symbol']} {'多' if p['side'] == 'LONG' else '空'} {p['leverage']}x "
+                                 f"保证金 ${p['margin']:,.0f} 浮盈 ${p['upnl']:+,.2f} 止损 {p['stop']:g}")
+            except ExchangeError:
+                pass
         lines.append(f"过去 24 小时成交 {len([o for o in orders if o.status in ('filled', 'submitted')])} 笔：")
         for o in orders:
             lines.append(f"  · {dt.datetime.fromtimestamp(o.ts, self.tz()):%m-%d %H:%M} {o.side} {o.symbol} ${o.quote_usd:,.2f} {o.status}")
@@ -750,6 +1087,8 @@ class Service:
                 self.expire_approvals()
                 self._every("reconcile", 60, self.reconcile_orders)
                 self._every("alerts", 30, self.check_alerts)
+                self._every("futures", 10, self.futures_watch)
+                self._every("earn", 600, self.earn.sweep)
                 self._every("watchdog", 300, self.watchdog)
                 self._every("backup", 3600, self.backup_db)
                 if time.time() >= self.next_cycle_at():

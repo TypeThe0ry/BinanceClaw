@@ -56,6 +56,16 @@ class AlertIn(BaseModel):
     note: str = ""
 
 
+class CloseIn(BaseModel):
+    fraction: float = 1.0
+
+
+class EarnMoveIn(BaseModel):
+    asset: str
+    amount: float
+    direction: str          # subscribe | redeem
+
+
 class ModeIn(BaseModel):
     mode: str
     confirm: str = ""
@@ -281,6 +291,79 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
                     raise HTTPException(502, str(e)) from e
         return ticker_cache["data"]
 
+    @app.get("/api/markets", dependencies=auth)
+    def markets(q: str = "", limit: int = 50):
+        try:
+            return svc.markets(q[:20], min(max(limit, 1), 200))
+        except ExchangeError as e:
+            raise HTTPException(502, str(e)) from e
+
+    # ------------------------------------------------------------------ futures
+    @app.get("/api/futures", dependencies=auth)
+    def futures():
+        return svc.futures_overview()
+
+    @app.get("/api/futures/markets", dependencies=auth)
+    def futures_markets(q: str = "", limit: int = 50):
+        try:
+            return svc.futures_markets(q[:20], min(max(limit, 1), 200))
+        except ExchangeError as e:
+            raise HTTPException(502, str(e)) from e
+
+    @app.get("/api/futures/klines", dependencies=auth)
+    def futures_klines(symbol: str, interval: str = "1h", limit: int = 200):
+        if interval not in ("15m", "1h", "4h", "1d", "1w"):
+            raise HTTPException(400, "bad interval")
+        if symbol not in svc.fbroker.rules():
+            raise HTTPException(400, "unknown perpetual")
+        try:
+            return svc.fclient.klines(symbol, interval, min(limit, 1000))
+        except ExchangeError as e:
+            raise HTTPException(502, str(e)) from e
+
+    @app.post("/api/futures/positions/{pid}/close", dependencies=auth)
+    def futures_close(pid: str, body: CloseIn):
+        if not (0 < body.fraction <= 1):
+            raise HTTPException(400, "fraction must be in (0, 1]")
+        ok, msg = svc.close_position(pid, "web", body.fraction)
+        return {"ok": ok, "message": msg}
+
+    @app.post("/api/futures/flatten", dependencies=auth)
+    def futures_flatten():
+        msgs = svc.flatten_futures("web")
+        return {"ok": True, "message": "；".join(msgs) or "没有持仓"}
+
+    # ------------------------------------------------------------------ earn
+    @app.get("/api/earn", dependencies=auth)
+    def earn():
+        s = svc.settings
+        out = {"enabled": s.earn.enabled, "settings": s.earn.model_dump(), "positions": svc.earn.positions(), "products": {}}
+        for a in s.earn.assets:
+            try:
+                pr = svc.earn.product(a) or {}
+                out["products"][a] = {"apr": pr.get("latestAnnualPercentageRate"), "can_purchase": pr.get("canPurchase"),
+                                      "min": pr.get("minPurchaseAmount")}
+            except ExchangeError as e:
+                out["products"][a] = {"error": str(e)}
+        return out
+
+    @app.post("/api/earn/move", dependencies=auth)
+    def earn_move(body: EarnMoveIn):
+        s = svc.settings
+        asset = body.asset.upper()
+        if asset not in s.stables or not (body.amount > 0) or body.direction not in ("subscribe", "redeem"):
+            raise HTTPException(400, "只支持稳定币，金额必须为正")
+        try:
+            msg = (svc.earn.subscribe if body.direction == "subscribe" else svc.earn.redeem)(asset, body.amount, by="web")
+        except ExchangeError as e:
+            return {"ok": False, "message": str(e)}
+        return {"ok": True, "message": msg}
+
+    @app.post("/api/earn/sweep", dependencies=auth)
+    def earn_sweep():
+        msgs = svc.earn.sweep()
+        return {"ok": True, "message": "；".join(msgs) or "没有超出缓冲的闲置稳定币"}
+
     @app.get("/api/performance", dependencies=auth)
     def performance():
         try:
@@ -398,7 +481,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     def paper_reset():
         if svc.settings.mode != "paper":
             raise HTTPException(400, "只能在模拟盘重置")
-        svc.broker.reset_paper()
+        svc.reset_paper()
         svc.events.emit("paper_reset", {})
         return {"ok": True}
 

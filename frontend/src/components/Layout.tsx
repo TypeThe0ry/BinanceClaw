@@ -1,5 +1,5 @@
 import {
-  BookOpen, ChartLineUp, ChatCircle, DotsThreeOutline, GearSix, Newspaper, Sparkle, Stamp, Stop, Wallet,
+  BookOpen, ChartLineUp, ChatCircle, DotsThreeOutline, GearSix, Lightning, Newspaper, Sparkle, Stamp, Stop, Wallet,
 } from "@phosphor-icons/react";
 import { motion } from "framer-motion";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -9,7 +9,8 @@ import { Change, FlashNum, ModePill, RunPill } from "./ui";
 
 const MAIN = [
   { to: "/", label: "资产", icon: Wallet },
-  { to: "/trade", label: "交易", icon: ChartLineUp },
+  { to: "/trade", label: "现货", icon: ChartLineUp },
+  { to: "/futures", label: "合约", icon: Lightning },
   { to: "/ai", label: "AI", icon: Sparkle },
   { to: "/approvals", label: "审批", icon: Stamp },
   { to: "/chat", label: "对话", icon: ChatCircle },
@@ -17,8 +18,8 @@ const MAIN = [
 ];
 const MOBILE = [
   { to: "/", label: "资产", icon: Wallet },
-  { to: "/trade", label: "交易", icon: ChartLineUp },
-  { to: "/ai", label: "AI", icon: Sparkle },
+  { to: "/trade", label: "现货", icon: ChartLineUp },
+  { to: "/futures", label: "合约", icon: Lightning },
   { to: "/approvals", label: "审批", icon: Stamp },
   { to: "/more", label: "更多", icon: DotsThreeOutline },
 ];
@@ -102,7 +103,7 @@ export function Layout() {
 
       <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-bg pb-[max(env(safe-area-inset-bottom),6px)] pt-1.5 md:hidden">
         {MOBILE.map((n) => {
-          const on = n.to === "/more" ? ["/more", "/chat", "/reports", "/settings", "/docs"].some((p) => loc.pathname.startsWith(p)) : active(n.to);
+          const on = n.to === "/more" ? ["/more", "/ai", "/chat", "/reports", "/settings", "/docs"].some((p) => loc.pathname.startsWith(p)) : active(n.to);
           return (
             <NavLink key={n.to} to={n.to} end={n.to === "/"} className={`relative flex flex-1 flex-col items-center gap-0.5 py-1 text-[11px] ${on ? "text-fg" : "text-fg-3"}`}>
               <n.icon size={22} weight={on ? "fill" : "regular"} />
@@ -118,6 +119,7 @@ export function Layout() {
 
 export function More() {
   const items = [
+    { to: "/ai", label: "AI 决策", icon: Sparkle },
     { to: "/chat", label: "对话", icon: ChatCircle },
     { to: "/reports", label: "日报", icon: Newspaper },
     { to: "/settings", label: "设置", icon: GearSix },

@@ -1,6 +1,6 @@
 # BinanceClaw
 
-**让 AI 管理你的币安现货，风控由代码把关。**
+**让 AI 管理你的币安账户（现货、可选的 U 本位合约和活期理财），风控由代码把关。**
 An AI-driven Binance **spot** portfolio manager: a model of your choice decides, a deterministic risk engine enforces hard limits, you approve anything large — from a web dashboard or Telegram.
 
 > ⚠️ 这是自托管的个人工具，不是投资建议。加密资产波动剧烈，AI 会犯错。先用模拟盘跑足够久，再决定是否开启实盘，并且只投入你能承受损失的资金。
@@ -29,7 +29,10 @@ An AI-driven Binance **spot** portfolio manager: a model of your choice decides,
 - **风险预设**：保守 / 均衡 / 积极，一键切换，随时在网页或 Telegram 干预。
 - **盈亏与提醒**：按平均成本法算每个币的成本和盈亏，并和「全买 BTC」对比；价格提醒可以手动设，也可以由 AI 根据它的判断设置。
 - **硬风控**：币种白名单、只买不卖（可选开启卖出，但永远需要人工批准）、单笔上限、每日笔数与金额上限、每日自动执行总额（防止拆单绕过审批）、稳定币下限、类别区间上限、BTC 7 日跌幅自动暂停、行情异常自动暂停、紧急停止。所有数值都有不可突破的上下限。
-- **实盘准入**：开启实盘前自动读取币安 Key 权限，只要开着提现、合约、杠杆、划转中的任意一项就拒绝，并要求输入确认短语。
+- **全市场现货**：可从币安全部 USDT 现货交易对（含代币化股票）里搜索选择。
+- **合约（可选）**：USDⓈ-M 永续，逐仓、杠杆上限、强制交易所止损、单笔亏损上限，开仓默认要审批，见 [docs/futures.md](docs/futures.md)。
+- **理财（可选）**：闲置稳定币自动申购活期，下单前自动赎回，见 [docs/earn.md](docs/earn.md)。
+- **实盘准入**：开启实盘前自动读取币安 Key 权限，开着提现就拒绝；没用到的合约、杠杆、划转权限默认也要求关闭，并要求输入确认短语。
 - **模拟盘**：真实行情 + 虚拟资金，和实盘走完全相同的决策与风控流程。
 - **网页仪表盘**：总览、AI 决策流（完整"思考过程"）、审批、K 线与成交、对话、日报、设置。深色玻璃风格，桌面和手机都能用，SSE 实时刷新。
 - **Telegram**：审批按钮、成交与暂停通知、每日日报、`/status /run /pause /resume /kill`，直接发文字就能和模型对话（只读）。
@@ -107,7 +110,7 @@ cd frontend && npm run dev     # 代理到 127.0.0.1:8686
 
 ```
 backend/binanceclaw/
-  exchange/   binance_spot.py（HMAC 现货客户端，没有任何合约/划转接口）· broker.py（实盘 / 模拟盘）
+  exchange/   binance_spot.py（现货 / 活期理财 / 现货↔合约划转）· binance_futures.py（U 本位永续）· broker.py · futures_broker.py（实盘 / 模拟盘）
   brain/      providers.py · prompt.py · schema.py（严格 JSON 结构）
   risk/       engine.py（硬限制，纯函数）· gate.py（实盘准入）
   core/       service.py（决策管道、执行、审批、调度）· events.py

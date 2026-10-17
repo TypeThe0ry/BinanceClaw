@@ -7,6 +7,8 @@
 | [AI 决策与风控](decisions-and-risk.md) | 一轮决策怎么跑、每条硬限制的含义 |
 | [资金管理与资产分配](capital-and-allocation.md) | 锁定资产、投入预算、选择资产、AI 自主分配 |
 | [风险预设](risk-presets.md) | 保守 / 均衡 / 积极 |
+| [合约](futures.md) | USDⓈ-M 永续：动作、硬限制、止损保障、资金划转 |
+| [理财](earn.md) | 闲置稳定币自动申购活期、下单前自动赎回 |
 | [审批](approvals.md) | 什么会进审批、怎么批、过期与重新检查 |
 | [模拟盘与实盘](live-mode.md) | 两种模式的区别、实盘准入、权限豁免 |
 | [模型](models.md) | Claude 订阅、OpenAI、兼容接口、Anthropic API |

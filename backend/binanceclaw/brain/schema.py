@@ -25,11 +25,25 @@ class AlertSpec(BaseModel):
     note: str = Field(default="", max_length=200)
 
 
+class FuturesAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    op: Literal["OPEN_LONG", "OPEN_SHORT", "CLOSE", "REDUCE", "SET_STOP"]
+    symbol: str = Field(min_length=2, max_length=20)
+    margin_usd: float | None = Field(default=None, gt=0, le=1_000_000, description="OPEN：投入保证金（USDT）")
+    leverage: int | None = Field(default=None, ge=1, le=125, description="OPEN：杠杆倍数")
+    stop_loss: float | None = Field(default=None, gt=0, description="OPEN 必填；SET_STOP 的新止损价")
+    take_profit: float | None = Field(default=None, gt=0)
+    fraction: float | None = Field(default=None, gt=0, le=1, description="REDUCE：减仓比例")
+    reason: str = Field(min_length=1, max_length=1500)
+    invalidation: str = Field(min_length=1, max_length=800)
+
+
 class TradePlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=3000)
     market_view: str = Field(default="", max_length=3000)
     actions: list[Action] = Field(default_factory=list, max_length=10)
+    futures: list[FuturesAction] = Field(default_factory=list, max_length=5)
     alerts: list[AlertSpec] = Field(default_factory=list, max_length=3)
     confidence: float = Field(ge=0, le=1)
 

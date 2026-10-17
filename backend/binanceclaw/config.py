@@ -33,6 +33,17 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "cycle_minutes": (5, 1440),
     "approval_timeout_minutes": (5, 720),
     "max_asset_weight": (0.05, 1.0),
+    # futures
+    "max_leverage": (1, 20),
+    "max_position_margin_usd": (5, 10000),
+    "max_total_margin_usd": (5, 50000),
+    "max_loss_per_trade_usd": (1, 5000),
+    "max_stop_distance": (0.005, 0.5),
+    "auto_open_max_margin_usd": (0, 10000),
+    "max_opens_per_day": (1, 20),
+    # earn
+    "keep_liquid_usd": (0, 1_000_000),
+    "min_move_usd": (1, 100_000),
 }
 
 # Suggestions for the asset picker (any TRADING <TOKEN>USDT spot pair can also be typed in).
@@ -138,9 +149,51 @@ class Allocation(BaseModel):
                 raise ValueError(f"invalid token {t!r}")
             if t not in out:
                 out.append(t)
-        if len(out) > 15:
-            raise ValueError("at most 15 tradable tokens")
+        if len(out) > 30:
+            raise ValueError("at most 30 tradable tokens")
         return out
+
+
+class Futures(BaseModel):
+    """USDⓈ-M perpetuals. Off by default; every position must carry an exchange-side stop-loss."""
+    enabled: bool = False
+    symbols: list[str] = Field(default_factory=lambda: ["BTC", "ETH"])    # base assets, <TOKEN>USDT perps
+    max_leverage: int = 3
+    max_position_margin_usd: float = 200
+    max_total_margin_usd: float = 500
+    max_loss_per_trade_usd: float = 30          # margin * leverage * stop distance (+ fees) must stay under this
+    max_stop_distance: float = 0.08              # stop-loss at most 8% from mark price
+    allow_short: bool = True
+    auto_open: bool = False                      # False: every open/increase waits for approval
+    auto_open_max_margin_usd: float = 50
+    max_opens_per_day: int = 3
+
+    @field_validator("symbols")
+    @classmethod
+    def _syms(cls, v):
+        out = []
+        for t in v:
+            t = t.upper().strip().removesuffix("USDT")
+            if not t.isalnum() or len(t) > 15:
+                raise ValueError(f"invalid futures symbol {t!r}")
+            if t not in out:
+                out.append(t)
+        if len(out) > 20:
+            raise ValueError("at most 20 futures symbols")
+        return out
+
+
+class Earn(BaseModel):
+    """Simple Earn flexible: park idle stablecoins, redeem automatically when a trade needs them."""
+    enabled: bool = False
+    assets: list[str] = Field(default_factory=lambda: ["USDT"])
+    keep_liquid_usd: float = 200                 # always leave this much in spot
+    min_move_usd: float = 20                     # ignore smaller subscriptions/redemptions
+
+    @field_validator("assets")
+    @classmethod
+    def _assets(cls, v):
+        return sorted({a.upper().strip() for a in v if a.strip()})
 
 
 class PaperSettings(BaseModel):
@@ -167,6 +220,8 @@ class Settings(BaseModel):
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     provider_fallback: ProviderSettings | None = None     # used when the primary model fails
     paper: PaperSettings = Field(default_factory=PaperSettings)
+    futures: Futures = Field(default_factory=Futures)
+    earn: Earn = Field(default_factory=Earn)
     investor_notes: str = "长期投资，BTC 为主。只做现货，不承诺收益。"
     # Key permissions the owner knowingly keeps enabled; validated against risk.gate.WAIVABLE
     live_gate_allow: list[str] = Field(default_factory=list)
@@ -187,12 +242,18 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _clamp(self):
-        for sect in (self.limits, self.schedule, self.allocation):
+        for sect in (self.limits, self.schedule, self.allocation, self.futures, self.earn):
             for k, (lo, hi) in HARD_BOUNDS.items():
                 if hasattr(sect, k):
                     val = getattr(sect, k)
                     clamped = min(max(val, lo), hi)
                     setattr(sect, k, type(val)(clamped))
+        f = self.futures
+        f.max_position_margin_usd = min(f.max_position_margin_usd, f.max_total_margin_usd)
+        f.auto_open_max_margin_usd = min(f.auto_open_max_margin_usd, f.max_position_margin_usd)
+        bad = set(self.earn.assets) - set(self.stables)
+        if bad:
+            raise ValueError(f"理财只支持稳定币：{sorted(bad)}")
         if self.limits.auto_execute_max_usd > self.limits.max_order_usd:
             self.limits.auto_execute_max_usd = self.limits.max_order_usd
         if "STABLE" not in self.categories:
@@ -307,7 +368,7 @@ class SettingsStore:
 
 def _deep_merge(dst: dict, src: dict):
     for k, v in src.items():
-        if isinstance(v, dict) and isinstance(dst.get(k), dict) and k not in ("categories", "locked"):
+        if isinstance(v, dict) and isinstance(dst.get(k), dict) and k not in ("categories", "locked", "tokens"):
             _deep_merge(dst[k], v)
         else:
             dst[k] = v

@@ -1,5 +1,6 @@
-"""Minimal Binance Spot REST client (HMAC-SHA256). Spot only — no futures, margin or
-transfer endpoints exist in this module on purpose."""
+"""Minimal Binance REST clients (HMAC-SHA256): spot, Simple Earn flexible, spot<->USDⓈ-M
+transfer, and (in binance_futures.py) USDⓈ-M perpetuals. No withdrawal, margin-borrow or
+sub-account endpoints exist anywhere in this package, on purpose."""
 from __future__ import annotations
 
 import hashlib
@@ -38,6 +39,8 @@ def _f(x) -> float:
 
 
 class BinanceSpot:
+    TIME_PATH = "/api/v3/time"
+
     def __init__(self, api_key: str = "", api_secret: str = "", base_url: str = BASE_URL, timeout: float = 15):
         self._key = api_key
         self._secret = api_secret.encode()
@@ -78,7 +81,7 @@ class BinanceSpot:
     def _sync_time(self):
         if time.time() - self._offset_ts < 600:
             return
-        server = self._request("GET", "/api/v3/time")["serverTime"]
+        server = self._request("GET", self.TIME_PATH)["serverTime"]
         self._offset_ms = int(server - time.time() * 1000)
         self._offset_ts = time.time()
 
@@ -86,6 +89,18 @@ class BinanceSpot:
     def prices(self, symbols: list[str]) -> dict[str, float]:
         data = self._request("GET", "/api/v3/ticker/price", {"symbols": json.dumps(symbols, separators=(",", ":"))})
         return {d["symbol"]: float(d["price"]) for d in data}
+
+    def spot_markets(self, quote: str = "USDT") -> list[dict]:
+        """Every TRADING spot pair quoted in ``quote`` (one exchangeInfo call, ~MBs: cache it)."""
+        info = self._request("GET", "/api/v3/exchangeInfo", {"permissions": "SPOT"})
+        return [{"symbol": s["symbol"], "base": s["baseAsset"], "quote": s["quoteAsset"]}
+                for s in info["symbols"] if s["quoteAsset"] == quote and s["status"] == "TRADING"
+                and s.get("isSpotTradingAllowed", True)]
+
+    def all_tickers_24h(self) -> dict[str, dict]:
+        rows = self._request("GET", "/api/v3/ticker/24hr")
+        return {d["symbol"]: {"price": float(d["lastPrice"]), "change_pct": float(d["priceChangePercent"]) / 100,
+                              "quote_volume": float(d["quoteVolume"])} for d in rows}
 
     def all_prices(self) -> dict[str, float]:
         """Every spot pair's last price (one request, ~2k rows)."""
@@ -150,3 +165,29 @@ class BinanceSpot:
             "symbol": symbol, "side": "SELL", "type": "MARKET", "quantity": qty,
             "newClientOrderId": client_order_id, "newOrderRespType": "FULL",
         }, signed=True)
+
+    # ---------------------------------------------------------------- Simple Earn (flexible)
+    def earn_products(self, asset: str) -> list[dict]:
+        r = self._request("GET", "/sapi/v1/simple-earn/flexible/list", {"asset": asset, "size": 100}, signed=True)
+        return r.get("rows", [])
+
+    def earn_positions(self) -> list[dict]:
+        r = self._request("GET", "/sapi/v1/simple-earn/flexible/position", {"size": 100}, signed=True)
+        return r.get("rows", [])
+
+    def earn_subscribe(self, product_id: str, amount: float) -> dict:
+        return self._request("POST", "/sapi/v1/simple-earn/flexible/subscribe", {
+            "productId": product_id, "amount": f"{amount:.8f}".rstrip("0").rstrip("."),
+            "autoSubscribe": "false", "sourceAccount": "SPOT"}, signed=True)
+
+    def earn_redeem(self, product_id: str, amount: float) -> dict:
+        return self._request("POST", "/sapi/v1/simple-earn/flexible/redeem", {
+            "productId": product_id, "amount": f"{amount:.8f}".rstrip("0").rstrip("."), "destAccount": "SPOT"}, signed=True)
+
+    # ---------------------------------------------------------------- spot <-> USDⓈ-M futures wallet
+    def transfer(self, direction: str, asset: str, amount: float) -> dict:
+        """direction: MAIN_UMFUTURE (spot -> futures) or UMFUTURE_MAIN (futures -> spot). Nothing else."""
+        if direction not in ("MAIN_UMFUTURE", "UMFUTURE_MAIN"):
+            raise ExchangeError(f"transfer type {direction} not allowed")
+        return self._request("POST", "/sapi/v1/asset/transfer", {
+            "type": direction, "asset": asset, "amount": f"{amount:.8f}".rstrip("0").rstrip(".")}, signed=True)

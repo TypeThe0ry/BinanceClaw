@@ -6,14 +6,14 @@ from binanceclaw.api.app import create_app
 from binanceclaw.config import Secrets
 from binanceclaw.core.service import Service
 
-from .conftest import FakeSpot, plan, use
+from .conftest import FakeFutures, FakeSpot, plan, use
 
 
 @pytest.fixture
 def client(tmp_path):
     sec = Secrets(admin_password_hash=PasswordHasher().hash("correct-horse-1"), session_secret="x" * 64,
                   binance_api_key="k", binance_api_secret="s")
-    svc = Service(data_dir=tmp_path, secrets=sec, client=FakeSpot())
+    svc = Service(data_dir=tmp_path, secrets=sec, client=FakeSpot(), fclient=FakeFutures())
     c = TestClient(create_app(svc))
     c.svc = svc
     return c

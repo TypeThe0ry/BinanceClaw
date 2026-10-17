@@ -23,11 +23,23 @@ WAIVABLE = {"enableFutures", "enableMargin", "enableInternalTransfer", "permitsU
 CONFIRM_PHRASE = "我确认开启实盘"
 
 
-def check_restrictions(r: dict, allow: list[str] | None = None) -> list[dict]:
+# Enabled features that need a permission switched ON: futures trading needs the futures
+# permission and spot<->futures transfers (universal transfer, MAIN_UMFUTURE/UMFUTURE_MAIN only).
+FEATURE_NEEDS = {"futures": ("enableFutures", "permitsUniversalTransfer")}
+
+
+def needed(features: list[str]) -> set[str]:
+    return {f for feat in features for f in FEATURE_NEEDS.get(feat, ())}
+
+
+def check_restrictions(r: dict, allow: list[str] | None = None, need: set[str] | None = None) -> list[dict]:
     """Return one row per requirement: {label, field, expected, actual, ok, waived, waivable}."""
     allow_set = set(allow or []) & WAIVABLE
+    need = (need or set()) & WAIVABLE
     rows = []
     for fld, want, label in REQUIRED:
+        if fld in need:
+            want = True
         actual = r.get(fld)
         ok = actual is want
         waived = not ok and fld in allow_set and actual is True
@@ -36,9 +48,9 @@ def check_restrictions(r: dict, allow: list[str] | None = None) -> list[dict]:
     return rows
 
 
-def blockers(r: dict, allow: list[str] | None = None) -> list[str]:
+def blockers(r: dict, allow: list[str] | None = None, need: set[str] | None = None) -> list[str]:
     out = []
-    for row in check_restrictions(r, allow):
+    for row in check_restrictions(r, allow, need):
         if not row["ok"]:
             state = "开启" if row["actual"] else "关闭"
             need = "开启" if row["expected"] else "关闭"

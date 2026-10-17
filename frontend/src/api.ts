@@ -59,6 +59,8 @@ export interface Overview {
   allocation?: { mode: "targets" | "ai"; enabled: string[]; max_asset_weight: number };
   capital?: { locked: Record<string, number>; budget_usd: number | null; deployed_usd: number };
   risk_preset?: string;
+  futures?: { enabled: boolean; open: number };
+  earn?: { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }> };
 }
 
 export interface PerfAsset { qty: number; avg_cost: number | null; cost: number; value: number | null; price: number | null;
@@ -67,6 +69,7 @@ export interface Performance {
   mode: string; assets: Record<string, PerfAsset>; invested: number; open_cost: number; value: number;
   unrealized: number; realized: number; pnl: number; roi: number | null;
   benchmark: { name: string; value: number | null; pnl: number | null; roi: number | null };
+  futures?: { realized: number; unrealized: number | null; trades: number; wins: number };
 }
 
 export interface PriceAlert { id: string; created: number; symbol: string; op: "below" | "above"; price: number; note: string;
@@ -75,10 +78,18 @@ export interface PriceAlert { id: string; created: number; symbol: string; op: "
 export interface RiskCheck { name: string; ok: boolean; detail: string }
 export interface RiskRow {
   index: number;
-  side: "BUY" | "SELL";
+  kind?: "futures";
+  side?: "BUY" | "SELL";
+  op?: string;
   symbol: string;
-  requested_usd: number;
-  approved_usd: number;
+  requested_usd?: number;
+  approved_usd?: number;
+  requested_margin?: number;
+  margin?: number;
+  leverage?: number;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+  fraction?: number;
   decision: "execute" | "approve" | "reject" | "failed";
   checks: RiskCheck[];
   reason: string;
@@ -132,6 +143,22 @@ export interface Approval {
   status: "pending" | "approved" | "rejected" | "expired" | "failed";
   resolved_by: string;
   result: string;
+  kind?: "spot" | "futures";
+  payload?: { leverage?: number; stop_loss?: number; take_profit?: number | null; margin_usd?: number };
+}
+
+export interface FPosition {
+  id: string; symbol: string; side: "LONG" | "SHORT"; qty: number; entry: number; mark: number; margin: number; leverage: number;
+  stop: number; take_profit: number | null; upnl: number; roe: number | null; liq_est: number | null; opened: number;
+  status: string; reason: string; invalidation: string; realized: number;
+}
+export interface FClosed { id: string; symbol: string; side: string; qty: number; entry: number; close_price: number | null; margin: number;
+  leverage: number; realized: number; fees: number; opened: number; closed: number | null; close_reason: string }
+export interface FTrade { id: string; ts: number; symbol: string; action: string; qty: number; price: number; margin: number; pnl: number;
+  fee: number; status: string; via: string; mode: string }
+export interface FuturesResp {
+  enabled: boolean; settings: Record<string, unknown>; positions: FPosition[]; closed: FClosed[]; trades: FTrade[];
+  realized: number; unrealized: number; margin_used: number; equity: number; error: string | null;
 }
 
 export interface Order {

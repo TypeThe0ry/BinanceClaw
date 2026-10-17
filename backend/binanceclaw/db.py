@@ -68,6 +68,8 @@ class Approval(SQLModel, table=True):
     resolved_by: str = ""                     # telegram | web | system
     result: str = ""
     tg_message_id: Optional[int] = None
+    kind: str = "spot"                        # spot | futures
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON))   # futures: the full action
 
 
 class PriceAlert(SQLModel, table=True):
@@ -81,6 +83,53 @@ class PriceAlert(SQLModel, table=True):
     status: str = Field(default="active", index=True)   # active | triggered | cancelled
     triggered_at: Optional[float] = None
     trigger_price: Optional[float] = None
+
+
+class FuturesPosition(SQLModel, table=True):
+    """One row per position BinanceClaw opened. In paper mode this *is* the ledger; in live mode
+    it holds what the exchange does not (stop/take-profit levels, reasons) and is synced from it."""
+    id: str = Field(default_factory=_id, primary_key=True)
+    mode: str = Field(index=True)
+    symbol: str = Field(index=True)
+    side: str                                 # LONG | SHORT
+    qty: float
+    entry: float
+    margin: float
+    leverage: int
+    stop: float
+    take_profit: Optional[float] = None
+    stop_algo_id: str = ""
+    tp_algo_id: str = ""
+    status: str = Field(default="open", index=True)    # open | closed
+    opened: float = Field(default_factory=time.time)
+    closed: Optional[float] = None
+    close_price: Optional[float] = None
+    realized: float = 0                       # realised P&L (after fees) of closed parts
+    fees: float = 0
+    close_reason: str = ""
+    cycle_id: str = ""
+    reason: str = ""
+    invalidation: str = ""
+
+
+class FuturesTrade(SQLModel, table=True):
+    id: str = Field(default_factory=_id, primary_key=True)
+    ts: float = Field(default_factory=time.time, index=True)
+    day: str = Field(index=True)
+    mode: str
+    position_id: str = ""
+    symbol: str
+    action: str                               # OPEN_LONG | OPEN_SHORT | CLOSE | REDUCE | SET_STOP | STOP_HIT | TP_HIT | LIQUIDATED
+    qty: float = 0
+    price: float = 0
+    margin: float = 0
+    pnl: float = 0
+    fee: float = 0
+    status: str = "filled"                    # filled | failed | unknown
+    via: str = "auto"                         # auto | approved | manual | exchange
+    client_order_id: str = ""
+    cycle_id: str = ""
+    detail: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
 
 class PaperBalance(SQLModel, table=True):
@@ -121,7 +170,28 @@ class Database:
             cur.close()
 
         SQLModel.metadata.create_all(self.engine)
+        self._add_missing_columns()
         self.write_lock = threading.RLock()
+
+    def _add_missing_columns(self):
+        """Tiny forward-only migration: add columns that newer versions declare (create_all never alters)."""
+        with self.engine.begin() as conn:
+            for table in SQLModel.metadata.sorted_tables:
+                have = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info('{table.name}')")}
+                for col in table.columns:
+                    if col.name in have:
+                        continue
+                    default = getattr(col.default, "arg", None)
+                    ddl = f"ALTER TABLE \"{table.name}\" ADD COLUMN \"{col.name}\" {col.type.compile(self.engine.dialect)}"
+                    if isinstance(default, bool):
+                        ddl += f" DEFAULT {int(default)}"
+                    elif isinstance(default, (int, float)):
+                        ddl += f" DEFAULT {default}"
+                    elif isinstance(default, str):
+                        ddl += " DEFAULT '" + default.replace("'", "''") + "'"
+                    elif str(col.type) == "JSON":
+                        ddl += " DEFAULT '{}'"
+                    conn.exec_driver_sql(ddl)
 
     def session(self) -> Session:
         return Session(self.engine, expire_on_commit=False)

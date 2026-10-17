@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { CycleFull, CycleRow } from "../api";
 import { Decision, DocLink, Empty, Page, RiskChecks, SectionHead, Side, Skeleton, Tabs } from "../components/ui";
-import { clock, pct, token, usd, useApi } from "../lib";
+import { clock, pct, token, usd, useApi, fmtPrice } from "../lib";
 
 type F = "all" | "trade" | "none" | "issue";
 
@@ -32,8 +32,8 @@ export function AIList() {
                   {c.risk?.length ? (
                     <div className="flex flex-col gap-1 text-[13px]">
                       {c.risk.map((r) => (
-                        <span key={r.index} className="flex items-center gap-1.5 whitespace-nowrap"><Side side={r.side} />{token(r.symbol)}
-                          <span className="num">{usd(r.approved_usd || r.requested_usd, 0)}</span><Decision d={r.decision} /></span>
+                        <span key={`${r.kind ?? "spot"}-${r.index}`} className="flex items-center gap-1.5 whitespace-nowrap"><Side side={r.side ?? r.op} />{token(r.symbol)}
+                          <span className="num">{usd(r.approved_usd || r.requested_usd || r.margin || r.requested_margin, 0)}</span><Decision d={r.decision} /></span>
                       ))}
                     </div>
                   ) : <span className="text-[13px] text-fg-3">{c.status === "error" ? "失败" : c.status === "skipped" ? "跳过" : c.status === "running" ? "决策中…" : "—"}</span>}
@@ -99,10 +99,20 @@ export function AIDetail() {
       <section>
         <SectionHead title="风控" doc="decisions-and-risk" />
         {c.risk?.length ? c.risk.map((r) => (
-          <div key={r.index} className="border-b border-line py-4">
+          <div key={`${r.kind ?? "spot"}-${r.index}`} className="border-b border-line py-4">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[14px]">
-              <Side side={r.side} /><b>{token(r.symbol)}</b>
-              <span className="num text-fg-2">{usd(r.requested_usd, 0)} → <span className="text-fg">{usd(r.approved_usd, 0)}</span></span>
+              <Side side={r.side ?? r.op} /><b>{token(r.symbol)}</b>{r.kind === "futures" && <span className="tag bg-hover text-fg-2">永续</span>}
+              {r.kind === "futures" ? (
+                <span className="num text-fg-2">
+                  {r.requested_margin ? <>{usd(r.requested_margin, 0)} → <span className="text-fg">{usd(r.margin, 0)}</span></> : null}
+                  {r.leverage ? <> × {r.leverage}x</> : null}
+                  {r.stop_loss ? <> · 止损 {fmtPrice(r.stop_loss)}</> : null}
+                  {r.take_profit ? <> · 止盈 {fmtPrice(r.take_profit)}</> : null}
+                  {r.op === "REDUCE" && r.fraction ? <> · {(r.fraction * 100).toFixed(0)}%</> : null}
+                </span>
+              ) : (
+                <span className="num text-fg-2">{usd(r.requested_usd, 0)} → <span className="text-fg">{usd(r.approved_usd, 0)}</span></span>
+              )}
               <span className="ml-auto"><Decision d={r.decision} /></span>
             </div>
             <dl className="mt-3 grid gap-3 text-[14px] leading-relaxed sm:grid-cols-2">
