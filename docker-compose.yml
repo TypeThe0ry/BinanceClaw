@@ -1,0 +1,16 @@
+services:
+  binanceclaw:
+    build: .
+    image: binanceclaw:local
+    container_name: binanceclaw
+    restart: unless-stopped
+    environment:
+      - TZ=UTC   # set your local timezone, e.g. Asia/Singapore
+    volumes:
+      - ./data:/data
+    ports:
+      # Loopback only by default. Expose to Tailscale/LAN deliberately (see README).
+      - "127.0.0.1:8686:8686"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

@@ -1,0 +1,13 @@
+data/
+.env
+*.env
+!.env.example
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+docker-compose.override.yml
+*.tsbuildinfo

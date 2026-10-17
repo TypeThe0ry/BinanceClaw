@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --mint: 94 242 196;
+}
+
+html, body, #root { min-height: 100%; }
+
+body {
+  @apply bg-abyss text-ink font-sans antialiased;
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(94, 242, 196, 0.07), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(80, 120, 255, 0.08), transparent 60%),
+    linear-gradient(180deg, #060A13 0%, #08101E 50%, #060A13 100%);
+  background-attachment: fixed;
+  font-feature-settings: "cv11", "ss01";
+}
+
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum", "cv11"; }
+
+@layer components {
+  .glass {
+    @apply rounded-2xl border border-white/[0.07] bg-white/[0.035] shadow-glass backdrop-blur-xl;
+  }
+  .glass-strong {
+    @apply rounded-2xl border border-white/10 bg-[#0d1626]/80 shadow-glass backdrop-blur-2xl;
+  }
+  .label { @apply text-[13px] font-medium tracking-wide text-ink-mute; }
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[14px] font-medium
+           transition-[transform,background-color,box-shadow,opacity] duration-150 active:scale-[0.97]
+           disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/60;
+  }
+  .btn-primary { @apply btn bg-mint text-[#04241A] hover:bg-[#7af6d2] shadow-[0_8px_30px_-10px_rgba(94,242,196,0.6)]; }
+  .btn-ghost { @apply btn border border-white/10 bg-white/[0.03] text-ink hover:bg-white/[0.07]; }
+  .btn-danger { @apply btn border border-rose/40 bg-rose/10 text-rose hover:bg-rose/20; }
+  .input {
+    @apply w-full rounded-xl border border-white/10 bg-black/20 px-3.5 py-2.5 text-[14px] text-ink placeholder:text-ink-faint
+           focus:border-mint/50 focus:outline-none focus:ring-2 focus:ring-mint/20;
+  }
+  .chip { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12.5px] font-medium leading-none; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

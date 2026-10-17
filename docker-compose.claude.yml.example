@@ -1,0 +1,10 @@
+# Optional: reuse the host's logged-in Claude Code (subscription) instead of CLAUDE_CODE_OAUTH_TOKEN.
+# Copy to docker-compose.override.yml and adjust paths.
+services:
+  binanceclaw:
+    volumes:
+      - ~/.claude:/root/.claude
+      - ~/.claude.json:/root/.claude.json
+    # Also publish on a LAN / Tailscale address if you want remote access:
+    # ports:
+    #   - "192.168.1.10:8686:8686"

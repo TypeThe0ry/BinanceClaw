@@ -1,0 +1,137 @@
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+export async function api<T = unknown>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+  const { json, ...rest } = init ?? {};
+  const res = await fetch(`/api${path}`, {
+    credentials: "same-origin",
+    ...rest,
+    headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...(rest.headers ?? {}) },
+    body: json !== undefined ? JSON.stringify(json) : rest.body,
+  });
+  if (res.status === 401 && path !== "/auth/login") {
+    window.dispatchEvent(new Event("bclaw:unauthorized"));
+  }
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const b = await res.json();
+      msg = typeof b.detail === "string" ? b.detail : JSON.stringify(b.detail ?? b);
+    } catch {
+      /* not json */
+    }
+    throw new ApiError(res.status, msg);
+  }
+  return res.json() as Promise<T>;
+}
+
+export const post = <T = unknown>(path: string, json: unknown = {}) => api<T>(path, { method: "POST", json });
+
+// ---------------------------------------------------------------- types
+export interface Category { tokens: Record<string, number>; band: [number, number] }
+
+export interface Overview {
+  mode: "paper" | "live";
+  paused: boolean;
+  pause_reason: string;
+  error: string | null;
+  provider: { name: string; model: string };
+  next_cycle_at: number;
+  cycle_minutes: number;
+  today: { orders: number; notional: number; max_orders: number; max_notional: number };
+  pending_approvals: number;
+  btc_change_7d: number | null;
+  anomaly: string | null;
+  market: Record<string, { price: number; change_7d?: number; change_30d?: number; daily_closes_14d?: number[] }>;
+  targets: Record<string, Category>;
+  limits: Record<string, number | boolean>;
+  total?: number;
+  values?: Record<string, number>;
+  balances?: Record<string, number>;
+  token_weights?: Record<string, number>;
+  category_weights?: Record<string, number>;
+}
+
+export interface RiskCheck { name: string; ok: boolean; detail: string }
+export interface RiskRow {
+  index: number;
+  side: "BUY" | "SELL";
+  symbol: string;
+  requested_usd: number;
+  approved_usd: number;
+  decision: "execute" | "approve" | "reject" | "failed";
+  checks: RiskCheck[];
+  reason: string;
+  reason_model: string;
+  invalidation: string;
+  result?: string;
+  approval_id?: string;
+  order_id?: string;
+}
+
+export interface Plan {
+  summary: string;
+  market_view: string;
+  confidence: number;
+  actions: { side: string; symbol: string; quote_usd: number; reason: string; invalidation: string }[];
+}
+
+export interface CycleRow {
+  id: string;
+  ts: number;
+  mode: string;
+  trigger: string;
+  status: "running" | "done" | "skipped" | "error";
+  provider: string;
+  model: string;
+  summary: string;
+  error: string;
+  duration_ms: number;
+  risk: RiskRow[];
+  plan: Plan | null;
+  total_usd?: number;
+}
+
+export interface CycleFull extends CycleRow {
+  context: Record<string, unknown>;
+  prompt: string;
+  raw_output: string;
+  usage: Record<string, unknown>;
+}
+
+export interface Approval {
+  id: string;
+  created: number;
+  expires: number;
+  cycle_id: string;
+  symbol: string;
+  side: string;
+  quote_usd: number;
+  reason: string;
+  invalidation: string;
+  status: "pending" | "approved" | "rejected" | "expired" | "failed";
+  resolved_by: string;
+  result: string;
+}
+
+export interface Order {
+  id: string;
+  ts: number;
+  mode: string;
+  symbol: string;
+  side: string;
+  quote_usd: number;
+  qty: number;
+  price: number;
+  fee: number;
+  status: string;
+  via: string;
+  cycle_id: string;
+}
+
+export interface ChatMsg { id: number; ts: number; channel: string; role: "user" | "assistant"; text: string }
+export interface Report { day: string; ts: number; text: string }
+export interface Kline { t: number; o: number; h: number; l: number; c: number; v: number }
