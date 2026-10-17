@@ -73,6 +73,8 @@ BINANCECLAW_DATA=../data .venv/bin/binanceclaw serve      # --host / --port 可�
 
 不满足时，模拟盘照常可用，但设置页的「开启实盘」会保持锁定并列出原因。
 
+如果你清楚风险、需要保留合约、杠杆或划转权限（例如同一把 Key 还给别的工具用），可以在设置页逐项勾选「允许保留」。BinanceClaw 本身不会调用这些接口；**提现和 IP 白名单永远强制检查，不能豁免。**
+
 ## 配置
 
 在网页「设置」里修改（保存到 `data/settings.json`）：

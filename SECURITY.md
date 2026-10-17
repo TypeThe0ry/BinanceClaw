@@ -31,6 +31,9 @@ Switching to live requires a confirmation phrase **and** a passing check of
 `/sapi/v1/account/apiRestrictions`: reading + spot trading on, IP whitelist on, and withdrawals,
 futures, margin, internal transfer, universal transfer, options and portfolio margin **off**.
 The exchange client has no withdrawal, transfer, margin or futures endpoints at all.
+The owner may knowingly waive futures, margin, internal/universal transfer, options and portfolio-margin
+in Settings (`live_gate_allow`); BinanceClaw still never calls those endpoints, but a leaked key would then
+carry those powers. Withdrawals, the IP whitelist, reading and spot trading can never be waived.
 
 ## Secrets
 

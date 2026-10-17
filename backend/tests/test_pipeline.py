@@ -146,3 +146,13 @@ def test_chat_uses_provider_and_stores_history(svc):
     assert "稳定币" in svc.chat("现在怎么样？", "telegram")
     from binanceclaw.db import ChatMessage
     assert len(svc.db.all(ChatMessage.__table__.select())) == 2
+
+
+def test_live_mode_with_owner_waivers(svc):
+    svc.client.restrictions.update(enableFutures=True, enableInternalTransfer=True, permitsUniversalTransfer=True)
+    assert not svc.set_mode("live", gate.CONFIRM_PHRASE)[0]
+    svc.update_settings({"live_gate_allow": ["enableFutures", "enableInternalTransfer", "permitsUniversalTransfer"]})
+    assert svc.set_mode("live", gate.CONFIRM_PHRASE)[0] and svc.settings.mode == "live"
+    svc.set_mode("paper")
+    svc.client.restrictions["enableWithdrawals"] = True
+    assert not svc.set_mode("live", gate.CONFIRM_PHRASE)[0]

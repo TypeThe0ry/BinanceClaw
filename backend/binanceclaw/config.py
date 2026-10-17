@@ -97,6 +97,17 @@ class Settings(BaseModel):
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     investor_notes: str = "长期投资，BTC 为主。只做现货，不承诺收益。"
+    # Key permissions the owner knowingly keeps enabled; validated against risk.gate.WAIVABLE
+    live_gate_allow: list[str] = Field(default_factory=list)
+
+    @field_validator("live_gate_allow")
+    @classmethod
+    def _waivable_only(cls, v):
+        from .risk.gate import WAIVABLE
+        bad = set(v) - WAIVABLE
+        if bad:
+            raise ValueError(f"these key permissions can never be waived: {sorted(bad)}")
+        return sorted(set(v))
 
     @field_validator("stables")
     @classmethod

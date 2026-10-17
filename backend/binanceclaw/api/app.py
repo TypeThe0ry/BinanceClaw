@@ -46,6 +46,9 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title="BinanceClaw", docs_url=None, redoc_url=None, openapi_url=None)
     signer = TimestampSigner(svc.secrets.session_secret or os.urandom(32).hex())
     failures: dict[str, list[float]] = {}
+    global_failures: list[float] = []
+    attempts_lock = threading.Lock()
+    PER_IP, GLOBAL, WINDOW = 5, 20, 900
 
     # ------------------------------------------------------------------ auth
     def require_auth(request: Request):
@@ -57,19 +60,28 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/auth/login")
     def login(body: Login, request: Request, response: Response):
-        ip = request.client.host if request.client else "?"
-        recent = [t for t in failures.get(ip, []) if time.time() - t < 900]
-        if len(recent) >= 5:
-            raise HTTPException(429, "尝试次数过多，请 15 分钟后再试")
         if not svc.secrets.admin_password_hash:
             raise HTTPException(503, "尚未设置登录密码：请运行 binanceclaw setup")
+        ip = request.client.host if request.client else "?"
+        now = time.time()
+        # Check-and-reserve atomically: the attempt is counted *before* verifying, so concurrent
+        # requests cannot all slip past the limit. A global cap covers rotating source addresses.
+        with attempts_lock:
+            recent = [t for t in failures.get(ip, []) if now - t < WINDOW]
+            global_failures[:] = [t for t in global_failures if now - t < WINDOW]
+            if len(recent) >= PER_IP or len(global_failures) >= GLOBAL:
+                raise HTTPException(429, "尝试次数过多，请 15 分钟后再试")
+            failures[ip] = recent + [now]
+            global_failures.append(now)
         try:
             _ph.verify(svc.secrets.admin_password_hash, body.password)
         except VerifyMismatchError:
-            failures[ip] = recent + [time.time()]
             time.sleep(1)
             raise HTTPException(401, "密码错误") from None
-        failures.pop(ip, None)
+        with attempts_lock:   # success: release the reserved attempt
+            failures.pop(ip, None)
+            if now in global_failures:
+                global_failures.remove(now)
         response.set_cookie(COOKIE, signer.sign("owner").decode(), max_age=SESSION_DAYS * 86400,
                             httponly=True, samesite="strict", secure=request.url.scheme == "https")
         return {"ok": True}

@@ -110,3 +110,20 @@ def test_splitting_to_dodge_approval_is_capped():
     assert [v.decision for v in vs] == ["execute", "execute", "approve"]
     v = ev({"USDT": 10000}, [("BUY", "BTCUSDT", 150)], today_orders=2, today_auto_notional=350)[0]
     assert v.decision == "approve"
+
+
+def test_gate_waivers():
+    unsafe = dict(SAFE_RESTRICTIONS, enableFutures=True, enableInternalTransfer=True, permitsUniversalTransfer=True)
+    allow = ["enableFutures", "enableInternalTransfer", "permitsUniversalTransfer"]
+    assert gate.blockers(unsafe, allow) == []
+    rows = {r["field"]: r for r in gate.check_restrictions(unsafe, allow)}
+    assert rows["enableFutures"]["waived"] and rows["enableFutures"]["ok"]
+    # withdrawals / missing IP whitelist can never be waived
+    assert gate.blockers(dict(unsafe, enableWithdrawals=True), allow + ["enableWithdrawals"]) != []
+    assert gate.blockers(dict(unsafe, ipRestrict=False), allow + ["ipRestrict"]) != []
+
+
+def test_settings_reject_unwaivable():
+    with pytest.raises(ValueError):
+        Settings.model_validate({"live_gate_allow": ["enableWithdrawals"]})
+    assert Settings.model_validate({"live_gate_allow": ["enableFutures"]}).live_gate_allow == ["enableFutures"]

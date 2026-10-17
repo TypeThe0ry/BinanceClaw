@@ -13,6 +13,7 @@ interface SettingsResp {
     schedule: { cycle_minutes: number; approval_timeout_minutes: number; daily_report_time: string; timezone: string };
     provider: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number };
     investor_notes: string;
+    live_gate_allow: string[];
   };
   secrets: Record<string, boolean>;
   providers: Record<string, { ok: boolean; message: string; default_model: string }>;
@@ -20,7 +21,7 @@ interface SettingsResp {
   confirm_phrase: string;
   telegram: boolean;
 }
-interface LiveCheck { ok: boolean; blockers: string[]; rows: { label: string; expected: boolean; actual: boolean | null; ok: boolean }[] }
+interface LiveCheck { ok: boolean; blockers: string[]; rows: { label: string; field: string; expected: boolean; actual: boolean | null; ok: boolean; waived: boolean; waivable: boolean }[] }
 
 const PROVIDER_LABEL: Record<string, { t: string; d: string }> = {
   claude_code: { t: "Claude 订阅", d: "通过 Claude Code CLI，用你的订阅额度，不需要 API Key" },
@@ -123,13 +124,30 @@ export default function Settings() {
             <p className="mt-1 text-[13.5px] text-ink-mute">币安 API Key 必须只开读取和现货交易、绑定 IP 白名单，其余权限全部关闭。</p>
             {live.loading ? <Spinner className="mt-4" /> : (
               <ul className="mt-4 grid gap-2 sm:grid-cols-2">
-                {(live.data?.rows ?? []).map((r) => (
-                  <li key={r.label} className="flex items-center gap-2 text-[14px]">
-                    {r.ok ? <CheckCircle size={18} weight="fill" className="text-mint" /> : <XCircle size={18} weight="fill" className="text-rose" />}
-                    <span>{r.label}</span>
-                    <span className="text-ink-mute">需要{r.expected ? "开启" : "关闭"}{!r.ok && `，当前${r.actual ? "开启" : "关闭"}`}</span>
-                  </li>
-                ))}
+                {(live.data?.rows ?? []).map((r) => {
+                  const allowed = draft.live_gate_allow.includes(r.field);
+                  return (
+                    <li key={r.label} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px]">
+                      {r.waived ? <WarningCircle size={18} weight="fill" className="text-amber" />
+                        : r.ok ? <CheckCircle size={18} weight="fill" className="text-mint" /> : <XCircle size={18} weight="fill" className="text-rose" />}
+                      <span>{r.label}</span>
+                      <span className={r.waived ? "text-amber" : "text-ink-mute"}>
+                        {r.waived ? "已开启（你选择保留）" : `需要${r.expected ? "开启" : "关闭"}${!r.ok ? `，当前${r.actual ? "开启" : "关闭"}` : ""}`}
+                      </span>
+                      {r.waivable && r.actual === true && (
+                        <label className="ml-1 flex items-center gap-1.5 text-[12.5px] text-ink-mute">
+                          <input type="checkbox" className="h-3.5 w-3.5 accent-[#F5B544]" checked={allowed}
+                            onChange={async (e) => {
+                              const next = e.target.checked ? [...draft.live_gate_allow, r.field] : draft.live_gate_allow.filter((x) => x !== r.field);
+                              await save({ live_gate_allow: next }, e.target.checked ? `已允许保留「${r.label}」` : `已取消「${r.label}」的豁免`);
+                              live.reload();
+                            }} />
+                          允许保留
+                        </label>
+                      )}
+                    </li>
+                  );
+                })}
                 {!live.data?.rows?.length && live.data?.blockers.map((x) => <li key={x} className="text-[14px] text-rose">{x}</li>)}
               </ul>
             )}
@@ -138,6 +156,11 @@ export default function Settings() {
               <button className="btn-danger" disabled={!live.data?.ok || phrase !== data.confirm_phrase} onClick={() => setMode("live")}>开启实盘</button>
               <button className="btn-ghost" onClick={live.reload}>重新检查</button>
             </div>
+            {draft.live_gate_allow.length > 0 && (
+              <p className="mt-3 text-[13px] leading-relaxed text-ink-mute">
+                你选择保留了部分权限。BinanceClaw 不会调用合约、杠杆或划转接口，但如果 Key 泄露，这些权限会扩大损失范围；提现和 IP 白名单始终强制检查。
+              </p>
+            )}
             {!live.data?.ok && !live.loading && (
               <p className="mt-3 flex items-start gap-1.5 text-[13.5px] text-amber"><WarningCircle size={17} className="mt-0.5 shrink-0" />去币安 API 管理里改好以上权限，再点「重新检查」。</p>
             )}

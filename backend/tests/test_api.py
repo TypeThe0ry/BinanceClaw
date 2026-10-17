@@ -59,3 +59,10 @@ def test_log_redaction():
     RedactFilter().filter(rec)
     out = rec.getMessage()
     assert "FAKEfake" not in out and "sk-abcdef" not in out and "<redacted>" in out
+
+
+def test_concurrent_login_cannot_bypass_lockout(client):
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        codes = list(ex.map(lambda _: client.post("/api/auth/login", json={"password": "nope"}).status_code, range(20)))
+    assert codes.count(401) <= 5 and codes.count(429) >= 15

@@ -320,8 +320,9 @@ class Service:
             r = self.client.api_restrictions()
         except ExchangeError as e:
             return {"ok": False, "rows": [], "blockers": [f"无法读取 Key 权限：{e}"]}
-        b = gate.blockers(r)
-        return {"ok": not b, "rows": gate.check_restrictions(r), "blockers": b}
+        allow = self.settings.live_gate_allow
+        b = gate.blockers(r, allow)
+        return {"ok": not b, "rows": gate.check_restrictions(r, allow), "blockers": b}
 
     def set_mode(self, mode: str, confirm: str = "", by: str = "web") -> tuple[bool, str]:
         if mode == "paper":
