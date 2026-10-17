@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 import threading
 import time
 import uuid
@@ -10,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import desc, select
 
+from ..brain import allocation as alloc
 from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
@@ -110,9 +112,11 @@ class Service:
             rules = self.client.symbol_rules([f"{t}{s.quote}" for t in toks])
         except ExchangeError as e:
             raise ValueError(f"无法在币安确认这些交易对：{e}") from e
-        bad = [t for t in toks if f"{t}{s.quote}" not in rules or rules[f"{t}{s.quote}"].status != "TRADING"]
+        # Any listed pair is accepted, including one Binance has suspended (status BREAK): the owner
+        # may want it in the plan, and the risk engine refuses to trade it until it resumes.
+        bad = [t for t in toks if f"{t}{s.quote}" not in rules]
         if bad:
-            raise ValueError(f"币安没有可交易的 {', '.join(t + s.quote for t in bad)}")
+            raise ValueError(f"币安没有 {', '.join(t + s.quote for t in bad)} 现货交易对")
 
     def _validate_perps(self, tokens: list[str]):
         try:
@@ -197,11 +201,17 @@ class Service:
         return prices, market, btc_change, anomaly
 
     def markets(self, q: str = "", limit: int = 50) -> list[dict]:
-        """Searchable list of every TRADING <TOKEN>USDT spot pair with 24h stats (cached)."""
+        """Searchable list of every asset on Binance spot, with 24h stats (cached).
+
+        One row per base asset. Assets with a <TOKEN><quote> pair are selectable whatever that
+        pair's status: a suspended pair (status BREAK) is shown as such and the risk engine
+        refuses to trade it until Binance resumes it. Assets only quoted in other currencies
+        are listed too, marked not selectable, so nothing on Binance silently goes missing."""
         now = time.time()
+        quote = self.settings.quote
         mk = getattr(self, "_markets", None)
         if not mk or now - mk[0] > 3600:
-            mk = (now, self.client.spot_markets(self.settings.quote))
+            mk = (now, self.client.spot_markets())
             self._markets = mk
         tk = getattr(self, "_tickers", None)
         if not tk or now - tk[0] > 120:
@@ -209,15 +219,33 @@ class Service:
             self._tickers = tk
         held = set(self.broker.balances())
         enabled = set(self.settings.allocation.enabled)
+        stables = set(self.settings.stables)
         q = q.strip().upper()
-        rows = []
+        pairs: dict[str, dict] = {}
+        others: dict[str, set] = {}
         for m in mk[1]:
-            if q and q not in m["base"]:
+            base = m["base"]
+            if base in stables or (q and q not in base):
                 continue
+            if m["quote"] == quote:
+                pairs[base] = m
+            else:
+                others.setdefault(base, set()).add(m["quote"])
+        rows = []
+        for base, m in pairs.items():
             t = tk[1].get(m["symbol"], {})
-            rows.append({"token": m["base"], "symbol": m["symbol"], "price": t.get("price"), "change_pct": t.get("change_pct"),
-                         "quote_volume": t.get("quote_volume", 0.0), "held": m["base"] in held, "enabled": m["base"] in enabled})
-        rows.sort(key=lambda r: (not r["enabled"], not r["held"], r["token"] != q, -(r["quote_volume"] or 0)))
+            status = m.get("status", "TRADING")
+            rows.append({"token": base, "symbol": m["symbol"], "price": t.get("price"), "change_pct": t.get("change_pct"),
+                         "quote_volume": t.get("quote_volume", 0.0), "held": base in held, "enabled": base in enabled,
+                         "status": status, "trading": status == "TRADING", "selectable": True})
+        for base, quotes in others.items():
+            if base in pairs:
+                continue
+            rows.append({"token": base, "symbol": "", "price": None, "change_pct": None, "quote_volume": 0.0,
+                         "held": base in held, "enabled": base in enabled, "status": "NO_PAIR", "trading": False,
+                         "selectable": False, "quotes": sorted(quotes)})
+        rows.sort(key=lambda r: (not r["enabled"], not r["held"], r["token"] != q, not r["selectable"],
+                                 not r["trading"], -(r["quote_volume"] or 0)))
         return rows[:limit]
 
     def asset_prices(self, assets) -> dict[str, float]:
@@ -262,7 +290,19 @@ class Service:
         return RiskState(today_orders=len(buys), today_notional=sum(o.quote_usd for o in buys),
                          deployed_usd=self.deployed_usd() + sum(p.margin for p in self.fbroker.open_rows()),
                          today_auto_notional=sum(o.quote_usd for o in buys if o.via == "auto"),
-                         paused=paused, pause_reason=reason, btc_change_7d=btc_change, anomaly=anomaly)
+                         paused=paused, pause_reason=reason, btc_change_7d=btc_change, anomaly=anomaly,
+                         halted=self.halted_symbols())
+
+    def halted_symbols(self) -> dict[str, str]:
+        """Whitelisted pairs Binance is not trading right now ({symbol: status}). On a lookup
+        failure every pair counts as halted: better to skip a trade than to send a doomed order."""
+        syms = self.settings.symbols()
+        try:
+            rules = self.broker.rules(syms)
+        except ExchangeError:
+            return {sym: "UNKNOWN" for sym in syms}
+        return {sym: (rules[sym].status if sym in rules else "MISSING") for sym in syms
+                if sym not in rules or rules[sym].status != "TRADING"}
 
     def deployed_usd(self) -> float:
         """Net capital the AI has deployed in the current mode (cost of buys minus proceeds of sells)."""
@@ -383,6 +423,8 @@ class Service:
 
         recent = self.recent_decisions(5)
         context = build_context(s, pf, st, market, recent)
+        if st.halted:
+            context["halted"] = {"symbols": st.halted, "note": "这些交易对币安目前暂停交易，本轮不要对它们提出买卖"}
         fv = None
         if s.futures.enabled:
             try:
@@ -973,6 +1015,101 @@ class Service:
             self.db.add(ChatMessage(channel=channel, role="assistant", text=reply, provider=self.provider.name))
             self.events.emit("chat", {"channel": channel})
             return reply
+
+    # ------------------------------------------------------------------ allocation proposals
+    PROPOSAL_TTL = 86400
+
+    @staticmethod
+    def _flat_targets(categories: dict) -> dict[str, float]:
+        return {t: w for c in categories.values() for t, w in (c["tokens"] if isinstance(c, dict) else c.tokens).items()}
+
+    def propose_allocation(self, instruction: str | None = None, source: str = "web") -> dict:
+        """Ask the model for target weights (fresh, or the current ones edited per ``instruction``).
+        Validated and stored as a pending proposal; settings change only via apply_allocation."""
+        s = self.settings
+        instruction = (instruction or "").strip()[:2000] or None
+        with self._chat_lock:
+            index = {r["token"]: r for r in self.markets("", 100_000)}
+            current = {k: v.model_dump() for k, v in s.categories.items()}
+            words = {w.upper() for w in re.findall(r"[A-Za-z][A-Za-z0-9]{1,14}", instruction or "")}
+            keep = set(s.allocation.enabled) | set(self._flat_targets(current)) | (words & set(index))
+            top = [r["token"] for r in sorted(index.values(), key=lambda r: -(r["quote_volume"] or 0))
+                   if r["trading"] and r["selectable"]][:40]
+            cands = {}
+            for tok in list(dict.fromkeys([*sorted(keep), *top])):
+                r = index.get(tok)
+                if r and r["selectable"]:
+                    cands[tok] = {"price": r["price"], "change_24h": r["change_pct"],
+                                  "quote_volume_24h": round(r["quote_volume"] or 0), "status": r["status"]}
+            try:
+                prices, market, _b, _a = self.market_snapshot()
+                pf = self.portfolio(prices)
+                weights = {k: round(v, 4) for k, v in pf.token_weights().items()}
+                total = round(pf.total(), 2)
+            except ExchangeError:
+                market, weights, total = {}, {}, None
+            context = {
+                "investor_notes": s.investor_notes, "risk_preset": s.risk_preset, "stables": s.stables,
+                "limits": {"stable_floor": s.limits.stable_floor, "max_order_usd": s.limits.max_order_usd},
+                "current": {"mode": s.allocation.mode, "categories": current, "enabled": s.allocation.enabled},
+                "portfolio": {"total_usd": total, "token_weights": weights},
+                "market": market, "candidates": cands,
+                "halted": sorted(t for t, r in cands.items() if r["status"] != "TRADING"),
+            }
+            try:
+                comp = self.complete(alloc.SYSTEM, [{"role": "user", "content": alloc.build_prompt(context, instruction)}],
+                                     json_mode=True)
+            except ProviderError as e:
+                raise ValueError(f"模型调用失败：{e}") from e
+            try:
+                prop = alloc.parse_proposal(comp.text)
+                cats, notes = alloc.normalize(prop, s.stables)
+            except PlanError as e:
+                raise ValueError(f"模型给出的配置不合规：{e}") from e
+            tokens = [t for t in self._flat_targets(cats) if t not in s.stables]
+            try:
+                rules = self.broker.rules([f"{t}{s.quote}" for t in tokens])
+            except ExchangeError as e:
+                raise ValueError(f"无法在币安确认这些交易对：{e}") from e
+            missing = [t for t in tokens if f"{t}{s.quote}" not in rules]
+            if missing:
+                raise ValueError(f"模型给出的资产在币安没有 {s.quote} 现货交易对：{', '.join(missing)}")
+            halted = [t for t in tokens if rules[f"{t}{s.quote}"].status != "TRADING"]
+            if halted:
+                notes.append(f"{', '.join(halted)} 目前在币安暂停交易，恢复前不会买入")
+            if sum(cats["STABLE"]["tokens"].values()) < s.limits.stable_floor - 1e-9:
+                notes.append(f"稳定币目标低于稳定币下限 {s.limits.stable_floor:.0%}，风控仍按下限执行")
+            prop_row = {"id": uuid.uuid4().hex[:12], "ts": time.time(), "source": source, "instruction": instruction,
+                        "summary": prop.summary, "categories": cats, "notes": notes, "status": "pending",
+                        "current": self._flat_targets(current), "proposed": self._flat_targets(cats),
+                        "model": comp.model}
+            self.db.kv_set("alloc_proposal", prop_row)
+            self.events.emit("allocation", {"id": prop_row["id"], "status": "pending"})
+            return prop_row
+
+    def allocation_proposal(self) -> dict | None:
+        p = self.db.kv_get("alloc_proposal")
+        if p and p.get("status") == "pending" and time.time() - p["ts"] > self.PROPOSAL_TTL:
+            p["status"] = "expired"
+        return p
+
+    def resolve_allocation(self, pid: str, apply: bool, by: str = "web") -> dict:
+        """Apply (or discard) a pending proposal. Applying sets the targets, switches to "targets"
+        mode and adds the new assets to the tradable list; trades happen in later cycles, under the risk engine."""
+        p = self.allocation_proposal()
+        if not p or p["id"] != pid:
+            raise ValueError("这个配置提案已经不存在，请重新生成")
+        if p["status"] != "pending":
+            raise ValueError(f"这个配置提案已经{ {'applied': '应用', 'discarded': '放弃', 'expired': '过期'}.get(p['status'], '处理') }")
+        if apply:
+            s = self.settings
+            new_tokens = [t for t in p["proposed"] if t not in s.stables]
+            enabled = list(dict.fromkeys([*new_tokens, *s.allocation.enabled]))[:alloc.MAX_TOKENS]
+            self.update_settings({"categories": p["categories"], "allocation": {"mode": "targets", "enabled": enabled}})
+        p.update(status="applied" if apply else "discarded", resolved_by=by, resolved_ts=time.time())
+        self.db.kv_set("alloc_proposal", p)
+        self.events.emit("allocation", {"id": pid, "status": p["status"]})
+        return p
 
     def daily_report(self) -> Report:
         s = self.settings

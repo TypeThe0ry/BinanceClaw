@@ -45,12 +45,23 @@ class Broker:
         self.mode = mode
         self.paper_cfg = paper_cfg
         self._rules: dict[str, SymbolRules] = {}
+        self._rules_ts: dict[str, float] = {}
 
     # ---- market data ----
+    RULES_TTL = 600     # trading status changes (a pair halted or resumed) must be picked up without a restart
+
     def rules(self, symbols: list[str]) -> dict[str, SymbolRules]:
-        missing = [s for s in symbols if s not in self._rules]
+        now = time.time()
+        missing = [s for s in symbols if s not in self._rules or now - self._rules_ts.get(s, 0) > self.RULES_TTL]
         if missing:
-            self._rules.update(self.client.symbol_rules(missing))
+            try:
+                fresh = self.client.symbol_rules(missing)
+            except ExchangeError:
+                if any(s not in self._rules for s in missing):
+                    raise
+                fresh = {}                       # refresh failed: keep the last known rules
+            self._rules.update(fresh)
+            self._rules_ts.update({s: now for s in fresh})
         return {s: self._rules[s] for s in symbols if s in self._rules}
 
     # ---- account ----

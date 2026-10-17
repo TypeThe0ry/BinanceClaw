@@ -34,6 +34,7 @@
 | `/budget 3000` · `/budget off` | 设置或取消 AI 投入预算 |
 | `/lock BTC 0.5` · `/lock BTC 0` | 锁定或解除锁定资产 |
 | `/assets BTC,ETH` · `/assets ai` · `/assets targets` | 选择可交易资产、切换分配方式 |
+| `/alloc 加 10% TON，从 BTC 里减` · `/alloc` | 让 AI 修改或生成目标配置，点按钮应用或放弃 |
 | `/new` | 开始新的对话 |
 
 其他文字会直接发给当前模型，它只能读、不能下单。只有绑定的那个账号能使用这个机器人。

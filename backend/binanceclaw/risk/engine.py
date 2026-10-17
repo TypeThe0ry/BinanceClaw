@@ -80,6 +80,7 @@ class RiskState:
     pause_reason: str = ""
     btc_change_7d: float | None = None
     anomaly: str | None = None
+    halted: dict[str, str] = field(default_factory=dict)   # symbol -> Binance status, for pairs not TRADING
 
 
 def pause_trigger(settings: Settings, st: RiskState) -> str | None:
@@ -147,6 +148,9 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
             fail("币种白名单", f"{symbol} 不在白名单 {sorted(allowed)} 中")
             continue
         v.checks.append(Check("币种白名单", True, symbol))
+        if symbol in st.halted:
+            fail("交易状态", f"币安目前暂停了 {symbol} 的交易（{st.halted[symbol]}），恢复后才能买卖")
+            continue
         if not (req > 0 and math.isfinite(req)):
             fail("金额", "金额必须为正数")
             continue
