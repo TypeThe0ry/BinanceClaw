@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
 import { post, type Approval, type CycleRow, type Overview, type Performance } from "../api";
 import { ApprovalRow } from "../components/ApprovalRow";
-import { Band, Change, Decision, Empty, FlashNum, Page, SectionHead, Side, Skeleton } from "../components/ui";
+import { Band, Change, Decision, Empty, FlashNum, Page, SectionHead, Seg, Side, Skeleton } from "../components/ui";
 import { CATEGORY_COLOR, ago, fmtPrice, token, usd, useApi, useTicker, useToast } from "../lib";
 
 function NextIn({ at }: { at: number }) {
@@ -27,6 +27,9 @@ export default function Assets() {
   const tick = useTicker();
   const toast = useToast();
   const [running, setRunning] = useState(false);
+  const [view, setView] = useState<"value" | "category">(() => {
+    try { return localStorage.getItem("bclaw:assets-view") === "category" ? "category" : "value"; } catch { return "value"; }
+  });
   const o = ov.data;
 
   const series = (eq.data ?? []).filter((p) => p.total != null);
@@ -48,6 +51,18 @@ export default function Assets() {
     return { t, cat, value, qty: o?.account_balances?.[t] ?? o?.balances?.[t] ?? 0, price, w: o?.token_weights?.[t] ?? 0,
       target: target === undefined ? 0 : target, locked: o?.capital?.locked?.[t] ?? 0, pf: perf.data?.assets?.[t] };
   }).sort((a, b) => b.value - a.value || (b.target ?? 0) - (a.target ?? 0));
+
+  // Binance's own categories (display only; risk bands above still follow the target categories)
+  const bcat = (t: string) => t === "FUTURES" ? "合约" : o?.binance_categories?.[t]?.primary ?? "未分类";
+  const acctTotal = Object.values(acct).reduce((x, y) => x + y, 0);
+  const groups = Object.entries(rows.reduce<Record<string, typeof rows>>((g, r) => ((g[bcat(r.t)] ??= []).push(r), g), {}))
+    .map(([name, rs]) => ({ name, rows: rs, value: rs.reduce((x, r) => x + r.value, 0) }))
+    .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+  const sections = view === "category" ? groups : [{ name: "", rows, value: 0 }];
+  function pickView(v: "value" | "category") {
+    setView(v);
+    try { localStorage.setItem("bclaw:assets-view", v); } catch { /* private mode */ }
+  }
 
   async function runNow() {
     setRunning(true);
@@ -121,7 +136,10 @@ export default function Assets() {
 
       {/* assets */}
       <section>
-        <SectionHead title="资产" doc="dashboard" />
+        <SectionHead title="资产" doc="dashboard" right={
+          <Seg id="assets-view" value={view} onChange={pickView}
+            items={[{ k: "value" as const, label: "按估值" }, { k: "category" as const, label: "按币安分类" }]} />
+        } />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px]">
             <thead>
@@ -131,8 +149,17 @@ export default function Assets() {
                 <th className="th text-right">占比 / 目标</th><th className="th w-[18%] pl-8">区间</th>
               </tr>
             </thead>
-            <tbody>
-              {rows.map((r) => {
+            {sections.map((sec) => (
+            <tbody key={sec.name || "all"}>
+              {sec.name && (
+                <tr className="border-b border-line bg-raise">
+                  <td className="td font-semibold" colSpan={3}>{sec.name} <span className="text-[12px] font-normal text-fg-3">{sec.rows.length}</span></td>
+                  <td className="td num text-right font-medium">{sec.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="td num text-right text-fg-3" colSpan={3}>{acctTotal > 0 ? `${((sec.value / acctTotal) * 100).toFixed(1)}%` : ""}</td>
+                  <td className="td" />
+                </tr>
+              )}
+              {sec.rows.map((r) => {
                 const band = s[r.cat]?.band ?? [0, 1];
                 const catW = o?.category_weights?.[r.cat] ?? 0;
                 const tv = Object.values(s[r.cat]?.tokens ?? {}).filter((x): x is number => x != null);
@@ -141,6 +168,7 @@ export default function Assets() {
                   <tr key={r.t} className="border-b border-line">
                     <td className="td"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ background: CATEGORY_COLOR[r.cat] ?? "#8C8C8C" }} />
                       {r.t === "FUTURES" ? <Link to="/futures" className="font-semibold hover:underline">合约权益</Link> : <b className="font-semibold">{r.t}</b>}
+                      {view === "value" && r.t !== "FUTURES" && <span className="text-[12px] text-fg-3" title={o?.binance_categories?.[r.t]?.tags.join(" · ")}>{bcat(r.t)}</span>}
                       {!!o?.earn?.positions?.[r.t]?.amount && <span className="tag bg-hover text-fg-2" title="活期理财">理财 {o.earn.positions[r.t].amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>}
                       {r.locked > 0 && <span className="tag bg-hover text-fg-3" title={`锁定 ${r.locked}`}>锁定 {r.locked}</span>}</span></td>
                     <td className="td num text-right text-fg-2">{r.t === "FUTURES" ? "—" : r.qty ? r.qty.toLocaleString("en-US", { maximumFractionDigits: 8 }) : "0"}</td>
@@ -156,6 +184,7 @@ export default function Assets() {
                 );
               })}
             </tbody>
+            ))}
           </table>
         </div>
         {!o && <Skeleton className="mt-3 h-40" />}

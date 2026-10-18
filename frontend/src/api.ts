@@ -4,6 +4,16 @@ export class ApiError extends Error {
   }
 }
 
+/** One dangerous setting the server wants confirmed before it saves (409 from PUT /settings etc.). */
+export interface DangerChange { field: string; label: string; old: unknown; new: unknown }
+type Confirmer = (changes: DangerChange[]) => Promise<boolean>;
+let confirmer: Confirmer | null = null;
+
+/** Registered by <ConfirmProvider>; asked whenever the server answers 409 with changes to confirm. */
+export function setConfirmer(fn: Confirmer | null) {
+  confirmer = fn;
+}
+
 export async function api<T = unknown>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
   const res = await fetch(`/api${path}`, {
@@ -16,14 +26,20 @@ export async function api<T = unknown>(path: string, init?: RequestInit & { json
     window.dispatchEvent(new Event("bclaw:unauthorized"));
   }
   if (!res.ok) {
-    let msg = res.statusText;
+    let detail: unknown = res.statusText;
     try {
       const b = await res.json();
-      msg = typeof b.detail === "string" ? b.detail : JSON.stringify(b.detail ?? b);
+      detail = b.detail ?? b;
     } catch {
       /* not json */
     }
-    throw new ApiError(res.status, msg);
+    const d = detail as { confirm_token?: string; changes?: DangerChange[] } | string;
+    if (res.status === 409 && typeof d === "object" && d.confirm_token && Array.isArray(d.changes)) {
+      // second confirmation for dangerous settings: show the changes, then resend with the token
+      if (!confirmer || !(await confirmer(d.changes))) throw new ApiError(409, "已取消，设置没有改动");
+      return api<T>(path, { ...init, headers: { ...(rest.headers ?? {}), "X-Confirm-Token": d.confirm_token } });
+    }
+    throw new ApiError(res.status, typeof d === "string" ? d : JSON.stringify(d));
   }
   return res.json() as Promise<T>;
 }
@@ -61,6 +77,7 @@ export interface Overview {
   risk_preset?: string;
   futures?: { enabled: boolean; open: number };
   earn?: { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }> };
+  binance_categories?: Record<string, { primary: string; tags: string[] }>;
 }
 
 export interface PerfAsset { qty: number; avg_cost: number | null; cost: number; value: number | null; price: number | null;

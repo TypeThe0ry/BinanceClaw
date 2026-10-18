@@ -184,9 +184,11 @@ class Futures(BaseModel):
 
 
 class Earn(BaseModel):
-    """Simple Earn flexible: park idle stablecoins, redeem automatically when a trade needs them."""
-    enabled: bool = False
-    assets: list[str] = Field(default_factory=lambda: ["USDT"])
+    """Simple Earn flexible: park idle balances, redeem automatically when a trade needs them.
+    Only flexible products (redeemable at any time), so the money stays usable for trading."""
+    enabled: bool = True
+    auto_all: bool = True                        # every asset with a flexible product; False = only ``assets``
+    assets: list[str] = Field(default_factory=lambda: ["USDT"])   # stablecoins, used when auto_all is off
     keep_liquid_usd: float = 200                 # always leave this much in spot
     min_move_usd: float = 20                     # ignore smaller subscriptions/redemptions
 
@@ -328,6 +330,67 @@ class Secrets(BaseModel):
         return {k: bool(v) for k, v in self.model_dump().items()}
 
 
+# Settings whose change needs a second confirmation. The web UI and Telegram show the changes and
+# ask again; the server refuses the write unless it carries a token for exactly those changes.
+DANGEROUS: dict[str, str] = {
+    "limits.max_order_usd": "单笔上限",
+    "limits.auto_execute_max_usd": "单笔自动执行",
+    "limits.max_auto_daily_usd": "每日自动执行",
+    "limits.max_orders_per_day": "每日笔数",
+    "limits.max_daily_notional_usd": "每日金额",
+    "limits.stable_floor": "稳定币下限",
+    "limits.btc_7d_drop_pause": "BTC 7 日暂停线",
+    "limits.allow_sell": "允许卖出",
+    "limits.anomaly_failures_to_pause": "连续异常暂停次数",
+    "limits.price_deviation_anomaly": "价格异常偏离",
+    "limits.fee_buffer_ratio": "手续费缓冲",
+    "categories": "目标配置与区间",
+    "capital.locked": "锁定资产",
+    "capital.budget_usd": "AI 投入预算",
+    "allocation.mode": "分配方式",
+    "allocation.max_asset_weight": "单币占比上限",
+    "futures.enabled": "合约交易",
+    "futures.max_leverage": "最大杠杆",
+    "futures.max_position_margin_usd": "单仓保证金上限",
+    "futures.max_total_margin_usd": "总保证金上限",
+    "futures.max_loss_per_trade_usd": "单笔止损最大亏损",
+    "futures.max_stop_distance": "止损最远距离",
+    "futures.allow_short": "允许做空",
+    "futures.auto_open": "小额自动开仓",
+    "futures.auto_open_max_margin_usd": "自动开仓保证金上限",
+    "futures.max_opens_per_day": "每日开仓次数",
+    "earn.enabled": "理财自动申购",
+    "earn.auto_all": "申购全部可申购的活期产品",
+    "earn.assets": "理财稳定币",
+    "earn.keep_liquid_usd": "现货保留",
+    "quote": "计价币",
+    "stables": "稳定币列表",
+    "live_gate_allow": "保留的 Key 权限",
+}
+
+
+def dangerous_changes(old: Settings, new: Settings) -> list[dict]:
+    """[{field, label, old, new}] for every dangerous setting that differs between the two."""
+    a, b = old.model_dump(mode="json"), new.model_dump(mode="json")
+    out = []
+    for path, label in DANGEROUS.items():
+        x, y = a, b
+        for k in path.split("."):
+            x, y = x.get(k), y.get(k)
+        if x != y:
+            out.append({"field": path, "label": label, "old": x, "new": y})
+    return out
+
+
+class ConfirmationRequired(Exception):
+    """A settings change touches dangerous fields and was sent without a valid confirmation token."""
+
+    def __init__(self, changes: list[dict], token: str):
+        super().__init__("修改危险设置需要二次确认：" + "、".join(c["label"] for c in changes))
+        self.changes = changes
+        self.token = token
+
+
 class SettingsStore:
     """Thread-safe load/save of settings.json."""
 
@@ -353,14 +416,22 @@ class SettingsStore:
         with self._lock:
             return self._settings.model_copy(deep=True)
 
+    def preview(self, patch: dict, *, allow_mode_change: bool = False) -> Settings:
+        """The validated result of ``update(patch)``, without saving it."""
+        with self._lock:
+            return self._merged(patch, allow_mode_change)
+
+    def _merged(self, patch: dict, allow_mode_change: bool) -> Settings:
+        data = self._settings.model_dump()
+        if "mode" in patch and not allow_mode_change:
+            patch = {k: v for k, v in patch.items() if k != "mode"}
+        _deep_merge(data, patch)
+        return Settings.model_validate(data)
+
     def update(self, patch: dict, *, allow_mode_change: bool = False) -> Settings:
         """Merge a partial dict. Mode changes go through the live gate, never through here."""
         with self._lock:
-            data = self._settings.model_dump()
-            if "mode" in patch and not allow_mode_change:
-                patch = {k: v for k, v in patch.items() if k != "mode"}
-            _deep_merge(data, patch)
-            new = Settings.model_validate(data)
+            new = self._merged(patch, allow_mode_change)
             self._write(new)
             self._settings = new
             return new.model_copy(deep=True)

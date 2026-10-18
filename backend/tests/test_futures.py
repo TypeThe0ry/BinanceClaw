@@ -220,6 +220,7 @@ def test_earn_sweep_and_auto_redeem_paper(svc):
 
 
 def test_earn_disabled_hides_balances_from_ai(svc):
+    svc.update_settings({"earn": {"enabled": False}})
     svc.earn.subscribe("USDT", 4000)
     prices, *_ = svc.market_snapshot(0)
     assert svc.portfolio(prices).balances["USDT"] == pytest.approx(6000)

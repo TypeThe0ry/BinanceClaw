@@ -5,6 +5,7 @@ import { StrictMode, useEffect, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { api, post } from "./api";
+import { ConfirmProvider } from "./components/ConfirmDialog";
 import { Layout, More } from "./components/Layout";
 import { Spinner } from "./components/ui";
 import { LiveProvider, TickerProvider, ToastProvider } from "./lib";
@@ -84,7 +85,9 @@ function App() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ToastProvider>
-      <App />
+      <ConfirmProvider>
+        <App />
+      </ConfirmProvider>
     </ToastProvider>
   </StrictMode>,
 );
