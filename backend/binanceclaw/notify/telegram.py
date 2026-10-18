@@ -13,10 +13,10 @@ import time
 import httpx
 from sqlmodel import desc, select
 
-from ..config import ConfirmationRequired
+from ..config import NOTIFY_TYPES, ConfirmationRequired
 from ..core.autopilot import TRIGGER_LABELS
 from ..db import Approval, Cycle, Order
-from . import charts
+from . import charts, policy
 
 log = logging.getLogger("binanceclaw.telegram")
 MAX = 4000
@@ -41,6 +41,7 @@ HELP = """BinanceClaw 指令
 /alloc   让 AI 调整目标配置：/alloc 加 10% TON，从 BTC 里减；只发 /alloc 则让 AI 生成一份
 /positions 合约持仓
 /flat yes 平掉 BinanceClaw 的全部合约仓位
+/notify  推送设置：/notify 查看；/notify instant 或 /notify digest 60；/notify quiet 23:00-08:00 或 /notify quiet off；/notify off earn、/notify on earn
 /new     开始新的对话
 其他文字：直接和当前模型对话（只读，不能下单）"""
 
@@ -59,6 +60,8 @@ def fmt_setting(v) -> str:
     return ENUM_LABEL.get(v, str(v))
 
 
+NOTIFY_ALIAS = {"成交": "trade", "再平衡": "rebalance", "决策": "decision", "理财": "earn", "日报": "report",
+                "价格提醒": "price_alert", "提醒": "alerts", "系统": "alerts"}
 UNIVERSE_LABEL = {"all": "全部资产", "whitelist": "白名单", "blacklist": "黑名单"}
 ENUM_LABEL = {**UNIVERSE_LABEL, "ai": "AI 自主分配", "targets": "手动分配"}
 
@@ -177,6 +180,10 @@ class TelegramBot:
             self.send("⚠️ 下单失败，详见网页「交易」页")
         elif kind == "approval_created":
             self._send_approval(d["id"])
+        elif kind == "allocation" and d.get("status") == "pending" and d.get("source") != "telegram":
+            p = self.svc.allocation_proposal()      # proposed from the web: owner can apply it here too
+            if p and p["id"] == d["id"] and p["status"] == "pending":
+                self._send_proposal(p)
         elif kind == "approval":
             a = self.svc.db.get(Approval, d["id"])
             if a:
@@ -212,12 +219,127 @@ class TelegramBot:
             self.photo(png, cap) if png else self.send(cap)
         elif kind == "report":
             self._send_report(d.get("text", ""))
-        elif kind == "cycle" and d.get("status") == "done":
-            c = self.svc.db.get(Cycle, d["id"])
-            # auto mode: the AI's own routine check-ins that change nothing stay quiet; event-woken rounds report
-            if c and not c.risk and c.trigger != "ai_scheduled":
-                why = TRIGGER_LABELS.get(c.trigger)
-                self.send(f"🧠 本轮决策{f'（{why}）' if why and c.trigger not in ('schedule', 'manual') else ''}：不操作\n{c.summary[:600]}")
+        elif kind == "earn" and d.get("text"):
+            self.send("💰 " + d["text"])
+        elif kind == "cycle":
+            text = self._idle_cycle_text(d)
+            if text:
+                self.send(text)
+
+    def _idle_cycle_text(self, d: dict, limit: int = 600) -> str | None:
+        if d.get("status") != "done":
+            return None
+        c = self.svc.db.get(Cycle, d["id"])
+        # auto mode: the AI's own routine check-ins that change nothing stay quiet; event-woken rounds report
+        if not c or c.risk or c.trigger == "ai_scheduled":
+            return None
+        why = TRIGGER_LABELS.get(c.trigger)
+        return f"🧠 本轮决策{f'（{why}）' if why and c.trigger not in ('schedule', 'manual') else ''}：不操作\n{c.summary[:limit]}"
+
+    # ------------------------------------------------------------------ push policy (mute / digest / quiet hours)
+    def dispatch(self, kind: str, d: dict):
+        """Route one event through the owner's push settings: send now, hold for the digest, or drop."""
+        n = self.svc.settings.notify
+        action = policy.route(n, policy.classify(kind, d), self.svc.now())
+        if action == "send":
+            self.on_event(kind, d)
+        elif action == "hold":
+            line = self.digest_line(kind, d)
+            if line:
+                held = self.svc.db.kv_get("tg_digest", [])
+                held.append([time.time(), line])
+                self.svc.db.kv_set("tg_digest", held)
+
+    def digest_line(self, kind: str, d: dict) -> str | None:
+        """Short text form of an event for the digest (no charts or buttons)."""
+        if kind == "order":
+            if d.get("status") == "failed":
+                return "⚠️ 下单失败，详见网页「交易」页"
+            if d.get("via") == "auto" and d.get("text"):
+                return ("⚖️ 再平衡 " if d.get("source") == "rebalance" else "🟢 自动执行 ") + d["text"]
+            return None
+        if kind == "futures" and d.get("text"):
+            return ("🎯 " if d.get("op") == "TP_HIT" else "🟢 " if d.get("ok") else "⚠️ ") + "合约 " + d["text"]
+        if kind == "price_alert":
+            arrow = "跌破" if d.get("op") == "below" else "涨破"
+            return (f"🔔 价格提醒：{d['symbol']} {arrow} {d['price']:,.2f}，现价 {d['now']:,.2f}"
+                    + (f"（{d['note']}）" if d.get("note") else ""))
+        if kind == "report":
+            return "📊 日报\n" + d.get("text", "")
+        if kind == "earn" and d.get("text"):
+            return "💰 " + d["text"]
+        if kind == "cycle":
+            return self._idle_cycle_text(d, 200)
+        if kind == "alert":
+            return "⚠️ " + d.get("text", "")
+        if kind == "resumed":
+            return "▶️ 已恢复自动执行"
+        if kind == "mode":
+            return f"🔁 已切换到{'实盘 🔴' if d.get('mode') == 'live' else '模拟盘'}"
+        return None
+
+    def flush_digest(self, force: bool = False):
+        held = self.svc.db.kv_get("tg_digest", [])
+        oldest = held[0][0] if held else None
+        if not held or not (force or policy.digest_due(self.svc.settings.notify, self.svc.now(), oldest)):
+            return
+        self.svc.db.kv_set("tg_digest", [])
+        tz = self.svc.tz()
+        head = (f"🗞 消息汇总（{len(held)} 条，{dt.datetime.fromtimestamp(held[0][0], tz):%H:%M}"
+                f"–{dt.datetime.fromtimestamp(held[-1][0], tz):%H:%M}）")
+        self.send("\n\n".join([head, *(f"{dt.datetime.fromtimestamp(t, tz):%H:%M} {line}" for t, line in held)]))
+
+    def notify_text(self) -> str:
+        n = self.svc.settings.notify
+        freq = "即时推送" if n.mode == "instant" else f"每 {n.digest_minutes} 分钟汇总一次"
+        quiet = f"{n.quiet.start}–{n.quiet.end}（{self.svc.settings.schedule.timezone}）" if n.quiet.enabled else "关闭"
+        lines = [f"推送频率：{freq}", f"免打扰：{quiet}", ""]
+        for k, (label, mutable) in NOTIFY_TYPES.items():
+            state = "始终推送" if not mutable else ("开" if n.types.get(k) else "关")
+            lines.append(f"· {label}：{state}" + (f"  [{k}]" if mutable else ""))
+        held = len(self.svc.db.kv_get("tg_digest", []))
+        if held:
+            lines.append(f"\n待汇总：{held} 条")
+        return "\n".join(lines)
+
+    def _notify_cmd(self, args: list[str]):
+        if not args:
+            self.send(self.notify_text())
+            return
+        word = args[0].lower()
+        try:
+            if word == "instant":
+                patch = {"mode": "instant"}
+            elif word == "digest":
+                patch = {"mode": "digest", **({"digest_minutes": int(args[1])} if len(args) > 1 else {})}
+            elif word == "quiet":
+                arg = (args[1] if len(args) > 1 else "").lower()
+                if arg in ("off", "关"):
+                    patch = {"quiet": {"enabled": False}}
+                else:
+                    start, _, end = arg.replace("–", "-").partition("-")
+                    if not end:
+                        raise ValueError("格式：/notify quiet 23:00-08:00 或 /notify quiet off")
+                    patch = {"quiet": {"enabled": True, "start": start, "end": end}}
+            elif word in ("on", "off"):
+                keys = [NOTIFY_ALIAS.get(t, t.lower()) for t in _token_args(args[1:])]
+                bad = [k for k in keys if k not in NOTIFY_TYPES]
+                fixed = [k for k in keys if k in policy.ALWAYS]
+                if not keys or bad:
+                    raise ValueError("可选类型：" + "、".join(k for k in NOTIFY_TYPES if k not in policy.ALWAYS))
+                if fixed and word == "off":
+                    raise ValueError("审批请求、AI 提问和重大风险提醒始终推送，不能关闭")
+                patch = {"types": {k: word == "on" for k in keys}}
+            elif word == "flush":
+                self.flush_digest(force=True)
+                return
+            else:
+                raise ValueError("用法见 /help")
+            self.svc.update_settings({"notify": patch})
+        except (ValueError, TypeError, IndexError) as e:
+            self.send(f"⚠️ 没有生效：{e}")
+            return
+        self.send("✅ 已更新\n\n" + self.notify_text())
 
     @staticmethod
     def _ap_title(a) -> str:
@@ -260,6 +382,16 @@ class TelegramBot:
         else:
             mid = self.send(text, buttons)
         self.svc.db.update(Approval, aid, tg_message_id=mid)
+
+    RESEND_AFTER = 60
+
+    def resend_missing_approvals(self):
+        """An approval whose Telegram message never went out (network, Telegram down, restart before the
+        push) is sent again, so every pending request reaches the owner with its buttons."""
+        now = time.time()
+        for a in self.svc.db.pending_approvals():
+            if a.tg_message_id is None and a.expires > now and now - a.created > self.RESEND_AFTER:
+                self._send_approval(a.id)
 
     def _send_report(self, text: str):
         try:
@@ -411,6 +543,8 @@ class TelegramBot:
             self.send("🧠 正在让 AI " + ("按你的指令调整目标配置…" if instruction else "生成目标配置…"))
             threading.Thread(target=self._safe, args=(lambda: self._send_proposal(svc.propose_allocation(instruction, "telegram")),),
                              daemon=True).start()
+        elif cmd == "/notify":
+            self._notify_cmd(text.split()[1:])
         elif cmd == "/new":
             svc.db.kv_set("chat_cut_ts", time.time())
             self.send("已开始新的对话。")
@@ -564,10 +698,19 @@ class TelegramBot:
         threading.Thread(target=self._drain, name="telegram-out", daemon=True).start()
 
     def _drain(self):
+        last_tick = 0.0
         while True:
-            kind, d = self._outbox.get()
             try:
-                self.on_event(kind, d)
+                kind, d = self._outbox.get(timeout=30)
+            except queue.Empty:
+                kind = None
+            try:
+                if kind:
+                    self.dispatch(kind, d)
+                if time.time() - last_tick >= 30:
+                    last_tick = time.time()
+                    self.resend_missing_approvals()
+                    self.flush_digest()
             except Exception:
                 log.exception("notify failed")
 
