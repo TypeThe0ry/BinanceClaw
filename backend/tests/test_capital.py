@@ -95,7 +95,7 @@ def test_ai_mode_cycle_end_to_end(svc):
     p = use(svc, plan(("BUY", "SOLUSDT", 150), ("BUY", "ETHUSDT", 50)))
     c = svc.run_cycle("manual")
     assert [r["decision"] for r in c.risk] == ["execute", "reject"]   # ETH not selected
-    assert '"mode": "ai"' in p.calls[0][1][0]["content"]
+    assert '"mode":"ai"' in p.calls[0][1][0]["content"]
 
 
 

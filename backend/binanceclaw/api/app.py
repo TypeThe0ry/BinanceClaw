@@ -21,7 +21,16 @@ from pydantic import BaseModel
 from sqlmodel import desc, select
 
 from ..brain.providers import PROVIDERS, ProviderError
-from ..config import CANDIDATE_TOKENS, HARD_BOUNDS, MODEL_TASKS, RISK_PRESETS, TIER_MODELS, ConfirmationRequired, ProviderSettings
+from ..config import (
+    CANDIDATE_TOKENS,
+    HARD_BOUNDS,
+    MODEL_TASKS,
+    NOTIFY_TYPES,
+    RISK_PRESETS,
+    TIER_MODELS,
+    ConfirmationRequired,
+    ProviderSettings,
+)
 from ..db import Approval, ChatMessage, Cycle, Order, Report
 from ..exchange.binance_spot import ExchangeError
 from ..risk.gate import CONFIRM_PHRASE
@@ -386,6 +395,13 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         msgs = svc.earn.sweep()
         return {"ok": True, "message": "；".join(msgs) or "没有可申购的闲置资产"}
 
+    @app.get("/api/track-record", dependencies=auth)
+    def track_record():
+        try:
+            return svc.track.compute()
+        except ExchangeError as e:
+            raise HTTPException(502, str(e)) from e
+
     @app.get("/api/performance", dependencies=auth)
     def performance():
         try:
@@ -454,7 +470,8 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
                 "presets": RISK_PRESETS, "candidates": CANDIDATE_TOKENS, "deployed_usd": round(svc.deployed_usd(), 2),
                 "bounds": HARD_BOUNDS, "confirm_phrase": CONFIRM_PHRASE,
                 "model_tasks": MODEL_TASKS, "tier_models": TIER_MODELS,
-                "telegram": bool(svc.secrets.telegram_bot_token and svc.secrets.telegram_chat_id)}
+                "telegram": bool(svc.secrets.telegram_bot_token and svc.secrets.telegram_chat_id),
+                "notify_types": {k: {"label": label, "always": not mutable} for k, (label, mutable) in NOTIFY_TYPES.items()}}
 
     @app.put("/api/settings", dependencies=auth)
     def put_settings(patch: dict, request: Request):

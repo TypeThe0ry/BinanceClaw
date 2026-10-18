@@ -24,6 +24,7 @@ interface SettingsResp {
     stables: string[];
     futures: FuturesCfg;
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
+    notify?: NotifyCfg;
   };
   presets: Record<string, unknown>;
   candidates: string[];
@@ -34,6 +35,12 @@ interface SettingsResp {
   confirm_phrase: string;
   model_tasks: Record<string, string>;
   tier_models: Record<string, Partial<Record<"fast" | "strong", string>>>;
+  telegram?: boolean;
+  notify_types?: Record<string, { label: string; always: boolean }>;
+}
+interface NotifyCfg {
+  types: Record<string, boolean>; mode: "instant" | "digest"; digest_minutes: number;
+  quiet: { enabled: boolean; start: string; end: string };
 }
 type Tier = "fast" | "strong" | "main";
 interface Routing { enabled: boolean; tasks: Record<string, Tier>; models: Record<string, Partial<Record<"fast" | "strong", string>>> }
@@ -507,6 +514,43 @@ export default function Settings() {
         </Row>
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ schedule: d.schedule })}>保存</button></div>
       </section>
+
+      {d.notify && data.notify_types && (() => {
+        const n = d.notify;
+        const setN = (patch: Partial<NotifyCfg>) => setD({ ...d, notify: { ...n, ...patch } });
+        return (
+          <section>
+            <SectionHead title="Telegram 推送" doc="telegram" />
+            {data.telegram === false && <p className="py-2 text-[13px] text-fg-3">还没有配置 Telegram，这些设置会在配置后生效。</p>}
+            <Row label="推送频率">
+              <Seg id="notify-mode" value={n.mode} onChange={(k) => setN({ mode: k })}
+                items={[{ k: "instant" as const, label: "即时" }, { k: "digest" as const, label: "定时汇总" }]} />
+            </Row>
+            {n.mode === "digest" && (
+              <Row label="汇总间隔"><Num unit="分钟" value={n.digest_minutes} min={b.digest_minutes?.[0]} max={b.digest_minutes?.[1]} onChange={(x) => setN({ digest_minutes: x })} /></Row>
+            )}
+            <Row label={`免打扰 · ${d.schedule.timezone}`}>
+              <input type="checkbox" className="h-4 w-4 accent-white" checked={n.quiet.enabled} aria-label="免打扰"
+                onChange={(e) => setN({ quiet: { ...n.quiet, enabled: e.target.checked } })} />
+              {n.quiet.enabled && <>
+                <input type="time" className="input num h-9 w-28" aria-label="免打扰开始" value={n.quiet.start} onChange={(e) => setN({ quiet: { ...n.quiet, start: e.target.value } })} />
+                <span className="text-fg-3">–</span>
+                <input type="time" className="input num h-9 w-28" aria-label="免打扰结束" value={n.quiet.end} onChange={(e) => setN({ quiet: { ...n.quiet, end: e.target.value } })} />
+              </>}
+            </Row>
+            <p className="py-2 text-[13px] text-fg-3">定时汇总和免打扰期间，消息会攒起来合成一条发送。审批请求、AI 提问和重大风险提醒始终立即推送。</p>
+            {Object.entries(data.notify_types).map(([k, t]) => (
+              <Row key={k} label={t.label}>
+                {t.always ? <span className="text-[13px] text-fg-3">始终推送</span> : (
+                  <input type="checkbox" className="h-4 w-4 accent-white" aria-label={t.label} checked={n.types[k] ?? true}
+                    onChange={(e) => setN({ types: { ...n.types, [k]: e.target.checked } })} />
+                )}
+              </Row>
+            ))}
+            <div className="pt-4"><button className="btn-primary" onClick={() => save({ notify: n })}>保存</button></div>
+          </section>
+        );
+      })()}
 
       <section>
         <SectionHead title="连接" doc="getting-started" />
