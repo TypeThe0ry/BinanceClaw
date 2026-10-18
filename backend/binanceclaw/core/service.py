@@ -11,11 +11,13 @@ import re
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from zoneinfo import ZoneInfo
 
 from sqlmodel import desc, select
 
 from ..brain import allocation as alloc
+from ..brain import indicators as ta
 from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
@@ -34,6 +36,7 @@ from . import categories as cats
 from .autopilot import Autopilot
 from .earn import EarnManager
 from .events import EventBus
+from .track import TrackRecord
 
 FUTURES_ASSET = "FUTURES"          # pseudo-asset: equity of BinanceClaw's futures positions, in USD
 
@@ -53,11 +56,13 @@ class Service:
         self.earn = EarnManager(self)
         self.stream = PriceStream()
         self.autopilot = Autopilot(self)
+        self.track = TrackRecord(self)
         self.events.on(self.autopilot.on_event)
         self._confirm_key = ((self.secrets.session_secret or os.urandom(32).hex()) + ":confirm").encode()
         self._cycle_lock = threading.Lock()
         self._exec_lock = threading.RLock()
         self._chat_lock = threading.Lock()
+        self._kline_cache: dict[tuple, tuple[float, list[dict]]] = {}
         self._rebuild()
 
     # ------------------------------------------------------------------ plumbing
@@ -256,6 +261,26 @@ class Service:
         self._mkt_cache = (time.time(), result)
         return result
 
+    # Candle history changes slowly: re-fetch the daily series every few minutes, the 4h one a bit more
+    # often. Live prices are always fresh; this only spares the per-asset klines calls.
+    KLINE_TTL = {"1d": 300, "4h": 120}
+    KLINE_WORKERS = 8
+
+    def _klines(self, symbol: str, interval: str, limit: int) -> list[dict]:
+        key = (symbol, interval, limit)
+        hit = self._kline_cache.get(key)
+        if hit and time.time() - hit[0] < self.KLINE_TTL.get(interval, 60):
+            return hit[1]
+        k = self.client.klines(symbol, interval, limit)
+        self._kline_cache[key] = (time.time(), k)
+        return k
+
+    def _klines_many(self, reqs: list[tuple[str, str, int]]) -> dict[tuple, list[dict]]:
+        """Fetch many series in parallel (one round used to make them one by one). Raises the first error."""
+        with ThreadPoolExecutor(max_workers=min(self.KLINE_WORKERS, max(len(reqs), 1))) as ex:
+            futs = {r: ex.submit(self._klines, *r) for r in reqs}
+            return {r: f.result() for r, f in futs.items()}
+
     def _market_snapshot(self):
         s = self.settings
         tokens = s.tradable_tokens()
@@ -267,19 +292,22 @@ class Service:
         if missing:
             anomaly = f"缺少价格：{', '.join(missing)}"
         btc_change = None
-        for tok in watch:
-            if tok not in prices:
-                continue
-            k = self.client.klines(f"{tok}{s.quote}", "1d", 31)
+        have = [t for t in watch if t in prices]
+        series = self._klines_many([(f"{t}{s.quote}", iv, 60) for t in have for iv in ("1d", "4h")])
+        for tok in have:
+            k = series[(f"{tok}{s.quote}", "1d", 60)]
+            h4 = series[(f"{tok}{s.quote}", "4h", 60)]
             closes = [c["c"] for c in k]
+            m30 = k[-31:]
             info = {"price": prices[tok]}
             if len(closes) >= 8:
                 info["change_7d"] = round(prices[tok] / closes[-8] - 1, 4)
             if len(closes) >= 31:
                 info["change_30d"] = round(prices[tok] / closes[-31] - 1, 4)
-            info["high_30d"] = max(c["h"] for c in k) if k else None
-            info["low_30d"] = min(c["l"] for c in k) if k else None
+            info["high_30d"] = max(c["h"] for c in m30) if m30 else None
+            info["low_30d"] = min(c["l"] for c in m30) if m30 else None
             info["daily_closes_14d"] = [round(c, 4) for c in closes[-14:]]
+            info.update(ta.summarize(prices[tok], k, h4))
             market[tok] = info
             if tok == "BTC":
                 btc_change = info.get("change_7d")
@@ -546,15 +574,23 @@ class Service:
         c = self.db.add(Cycle(mode=s.mode, trigger=trigger, provider=s.provider.name, model=self.provider.model))
         self.events.emit("cycle_started", {"id": c.id})
         t0 = time.time()
+        timing: dict[str, int] = {}
+
+        def lap(name: str, since: float) -> float:
+            now = time.time()
+            timing[name] = int((now - since) * 1000)
+            return now
 
         def finish(**kw):
             kw.setdefault("duration_ms", int((time.time() - t0) * 1000))
+            kw["timing"] = timing
             row = self.db.update(Cycle, c.id, **kw)
             self.events.emit("cycle", {"id": c.id, "status": row.status, "summary": row.summary, "error": row.error})
             return row
 
         try:
             prices, market, btc_change, anomaly = self.market_snapshot(max_age=0)
+            t1 = lap("market_ms", t0)
             pf = self.portfolio(prices)
         except ExchangeError as e:
             n =self.db.kv_get("anomaly_count", 0) + 1
@@ -592,8 +628,15 @@ class Service:
             context["account_total_usd"] = round(self.account_portfolio(prices).total(), 2)
         except ExchangeError:
             pass
+        try:
+            tr = self.track.for_prompt(prices)
+            if tr:
+                context["track_record"] = tr
+        except Exception:
+            log.exception("track record unavailable")
         if self.autopilot.auto:
             context["autonomy"] = self.autopilot.context(trigger, why)
+        t2 = lap("account_ms", t1)
         c = self.db.update(Cycle, c.id, context=context)
 
         if st.paused:
@@ -610,8 +653,10 @@ class Service:
         try:
             comp = self.complete(SYSTEM, [{"role": "user", "content": prompt}], json_mode=True)
         except ProviderError as e:
+            lap("model_ms", t2)
             self.events.emit("alert", {"text": f"模型调用失败，本轮不交易：{e}"})
             return finish(status="error", error=str(e))
+        t3 = lap("model_ms", t2)
         self.db.update(Cycle, c.id, raw_output=comp.text, model=comp.model, usage=comp.usage)
         try:
             plan = parse_plan(comp.text)
@@ -644,6 +689,7 @@ class Service:
             risk.extend(self._handle_futures(plan.futures, fv, c.id))
         if plan.alerts:
             self._replace_ai_alerts(plan.alerts, prices)
+        lap("execute_ms", t3)
         return finish(status="done", plan=plan.model_dump(), risk=risk, summary=plan.summary)
 
     def _with_rebalance(self, actions: list[dict], pf: Portfolio) -> tuple[list[dict], list[dict]]:

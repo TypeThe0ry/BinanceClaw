@@ -161,6 +161,16 @@ export interface CycleFull extends CycleRow {
   prompt: string;
   raw_output: string;
   usage: Record<string, unknown>;
+  timing?: { market_ms?: number; account_ms?: number; model_ms?: number; execute_ms?: number };
+}
+
+export interface WinStat { evaluated: number; wins: number; win_rate: number | null; avg_return: number | null }
+export interface TrackRecord {
+  rule: string; trades: number; pending_24h: number; "24h": WinStat; "7d": WinStat;
+  by_side_24h: { BUY: WinStat; SELL: WinStat };
+  futures: { trades: number; wins: number; win_rate: number | null; realized: number };
+  recent: { time: string; side: "BUY" | "SELL"; symbol: string; usd: number; entry: number;
+    ret_24h?: number; ret_7d?: number; ret_now?: number }[];
 }
 
 export interface Approval {
