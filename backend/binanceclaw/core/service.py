@@ -21,7 +21,16 @@ from ..brain import indicators as ta
 from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
-from ..config import DATA_DIR, MODEL_TASKS, ConfirmationRequired, Secrets, SettingsStore, dangerous_changes, decision_changes
+from ..config import (
+    DATA_DIR,
+    MODEL_TASKS,
+    ConfirmationRequired,
+    Secrets,
+    SettingsStore,
+    dangerous_changes,
+    decision_changes,
+    owner_picks,
+)
 from ..db import AiQuestion, Approval, ChatMessage, Cycle, Database, FuturesPosition, FuturesTrade, Order, PriceAlert, Report
 from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
@@ -105,25 +114,32 @@ class Service:
     def settings(self):
         s = self.settings_store.get()
         if s.allocation.mode == "ai" and s.allocation.universe != "whitelist":
-            s._universe = self.ai_universe(s)
+            s._universe, s._uncovered = self.ai_universe(s)
         return s
 
     UNIVERSE_TTL = 600
 
-    def ai_universe(self, s) -> list[str] | None:
-        """AI 自主分配 over all of Binance spot (minus the blacklist): the assets tradable this round.
+    MAX_ROUND_ASSETS = 60     # hard cap on assets with full market data per round (one klines call each)
 
-        Every asset with a <TOKEN><quote> pair is eligible. Each round needs a klines call per
-        asset, so the round's universe is what the account holds, assets with a trade waiting for
-        approval, then the most-traded others, up to ``allocation.ai_candidates``. Cached for 10
-        minutes; None (fall back to the explicit list) when the market list cannot be read."""
+    def ai_universe(self, s) -> tuple[list[str] | None, list[str]]:
+        """AI 自主分配 over all of Binance spot (minus the blacklist): the assets tradable this round,
+        and the ones the owner cares about that could not fit.
+
+        Every asset with a <TOKEN><quote> pair is eligible, but each asset in the round costs a
+        klines call. So the round is: holdings, trades waiting for approval, the owner's own picks
+        and target-allocation assets, then the assets the AI itself chose to work with (its
+        ``focus``, see set_focus). Past MAX_ROUND_ASSETS the owner-relevant ones that do not fit
+        are returned so the AI can raise them. Cached for 10 minutes; (None, []) falls back to the
+        explicit list when the market list cannot be read."""
         al = s.allocation
-        key = (s.mode, s.quote, al.universe, tuple(al.blocked), al.ai_candidates, tuple(s.stables))
+        picks = owner_picks(s)
+        focus = self.ai_focus()
+        key = (s.mode, s.quote, al.universe, tuple(al.blocked), tuple(s.stables), tuple(picks), tuple(focus))
         cached = getattr(self, "_universe", None)
         if cached and cached[1] == key and time.time() - cached[0] < self.UNIVERSE_TTL:
-            return cached[2]
+            return cached[2], cached[3]
         if getattr(self, "_universe_busy", False):          # settings read while resolving it
-            return cached[2] if cached and cached[1] == key else None
+            return (cached[2], cached[3]) if cached and cached[1] == key else (None, [])
         self._universe_busy = True
         try:
             pairs = {m["base"]: m.get("status", "TRADING") for m in self._spot_markets() if m["quote"] == s.quote}
@@ -131,7 +147,7 @@ class Service:
             held = self.broker.balances()
         except ExchangeError as e:
             log.warning("AI universe unavailable: %s", e)
-            return cached[2] if cached and cached[1] == key else None
+            return (cached[2], cached[3]) if cached and cached[1] == key else (None, [])
         finally:
             self._universe_busy = False
         skip = set(s.stables) | {s.quote} | set(al.blocked)
@@ -140,11 +156,52 @@ class Service:
                       key=lambda b: -held[b] * px[b])
         pending = [a.symbol[: -len(s.quote)] for a in self.db.pending_approvals()
                    if a.kind == "spot" and a.symbol.endswith(s.quote)]
-        top = sorted((b for b, st in pairs.items() if st == "TRADING" and b not in skip),
-                     key=lambda b: -((tickers.get(f"{b}{s.quote}") or {}).get("quote_volume") or 0))
-        out = [b for b in dict.fromkeys([*mine, *pending, *top]) if b in pairs and b not in skip][:al.ai_candidates]
-        self._universe = (time.time(), key, out)
+        cared = [b for b in dict.fromkeys([*mine, *pending, *picks]) if b in pairs and b not in skip]
+        chosen = [b for b in focus if b in pairs and b not in skip and b not in cared]
+        out = [*cared, *chosen][:self.MAX_ROUND_ASSETS]
+        uncovered = cared[self.MAX_ROUND_ASSETS:]
+        self._universe = (time.time(), key, out, uncovered)
+        return out, uncovered
+
+    MAX_FOCUS = 30
+
+    def ai_focus(self) -> list[str]:
+        return list(self.db.kv_get("ai_focus", []) or [])
+
+    def set_focus(self, tokens: list[str]) -> list[str]:
+        """The assets the AI chose to work with (AI 自主分配 over all assets / a blacklist); from the
+        next round they get full market data and are tradable. Unknown pairs, stables and the
+        blacklist are dropped."""
+        s = self.settings_store.get()
+        try:
+            pairs = {m["base"] for m in self._spot_markets() if m["quote"] == s.quote}
+        except ExchangeError:
+            pairs = None
+        skip = set(s.stables) | {s.quote} | set(s.allocation.blocked)
+        out = []
+        for raw in tokens:
+            t = str(raw).upper().strip()
+            if t.endswith(s.quote) and t != s.quote:
+                t = t[: -len(s.quote)]
+            if t.isalnum() and t not in skip and (pairs is None or t in pairs) and t not in out:
+                out.append(t)
+        out = out[:self.MAX_FOCUS]
+        self.db.kv_set("ai_focus", out)
         return out
+
+    def market_scan(self, s, exclude, n: int = 40) -> dict[str, dict]:
+        """A cheap overview (24 h stats only, no klines) of the most-traded spot assets the AI is not
+        working with yet, so it can choose what to add to its focus."""
+        try:
+            tickers = self._tickers_24h()
+            pairs = {m["base"]: m.get("status") for m in self._spot_markets() if m["quote"] == s.quote}
+        except ExchangeError:
+            return {}
+        skip = set(s.stables) | {s.quote} | set(s.allocation.blocked) | set(exclude)
+        rows = sorted(((b, tickers.get(f"{b}{s.quote}") or {}) for b, st in pairs.items() if st == "TRADING" and b not in skip),
+                      key=lambda kv: -(kv[1].get("quote_volume") or 0))[:n]
+        return {b: {"price": t.get("price"), "change_24h": t.get("change_pct"),
+                    "quote_volume_24h": round(t.get("quote_volume") or 0)} for b, t in rows}
 
     def _tickers_24h(self) -> dict[str, dict]:
         tk = getattr(self, "_tickers", None)
@@ -626,6 +683,9 @@ class Service:
 
         recent = self.recent_decisions(5)
         context = build_context(s, pf, st, market, recent)
+        if s.allocation.mode == "ai" and s.allocation.universe != "whitelist":
+            context["allocation"]["focus"] = self.ai_focus()
+            context["allocation"]["market_scan"] = self.market_scan(s, s.tradable_tokens())
         if st.halted:
             context["halted"] = {"symbols": st.halted, "note": "这些交易对币安目前暂停交易，本轮不要对它们提出买卖"}
         fv = None
@@ -715,6 +775,8 @@ class Service:
             risk.extend(self._handle_futures(plan.futures, fv, c.id))
         if plan.alerts:
             self._replace_ai_alerts(plan.alerts, prices)
+        if plan.focus is not None and s.allocation.mode == "ai" and s.allocation.universe != "whitelist":
+            self.set_focus(plan.focus)
         out = plan.model_dump()
         out["questions"] = self.create_questions(plan.questions, c.id)
         lap("execute_ms", t3)
@@ -1349,6 +1411,7 @@ class Service:
             "btc_change_7d": btc_change, "anomaly": anomaly, "market": market,
             "targets": s.group_targets(),
             "allocation": s.allocation.model_dump(),
+            "ai_focus": self.ai_focus(),
             "capital": {"locked": s.capital.locked, "budget_usd": s.capital.budget_usd,
                         "deployed_usd": round(self.deployed_usd(), 2)},
             "risk_preset": s.risk_preset,
@@ -1395,17 +1458,32 @@ class Service:
             slim = {k: snapshot.get(k) for k in ("mode", "paused", "pause_reason", "total", "token_weights",
                                                   "category_weights", "targets", "today", "btc_change_7d", "pending_approvals")}
             slim["recent_decisions"] = self.recent_decisions(3)
+            slim["memory"] = self.settings.memory
             import json as _json
             system = CHAT_SYSTEM + "\n<data>\n" + _json.dumps(slim, ensure_ascii=False, default=str) + "\n</data>"
             msgs = [{"role": m.role, "content": m.text} for m in hist]
             try:
                 comp = self.complete(system, msgs, task="chat")
-                reply = comp.text.strip() or "（空回复）"
+                reply = self._learn(comp.text.strip()) or "（空回复）"
             except ProviderError as e:
                 reply = f"模型调用失败：{e}"
             self.db.add(ChatMessage(channel=channel, role="assistant", text=reply, provider=self.provider.name))
             self.events.emit("chat", {"channel": channel})
             return reply
+
+    _REMEMBER = re.compile(r"^\s*(?:🧠\s*)?记住[：:]\s*(.+?)\s*$", re.M)
+
+    def _learn(self, reply: str) -> str:
+        """Lines the chat model marked 记住：… become AI memory (read by every decision round)."""
+        rules = [m.group(1) for m in self._REMEMBER.finditer(reply)]
+        if not rules:
+            return reply
+        mem = self.settings.memory
+        new = [r[:300] for r in rules if r[:300] not in mem]
+        if new:
+            from ..config import MAX_MEMORY
+            self.update_settings({"memory": (mem + new)[-MAX_MEMORY:]})
+        return self._REMEMBER.sub(lambda m: f"🧠 已记住：{m.group(1)}", reply)
 
     # ------------------------------------------------------------------ allocation proposals
     PROPOSAL_TTL = 86400
@@ -1440,7 +1518,7 @@ class Service:
             except ExchangeError:
                 market, weights, total = {}, {}, None
             context = {
-                "investor_notes": s.investor_notes, "risk_preset": s.risk_preset, "stables": s.stables,
+                "investor_notes": s.investor_notes, "memory": s.memory, "risk_preset": s.risk_preset, "stables": s.stables,
                 "limits": {"stable_floor": s.limits.stable_floor, "max_order_usd": s.limits.max_order_usd},
                 "current": {"mode": s.allocation.mode, "categories": current, "enabled": s.allocation.enabled},
                 "portfolio": {"total_usd": total, "token_weights": weights},

@@ -17,7 +17,7 @@ def test_offer_lists_decision_changes_only(svc):
     before = svc.settings_store.get()
     svc.update_settings({"schedule": {"cycle_minutes": 30}, "paper": {"slippage": 0.001}})
     assert svc.rerun_offer(before) == []                               # timing and paper fills don't change a decision
-    svc.update_settings({"investor_notes": "多配 ETH", "allocation": {"max_asset_weight": 0.5}})
+    svc.update_settings({"investor_notes": "多配 ETH", "allocation": {"rebalance_drift": 0.1}})
     assert svc.rerun_offer(before) == ["投资备注", "资产分配"]
 
 
@@ -42,9 +42,9 @@ def test_telegram_offers_and_runs_a_manual_round(svc, monkeypatch):
     monkeypatch.setattr(svc, "run_cycle", lambda trigger="schedule", why="": runs.append(trigger) or True)
     bot._guarded(lambda tok: svc.update_settings({"capital": {"locked": {}}}, guard=True, confirm=tok), "✅ 无变化")
     assert sent[-1][1] is None                                         # nothing changed, no offer
-    bot._guarded(lambda tok: svc.update_settings({"allocation": {"ai_candidates": 20}}, guard=True, confirm=tok), "✅ 候选")
+    bot._guarded(lambda tok: svc.update_settings({"investor_notes": "多看看 SOL"}, guard=True, confirm=tok), "✅ 备注")
     text, buttons = sent[-1]
-    assert "资产分配" in text and buttons[0][0][0] == "🧠 立即重跑"
+    assert "投资备注" in text and buttons[0][0][0] == "🧠 立即重跑"
     bot._rerun(buttons[0][0][1].split(":")[1])
     for _ in range(50):
         if runs:

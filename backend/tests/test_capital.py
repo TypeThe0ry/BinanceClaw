@@ -39,12 +39,13 @@ def test_targets_mode_ignores_tokens_without_target():
     assert s.tradable_tokens() == ["BTC"]
 
 
-def test_ai_mode_uses_per_asset_ceiling():
-    s = Settings.model_validate({"allocation": {"enabled": ["BTC", "SOL"], "mode": "ai", "max_asset_weight": 0.3}})
+def test_ai_mode_has_no_per_asset_ceiling():
+    s = Settings.model_validate({"allocation": {"enabled": ["BTC", "SOL"], "mode": "ai"}})
     assert set(s.symbols()) == {"BTCUSDT", "SOLUSDT"}
-    # SOL already 28% of $10k -> at most ~2% more
+    # SOL already 28% of $10k: the AI decides concentration, only the other limits cap the buy
     v = ev(s, {"USDT": 7200, "SOL": 2800 / 150}, [("BUY", "SOLUSDT", 800)])[0]
-    assert v.approved_usd <= 200 + 1
+    assert v.approved_usd == 800
+    assert s.group_ceiling("SOL") == 1.0
     assert set(s.group_targets()) == {"BTC", "SOL", "STABLE"}
 
 

@@ -51,7 +51,7 @@ def test_each_dangerous_area_is_guarded(svc, patch):
 def test_presets_are_guarded(svc):
     with pytest.raises(ConfirmationRequired) as e:
         svc.apply_preset("aggressive", guard=True)
-    assert {c["field"] for c in e.value.changes} >= {"limits.max_order_usd", "allocation.max_asset_weight"}
+    assert {c["field"] for c in e.value.changes} >= {"limits.max_order_usd"}
     svc.apply_preset("aggressive", guard=True, confirm=e.value.token)
     assert svc.settings.risk_preset == "aggressive"
 

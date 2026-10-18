@@ -254,9 +254,11 @@ class FakeProvider(Provider):
         return Completion(r if isinstance(r, str) else json.dumps(r), "fake-model", {})
 
 
-def plan(*actions, summary="test", futures=None):
+def plan(*actions, summary="test", futures=None, focus=None):
     out = {"summary": summary, "market_view": "", "confidence": 0.6,
            "actions": [{"side": a[0], "symbol": a[1], "quote_usd": a[2], "reason": "r", "invalidation": "i"} for a in actions]}
+    if focus is not None:
+        out["focus"] = focus
     if futures:
         out["futures"] = [{"reason": "r", "invalidation": "i", **f} for f in futures]
     return out

@@ -68,6 +68,9 @@ class TradePlan(BaseModel):
     questions: list[Question] = Field(default_factory=list, max_length=3,
                                       description="需要主人决定的事；主人回答后会立即唤醒你按回答决策")
     confidence: float = Field(ge=0, le=1)
+    focus: list[str] | None = Field(default=None, max_length=30,
+                                    description="AI 自主分配（全部资产 / 黑名单）时：你之后要分析和配置的资产；"
+                                                "从下一轮起它们带完整行情、可以交易。省略表示保持不变，[] 表示清空")
     # Timing, used when schedule.decision_mode is "auto". The system clamps both to the owner's limits.
     next_check_minutes: int | None = Field(default=None, ge=1, le=1440, description="多少分钟后再看一次（没有事件也会按时醒来）")
     wake_move_pct: float | None = Field(default=None, gt=0, le=0.5, description="任一关注币种较本轮价格涨跌超过这个比例就提前唤醒你")

@@ -65,6 +65,7 @@ export default function Config() {
   const [lockAsset, setLockAsset] = useState("");
   const [lockAmt, setLockAmt] = useState("");
   const [viewAsset, setViewAsset] = useState("");
+  const [rule, setRule] = useState("");
   if (!data || !d) return <Skeleton className="h-96" />;
   const b = data.bounds;
   const lim = d.limits;
@@ -160,16 +161,6 @@ export default function Config() {
                 </div>
               </div>
             )}
-            {al.universe !== "whitelist" && (
-              <Row label="每轮交给 AI 的资产数">
-                <Num unit="个" value={al.ai_candidates} step={1} min={5} max={30}
-                  onChange={(x) => setD({ ...d, allocation: { ...al, ai_candidates: x } })} />
-              </Row>
-            )}
-            <Row label="单币占比上限">
-              <Num unit="%" value={Math.round(al.max_asset_weight * 1000) / 10} step={1} min={5} max={100}
-                onChange={(x) => setD({ ...d, allocation: { ...al, max_asset_weight: x / 100 } })} />
-            </Row>
           </>
         ) : (
           <>
@@ -278,6 +269,24 @@ export default function Config() {
           </>
         )}
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ approval_free: d.approval_free })}>保存</button></div>
+      </section>
+
+      <section id="memory">
+        <SectionHead title="AI 记忆" doc="decisions-and-risk" />
+        {d.memory.map((m) => (
+          <div key={m} className="flex min-h-[44px] items-center justify-between gap-4 border-b border-line py-2 text-[14px]">
+            <span>{m}</span>
+            <button type="button" className="btn-secondary btn-sm"
+              onClick={() => setD({ ...d, memory: d.memory.filter((x) => x !== m) })}>移除</button>
+          </div>
+        ))}
+        <div className="flex gap-2 py-3">
+          <input className="h-9 min-w-0 flex-1 rounded-lg bg-field px-3 text-[14px] focus:outline-none" placeholder="例如：Meme 币合计不超过 5%"
+            value={rule} onChange={(e) => setRule(e.target.value)} />
+          <button className="btn-secondary h-9" disabled={!rule.trim()}
+            onClick={() => { setD({ ...d, memory: [...d.memory.filter((x) => x !== rule.trim()), rule.trim()] }); setRule(""); }}>添加</button>
+        </div>
+        <div className="pt-1"><button className="btn-primary" onClick={() => save({ memory: d.memory })}>保存</button></div>
       </section>
 
       <section id="questions">
