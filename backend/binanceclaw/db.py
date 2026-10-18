@@ -132,6 +132,15 @@ class FuturesTrade(SQLModel, table=True):
     detail: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
 
+class EquitySnapshot(SQLModel, table=True):
+    """Account total over time, for the home page's 1D / 7D / 30D / 90D / 1Y valuation chart."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ts: float = Field(default_factory=time.time, index=True)
+    mode: str = Field(index=True)
+    total: float                              # USD value of the whole account (incl. locked / unselected assets)
+    source: str = "recorder"                  # recorder (periodic) | cycle (imported decision rounds) | binance (daily account snapshot)
+
+
 class PaperBalance(SQLModel, table=True):
     asset: str = Field(primary_key=True)
     free: float = 0

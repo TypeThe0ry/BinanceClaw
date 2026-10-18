@@ -136,8 +136,9 @@ class BinanceSpot:
         data = self._request("GET", "/api/v3/ticker/bookTicker", {"symbols": json.dumps(symbols, separators=(",", ":"))})
         return {d["symbol"]: (float(d["bidPrice"]), float(d["askPrice"])) for d in data}
 
-    def klines(self, symbol: str, interval: str = "1d", limit: int = 30) -> list[dict]:
-        rows = self._request("GET", "/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit})
+    def klines(self, symbol: str, interval: str = "1d", limit: int = 30, start: float | None = None) -> list[dict]:
+        rows = self._request("GET", "/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit,
+                                                        "startTime": int(start * 1000) if start else None})
         return [{"t": r[0] / 1000, "o": float(r[1]), "h": float(r[2]), "l": float(r[3]),
                  "c": float(r[4]), "v": float(r[5]), "close_t": r[6] / 1000} for r in rows]
 
@@ -164,6 +165,12 @@ class BinanceSpot:
 
     def account(self) -> dict:
         return self._request("GET", "/api/v3/account", {"omitZeroBalances": "true"}, signed=True)
+
+    def account_snapshot(self, start: float, end: float, kind: str = "SPOT") -> list[dict]:
+        """Binance's daily account snapshots (last month only, at most 30 days per call, weight 2400)."""
+        r = self._request("GET", "/sapi/v1/accountSnapshot", {"type": kind, "startTime": int(start * 1000),
+                                                               "endTime": int(end * 1000), "limit": 30}, signed=True)
+        return r.get("snapshotVos") or []
 
     def api_restrictions(self) -> dict:
         return self._request("GET", "/sapi/v1/account/apiRestrictions", signed=True)

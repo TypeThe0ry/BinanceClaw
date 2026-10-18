@@ -62,12 +62,19 @@ class FakeSpot:
         self._chk()
         return {s: (self.prices_map[s] * 0.9999, self.prices_map[s] * 1.0001) for s in symbols}
 
-    def klines(self, symbol, interval="1d", limit=30):
+    def klines(self, symbol, interval="1d", limit=30, start=None):
         self._chk()
         p = PRICES[symbol]          # history stays at the base price; tests move only the live price
         now = time.time()
         return [{"t": now - (limit - i - 1) * 86400, "o": p, "h": p * 1.01, "l": p * 0.99, "c": p, "v": 1, "close_t": now}
                 for i in range(limit)]
+
+    snapshots = ()                  # Binance daily account snapshots: (updateTime seconds, totalAssetOfBtc)
+
+    def account_snapshot(self, start, end, kind="SPOT"):
+        self._chk()
+        return [{"type": "spot", "updateTime": int(t * 1000), "data": {"totalAssetOfBtc": str(btc), "balances": []}}
+                for t, btc in self.snapshots if start <= t <= end]
 
     def symbol_rules(self, symbols):
         out = {}

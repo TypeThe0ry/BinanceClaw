@@ -34,6 +34,7 @@ from . import categories as cats
 from .autopilot import Autopilot
 from .earn import EarnManager
 from .events import EventBus
+from .valuation import Valuation
 
 FUTURES_ASSET = "FUTURES"          # pseudo-asset: equity of BinanceClaw's futures positions, in USD
 
@@ -53,6 +54,7 @@ class Service:
         self.earn = EarnManager(self)
         self.stream = PriceStream()
         self.autopilot = Autopilot(self)
+        self.valuation = Valuation(self)
         self.events.on(self.autopilot.on_event)
         self._confirm_key = ((self.secrets.session_secret or os.urandom(32).hex()) + ":confirm").encode()
         self._cycle_lock = threading.Lock()
@@ -837,6 +839,7 @@ class Service:
                                                            FuturesPosition.status.in_(("open", "pending")))):
             self.db.update(FuturesPosition, p.id, status="closed", closed=time.time(), close_reason="模拟盘重置")
         self.earn._pos = None
+        self.valuation.clear("paper")
 
     def recent_decisions(self, n: int) -> list[dict]:
         rows = self.db.all(select(Cycle).where(Cycle.status == "done").order_by(desc(Cycle.ts)).limit(n))
@@ -1337,6 +1340,7 @@ class Service:
     # ------------------------------------------------------------------ scheduler
     def start_scheduler(self):
         self.db.kv_set("started_at", time.time())
+        self.valuation.import_cycles()
         self.stream.start()
         threading.Thread(target=self._supervise, name="scheduler", daemon=True).start()
 
@@ -1424,6 +1428,8 @@ class Service:
                 self._every("earn", 600, self.earn.sweep)
                 self._every("watchdog", 300, self.watchdog)
                 self._every("backup", 3600, self.backup_db)
+                self._every("equity", 900, self.valuation.record)
+                self._every("equity_backfill", 600, self.valuation.backfill)
                 self._every("stream", 60, self._watch_stream)
                 due = self.autopilot.due()
                 if due:

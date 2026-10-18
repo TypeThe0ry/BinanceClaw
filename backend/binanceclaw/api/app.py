@@ -251,6 +251,13 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     def equity(limit: int = 500):
         return svc.equity_series(min(limit, 5000))
 
+    @app.get("/api/equity/history", dependencies=auth)
+    def equity_history(range: str = "7d"):
+        try:
+            return svc.valuation.history(range)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
     # ------------------------------------------------------------------ cycles
     @app.get("/api/cycles", dependencies=auth)
     def cycles(limit: int = 30, before: float | None = None):

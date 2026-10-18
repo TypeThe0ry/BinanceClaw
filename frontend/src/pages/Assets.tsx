@@ -1,9 +1,9 @@
 import { AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
 import { post, type Approval, type CycleRow, type Overview, type Performance } from "../api";
 import { ApprovalRow } from "../components/ApprovalRow";
+import { ValuationChart } from "../components/ValuationChart";
 import { Band, Change, Decision, Empty, FlashNum, Page, SectionHead, Seg, Side, Skeleton } from "../components/ui";
 import { CATEGORY_COLOR, ago, fmtPrice, token, usd, useApi, useTicker, useToast } from "../lib";
 
@@ -100,21 +100,11 @@ export default function Assets() {
             今日盈亏 {dayPnl != null ? <span className={`num ${dayPnl >= 0 ? "text-up" : "text-down"}`}>{dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(2)}</span> : <span className="text-fg-3">—</span>}
           </p>
         </div>
-        {series.length > 1 && (
-          <div className="h-14 w-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={series}>
-                <YAxis domain={["dataMin", "dataMax"]} hide />
-                <Line type="monotone" dataKey="total" dot={false} strokeWidth={1.5}
-                  stroke={series[series.length - 1].total >= series[0].total ? "#20B26C" : "#EF454A"} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
         <div className="flex w-full gap-2 sm:w-auto">
           <button className="btn-primary flex-1 sm:flex-none" onClick={runNow} disabled={running || o?.paused}>{running ? "决策中…" : "立即决策"}</button>
           <button className="btn-secondary flex-1 sm:flex-none" onClick={toggle}>{o?.paused ? "恢复" : "暂停"}</button>
         </div>
+        <ValuationChart current={shown} />
         <dl className="grid w-full grid-cols-2 gap-y-3 border-t border-line pt-4 text-[13px] sm:grid-cols-4">
           <div><dt className="text-fg-3">今日笔数</dt><dd className="num mt-1 text-[14px]">{o ? `${o.today.orders} / ${o.today.max_orders}` : "—"}</dd></div>
           <div><dt className="text-fg-3">今日金额</dt><dd className="num mt-1 text-[14px]">{o ? `${usd(o.today.notional, 0)} / ${usd(o.today.max_notional, 0)}` : "—"}</dd></div>
