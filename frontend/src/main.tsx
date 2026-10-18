@@ -13,6 +13,7 @@ import { AIDetail, AIList } from "./pages/AI";
 import Approvals from "./pages/Approvals";
 import Assets from "./pages/Assets";
 import Chat from "./pages/Chat";
+import Config from "./pages/Config";
 import Docs from "./pages/Docs";
 import Futures from "./pages/Futures";
 import Reports from "./pages/Reports";
@@ -70,6 +71,7 @@ function App() {
               <Route path="chat" element={<Chat />} />
               <Route path="reports" element={<Reports />} />
               <Route path="settings" element={<Settings />} />
+              <Route path="config" element={<Config />} />
               <Route path="docs" element={<Docs />} />
               <Route path="docs/:slug" element={<Docs />} />
               <Route path="more" element={<More />} />
