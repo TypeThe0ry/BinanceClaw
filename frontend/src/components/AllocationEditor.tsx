@@ -89,7 +89,7 @@ export default function AllocationEditor({ categories, enabled, notes, stables, 
   return (
     <>
       {mode === "ai" && (
-        <p className="border-b border-line py-3 text-[13px] text-fg-3">当前是「AI 自主分配」，目标配置暂不生效；应用 AI 提案会切换为「手动分配」。</p>
+        <p className="border-b border-line py-3 text-[13px] text-fg-3">AI 自主分配中，目标配置不生效</p>
       )}
       {Object.entries(cats).map(([cat, c]) => (
         <div key={cat} className="border-b border-line py-3">
@@ -129,12 +129,11 @@ export default function AllocationEditor({ categories, enabled, notes, stables, 
       <div className="mt-6 rounded-lg border border-line p-4">
         <p className="flex items-center gap-1.5 text-[14px] font-medium"><Sparkle size={15} /> 让 AI 生成或修改</p>
         <textarea className="input mt-2 h-16 py-2" value={instruction} maxLength={2000} onChange={(e) => setInstruction(e.target.value)}
-          placeholder="例如：加 10% TON，从 BTC 里减；或者：美股代币提高到 20%。留空则让 AI 按投资说明生成一份完整配置。" />
+          placeholder="例如：加 10% TON，从 BTC 里减" />
         <div className="mt-2 flex items-center gap-3">
           <button className="btn-secondary" disabled={busy} onClick={propose}>
             {busy ? <Spinner /> : instruction.trim() ? "按指令修改" : "AI 生成配置"}
           </button>
-          <span className="text-[12px] text-fg-3">AI 只出提案，你应用之后才生效；之后的买入照常经过风控和审批。</span>
         </div>
         {p && (
           <div className="mt-4 border-t border-line pt-3">

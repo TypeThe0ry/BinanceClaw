@@ -41,7 +41,6 @@ function GroupRow({ name, n, open, onToggle, cells, span }:
       <td className="td font-semibold" colSpan={span}>
         <span className={`mr-1.5 inline-block text-fg-3 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
         {name} <span className="text-[12px] font-normal text-fg-3">{n}</span>
-        {name === "自选" && <span className="ml-2 text-[12px] font-normal text-fg-3">AI 持仓与目标</span>}
       </td>
       {cells}
     </tr>
@@ -71,7 +70,7 @@ function FuturesAssets({ o, bcat, collapsed, fold }:
         <div><dt className="text-fg-3">未实现盈亏</dt><dd className={`num mt-1 text-[14px] ${f.unrealized >= 0 ? "text-up" : "text-down"}`}>{f.unrealized >= 0 ? "+" : ""}{num(f.unrealized)}</dd></div>
         <div><dt className="text-fg-3">已实现盈亏</dt><dd className={`num mt-1 text-[14px] ${f.realized >= 0 ? "text-up" : "text-down"}`}>{f.realized >= 0 ? "+" : ""}{num(f.realized)}</dd></div>
       </dl>
-      {!f.enabled && !f.positions.length && <Empty text="合约交易未开启，可在设置里打开" />}
+      {!f.enabled && !f.positions.length && <Empty text="合约交易未开启" />}
       {(f.enabled || !!f.positions.length) && (
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px]">
@@ -202,9 +201,10 @@ export default function Assets() {
   }
 
   return (
-    <Page className="flex flex-col gap-10">
+    // wide screens: summary | chart on top; from 1440 px the asset table sits beside approvals and the AI feed
+    <Page className="grid grid-flow-row-dense grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-x-8">
       {/* valuation */}
-      <section className="flex flex-wrap items-end justify-between gap-6">
+      <section className="flex flex-col gap-6 lg:col-span-5 xl:col-span-4">
         <div>
           <p className="text-[13px] text-fg-2">估值（USDT）</p>
           {shown != null ? (
@@ -226,12 +226,11 @@ export default function Assets() {
             今日盈亏 {dayPnl != null ? <span className={`num ${dayPnl >= 0 ? "text-up" : "text-down"}`}>{dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(2)}</span> : <span className="text-fg-3">—</span>}
           </p>
         </div>
-        <div className="flex w-full gap-2 sm:w-auto">
-          <button className="btn-primary flex-1 sm:flex-none" onClick={runNow} disabled={running || o?.paused}>{running ? "决策中…" : "立即决策"}</button>
-          <button className="btn-secondary flex-1 sm:flex-none" onClick={toggle}>{o?.paused ? "恢复" : "暂停"}</button>
+        <div className="flex w-full gap-2">
+          <button className="btn-primary flex-1 sm:flex-none lg:flex-1" onClick={runNow} disabled={running || o?.paused}>{running ? "决策中…" : "立即决策"}</button>
+          <button className="btn-secondary flex-1 sm:flex-none lg:flex-1" onClick={toggle}>{o?.paused ? "恢复" : "暂停"}</button>
         </div>
-        <ValuationChart current={shown} />
-        <dl className="grid w-full grid-cols-2 gap-y-3 border-t border-line pt-4 text-[13px] sm:grid-cols-4">
+        <dl className="grid w-full grid-cols-2 gap-y-3 border-t border-line pt-4 text-[13px] sm:grid-cols-4 lg:grid-cols-2">
           <div><dt className="text-fg-3">今日笔数</dt><dd className="num mt-1 text-[14px]">{o ? `${o.today.orders} / ${o.today.max_orders}` : "—"}</dd></div>
           <div><dt className="text-fg-3">今日金额</dt><dd className="num mt-1 text-[14px]">{o ? `${usd(o.today.notional, 0)} / ${usd(o.today.max_notional, 0)}` : "—"}</dd></div>
           <div><dt className="text-fg-3">BTC 7 日</dt><dd className="mt-1 text-[14px]"><Change v={o?.btc_change_7d} digits={1} /></dd></div>
@@ -247,9 +246,14 @@ export default function Assets() {
         {o?.paused && <p className="w-full text-[13px] text-warn">已暂停 · {o.pause_reason}</p>}
       </section>
 
+      {/* valuation over time */}
+      <section className="lg:col-span-7 xl:col-span-8">
+        <ValuationChart current={shown} />
+      </section>
+
       {/* approvals */}
       {!!pending.data?.length && (
-        <section>
+        <section className="self-start lg:col-span-12 min-[1440px]:col-span-4 min-[1440px]:col-start-9">
           <SectionHead title={<>待审批 <span className="num text-warn">{pending.data.length}</span></>} doc="approvals" />
           <AnimatePresence mode="popLayout" initial={false}>
             {pending.data.map((a) => <ApprovalRow key={a.id} a={a} onDone={pending.reload} />)}
@@ -258,7 +262,7 @@ export default function Assets() {
       )}
 
       {/* assets */}
-      <section>
+      <section className="min-w-0 lg:col-span-12 min-[1440px]:col-span-8 min-[1440px]:col-start-1 min-[1440px]:row-span-2">
         <SectionHead title="资产" doc="dashboard" right={
           <Seg id="assets-view" value={view} onChange={pickView}
             items={[{ k: "spot" as const, label: "现货" }, { k: "futures" as const, label: <>合约{!!o?.futures?.open && <span className="num ml-1 text-fg-3">{o.futures.open}</span>}</> }]} />
@@ -319,12 +323,12 @@ export default function Assets() {
       </section>
 
       {/* AI feed */}
-      <section>
+      <section className="self-start lg:col-span-12 min-[1440px]:col-span-4 min-[1440px]:col-start-9">
         <SectionHead title="AI 动态" doc="decisions-and-risk" right={<Link to="/ai" className="text-[13px] text-fg-2 hover:text-fg">全部 ›</Link>} />
         {cycles.data?.length ? cycles.data.map((c) => (
-          <Link key={c.id} to={`/ai/${c.id}`} className="flex flex-col gap-1.5 border-b border-line py-3.5 transition-colors hover:bg-raise sm:flex-row sm:items-center sm:gap-5">
+          <Link key={c.id} to={`/ai/${c.id}`} className="flex flex-col gap-1.5 border-b border-line py-3.5 transition-colors hover:bg-raise sm:flex-row sm:items-center sm:gap-5 min-[1440px]:flex-col min-[1440px]:items-start min-[1440px]:gap-1.5">
             <span className="num w-28 shrink-0 text-[13px] text-fg-3">{ago(c.ts)}</span>
-            <span className="min-w-0 flex-1 truncate text-[14px]">{c.summary || c.error || "…"}</span>
+            <span className="min-w-0 flex-1 truncate text-[14px] min-[1440px]:line-clamp-2 min-[1440px]:w-full min-[1440px]:whitespace-normal">{c.summary || c.error || "…"}</span>
             <span className="flex shrink-0 flex-wrap gap-x-4 text-[13px]">
               {c.risk?.length ? c.risk.map((r) => (
                 <span key={`${r.kind ?? "spot"}-${r.index}`} className="flex items-center gap-1.5"><Side side={r.side ?? r.op} />{token(r.symbol)} <span className="num">{usd(r.approved_usd || r.requested_usd || r.margin || r.requested_margin, 0)}</span> <Decision d={r.decision} /></span>

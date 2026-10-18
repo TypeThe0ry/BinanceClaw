@@ -1,16 +1,11 @@
 import { useState } from "react";
 import { post } from "../api";
 import AllocationEditor from "../components/AllocationEditor";
-import { type Alloc, type ApprovalFree, type FuturesCfg, Num, type Outlook, QUESTIONS_DEFAULT, type Questions, Row, SettingsNav,
-  type Style, useSettingsDraft } from "../components/settingsKit";
+import { type ApprovalFree, type FuturesCfg, Num, type Outlook, QUESTIONS_DEFAULT, type Questions, Row, SettingsNav,
+  useSettingsDraft } from "../components/settingsKit";
 import TokenPicker from "../components/TokenPicker";
 import { Page, Seg, SectionHead, Skeleton } from "../components/ui";
 
-const UNIVERSE_HINT: Record<Alloc["universe"], string> = {
-  all: "币安全部现货资产都可以交易。每轮把你的持仓和成交额最高的资产交给 AI 判断。",
-  whitelist: "只交易下面选中的资产。",
-  blacklist: "除黑名单外的币安现货资产都可以交易。",
-};
 const toggle = (list: string[], t: string) => (list.includes(t) ? list.filter((x) => x !== t) : [...list, t]);
 
 function Chips({ tokens, on, onToggle }: { tokens: string[]; on: string[]; onToggle: (t: string) => void }) {
@@ -35,11 +30,6 @@ const FUT_LIMITS: { k: keyof FuturesCfg; label: string; unit: string; pct?: bool
   { k: "max_opens_per_day", label: "每日开仓次数", unit: "次" },
 ];
 
-const STYLE_HINT: Record<Style, string> = {
-  short: "持仓数小时到数天，AI 每 5–60 分钟复查，入场离场更快。",
-  medium: "持仓数天到数周，看日线趋势和支撑阻力，按「设置 → 节奏」里的间隔复查。",
-  long: "持仓数月以上，分批建仓、少交易，AI 每 2–24 小时复查。",
-};
 const VIEW_LABEL: Record<number, string> = { [-2]: "强烈看空", [-1]: "偏空", 0: "中性", 1: "偏多", 2: "强烈看多" };
 
 function ViewDial({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
@@ -109,8 +99,7 @@ export default function Config() {
           <Seg id="style" value={d.strategy.style} onChange={(k) => setD({ ...d, strategy: { style: k } })}
             items={[{ k: "short" as const, label: "短线" }, { k: "medium" as const, label: "中期" }, { k: "long" as const, label: "长期" }]} />
         </Row>
-        <p className="border-b border-line py-3 text-[13px] text-fg-3">{STYLE_HINT[d.strategy.style]}复查间隔仍不会越过「设置 → 节奏」里的最短和最长间隔。</p>
-        <Row label={<>整体看法 <span className="text-fg-3">· 指导 AI 看好还是不看好</span></>}>
+        <Row label="整体看法">
           <ViewDial label="整体看法" value={ol.market} onChange={(v) => setOl({ market: v })} />
         </Row>
         {Object.entries(ol.assets).map(([t, v]) => (
@@ -135,8 +124,7 @@ export default function Config() {
             placeholder="例如：觉得 ETH 短期要回调，想做空对冲；BTC 跌到 7 万以下就多买"
             onChange={(e) => setOl({ note: e.target.value })} />
         </div>
-        <p className="py-3 text-[13px] text-fg-3">观点只是给 AI 的指导：它仍要找行情依据，行情明显相反时会说明。风控限额不会因观点改变；现货不能做空，看空时 AI 会少买、多留稳定币，开启合约后才可能做空。</p>
-        <div className="pt-1"><button className="btn-primary" onClick={() => save({ strategy: d.strategy, outlook: d.outlook })}>保存</button></div>
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ strategy: d.strategy, outlook: d.outlook })}>保存</button></div>
       </section>
 
       <section>
@@ -152,7 +140,6 @@ export default function Config() {
                 items={[{ k: "all" as const, label: "全部资产" }, { k: "whitelist" as const, label: "白名单" }, { k: "blacklist" as const, label: "黑名单" }]}
                 onChange={(k) => setD({ ...d, allocation: { ...al, universe: k } })} />
             </Row>
-            <p className="border-b border-line py-3 text-[13px] text-fg-3">{UNIVERSE_HINT[al.universe]}AI 按自己的判断分配比例，并说明配置思路。</p>
             {al.universe === "whitelist" && (
               <div className="border-b border-line py-3">
                 <p className="text-[14px] text-fg-2">白名单</p>
@@ -165,10 +152,8 @@ export default function Config() {
             )}
             {al.universe === "blacklist" && (
               <div className="border-b border-line py-3">
-                <p className="text-[14px] text-fg-2">黑名单 <span className="text-fg-3">· AI 永远不会买卖这些资产</span></p>
-                {al.blocked.length > 0
-                  ? <Chips tokens={al.blocked} on={al.blocked} onToggle={(t) => setD({ ...d, allocation: { ...al, blocked: toggle(al.blocked, t) } })} />
-                  : <p className="mt-2 text-[13px] text-fg-3">还没有，搜索添加</p>}
+                <p className="text-[14px] text-fg-2">黑名单</p>
+                {al.blocked.length > 0 && <Chips tokens={al.blocked} on={al.blocked} onToggle={(t) => setD({ ...d, allocation: { ...al, blocked: toggle(al.blocked, t) } })} />}
                 <div className="mt-3">
                   <TokenPicker selected={al.blocked} placeholder="搜索要排除的资产"
                     onToggle={(t) => setD({ ...d, allocation: { ...al, blocked: toggle(al.blocked, t) } })} />
@@ -188,13 +173,12 @@ export default function Config() {
           </>
         ) : (
           <>
-            <p className="border-b border-line py-3 text-[13px] text-fg-3">你在下方「目标配置」里设定每个资产的比例，系统把持仓维持在这些比例附近。</p>
             <Row label="自动再平衡">
               <input type="checkbox" className="h-4 w-4 accent-white" checked={al.auto_rebalance} aria-label="自动再平衡"
                 onChange={(e) => setD({ ...d, allocation: { ...al, auto_rebalance: e.target.checked } })} />
             </Row>
             {al.auto_rebalance && (
-              <Row label={<>偏离阈值 <span className="text-fg-3">· 实际比例偏离目标超过这么多就调回</span></>}>
+              <Row label="偏离阈值">
                 <Num unit="%" value={Math.round(al.rebalance_drift * 1000) / 10} step={0.5} min={1} max={50}
                   onChange={(x) => setD({ ...d, allocation: { ...al, rebalance_drift: x / 100 } })} />
               </Row>
@@ -284,24 +268,22 @@ export default function Config() {
         {af.mode !== "off" && (
           <>
             <Row label="也包含卖出">
-              <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={af.include_sell} aria-label="也包含卖出"
+              <input type="checkbox" className="h-4 w-4 accent-warn" checked={af.include_sell} aria-label="也包含卖出"
                 onChange={(e) => setAf({ include_sell: e.target.checked })} />
             </Row>
             <Row label="也包含合约开仓">
-              <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={af.include_futures} aria-label="也包含合约开仓"
+              <input type="checkbox" className="h-4 w-4 accent-warn" checked={af.include_futures} aria-label="也包含合约开仓"
                 onChange={(e) => setAf({ include_futures: e.target.checked })} />
             </Row>
           </>
         )}
-        <p className="py-3 text-[13px] text-fg-3">适合睡觉或没空看手机的时候。免审批期间，本来要等你批准的交易会直接执行，但单笔上限、每日笔数和金额、稳定币下限、暂停条件等风控照常生效，超出的部分照样截断或拒绝。卖出需要先在「风控」里允许卖出。</p>
-        <div className="pt-1"><button className="btn-primary" onClick={() => save({ approval_free: d.approval_free })}>保存</button></div>
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ approval_free: d.approval_free })}>保存</button></div>
       </section>
 
       <section id="questions">
         <SectionHead title="AI 提问" doc="approvals" />
-        <p className="py-2 text-[13px] text-fg-3">遇到高风险或取决于你偏好的决策（比如卖出你原有的持仓、接管某个资产），AI 会先在「审批」页和 Telegram 里问你。你回答后它立即按回答重新决策，操作照常经过风控和审批。</p>
         <Row label="允许 AI 提问">
-          <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={q.enabled} aria-label="允许 AI 提问"
+          <input type="checkbox" className="h-4 w-4 accent-warn" checked={q.enabled} aria-label="允许 AI 提问"
             onChange={(e) => setQ({ enabled: e.target.checked })} />
         </Row>
         <Row label="回答期限"><Num unit="分钟" value={q.question_timeout_minutes} min={b.question_timeout_minutes?.[0]} max={b.question_timeout_minutes?.[1]} onChange={(x) => setQ({ question_timeout_minutes: x })} /></Row>
@@ -347,7 +329,7 @@ export default function Config() {
             onChange={(e) => setD({ ...d, futures: { ...d.futures, allow_short: e.target.checked } })} />
         </Row>
         <Row label="小额自动开仓">
-          <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={d.futures.auto_open}
+          <input type="checkbox" className="h-4 w-4 accent-warn" checked={d.futures.auto_open}
             onChange={(e) => setD({ ...d, futures: { ...d.futures, auto_open: e.target.checked } })} />
           {d.futures.auto_open && <Num unit="USD" value={d.futures.auto_open_max_margin_usd} min={0}
             onChange={(x) => setD({ ...d, futures: { ...d.futures, auto_open_max_margin_usd: x } })} />}

@@ -1,8 +1,9 @@
-import { ColorType, CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "lightweight-charts";
+import { CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, post, type Approval, type Kline, type Order, type Overview, type PriceAlert } from "../api";
 import { Change, Empty, FlashNum, Page, Seg, Side, Tabs } from "../components/ui";
+import { alpha, candleColors, chartTheme, useColors } from "../theme";
 import { clock, fmtPrice, token, usd, useApi, useTicker, useToast } from "../lib";
 
 type Iv = "15m" | "1h" | "4h" | "1d";
@@ -14,6 +15,7 @@ const IV: { k: Iv; label: string; limit: number }[] = [
 function Chart({ symbol, iv, orders, alerts }: { symbol: string; iv: Iv; orders: Order[]; alerts: PriceAlert[] }) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi>();
+  const col = useColors();
   const limit = IV.find((x) => x.k === iv)!.limit;
   const { data } = useApi<Kline[]>(`/klines?symbol=${symbol}&interval=${iv}&limit=${limit}`, { poll: 30000 });
 
@@ -21,27 +23,26 @@ function Chart({ symbol, iv, orders, alerts }: { symbol: string; iv: Iv; orders:
     if (!el.current) return;
     const c = createChart(el.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: "#000000" }, textColor: "#5C5C5C", fontSize: 11, fontFamily: "Inter Variable, system-ui" },
-      grid: { vertLines: { color: "#111111" }, horzLines: { color: "#111111" } },
-      rightPriceScale: { borderColor: "#1F1F1F", scaleMargins: { top: 0.08, bottom: 0.22 } },
-      timeScale: { borderColor: "#1F1F1F", timeVisible: iv !== "1d", rightOffset: 6 },
-      crosshair: { mode: CrosshairMode.Normal, vertLine: { color: "#5C5C5C", labelBackgroundColor: "#2E2E2E" }, horzLine: { color: "#5C5C5C", labelBackgroundColor: "#2E2E2E" } },
+      ...chartTheme(col),
+      layout: { ...chartTheme(col).layout, fontSize: 11, fontFamily: "Inter Variable, system-ui" },
+      rightPriceScale: { borderColor: col.line, scaleMargins: { top: 0.08, bottom: 0.22 } },
+      timeScale: { borderColor: col.line, timeVisible: iv !== "1d", rightOffset: 6 },
+      crosshair: { ...chartTheme(col).crosshair, mode: CrosshairMode.Normal },
     });
     chart.current = c;
     return () => c.remove();
-  }, [iv]);
+  }, [iv]); // theme changes go through applyOptions below, so the chart is not rebuilt
+
+  useEffect(() => { chart.current?.applyOptions(chartTheme(col)); }, [col]);
 
   useEffect(() => {
     const c = chart.current;
     if (!c || !data?.length) return;
-    const candle = c.addCandlestickSeries({
-      upColor: "#20B26C", downColor: "#EF454A", borderUpColor: "#20B26C", borderDownColor: "#EF454A",
-      wickUpColor: "#20B26C", wickDownColor: "#EF454A", priceLineColor: "#8C8C8C",
-    });
+    const candle = c.addCandlestickSeries(candleColors(col));
     const vol = c.addHistogramSeries({ priceScaleId: "vol", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
     c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     candle.setData(data.map((k) => ({ time: Math.floor(k.t) as UTCTimestamp, open: k.o, high: k.h, low: k.l, close: k.c })));
-    vol.setData(data.map((k) => ({ time: Math.floor(k.t) as UTCTimestamp, value: k.v, color: k.c >= k.o ? "rgba(32,178,108,0.35)" : "rgba(239,69,74,0.35)" })));
+    vol.setData(data.map((k) => ({ time: Math.floor(k.t) as UTCTimestamp, value: k.v, color: k.c >= k.o ? alpha(col.up, 0.35) : alpha(col.down, 0.35) })));
     const step = data.length > 1 ? data[1].t - data[0].t : 3600;
     const start = data[0].t;
     candle.setMarkers(orders
@@ -49,19 +50,19 @@ function Chart({ symbol, iv, orders, alerts }: { symbol: string; iv: Iv; orders:
       .map((o) => ({
         time: Math.floor(start + Math.floor((o.ts - start) / step) * step) as UTCTimestamp,
         position: o.side === "BUY" ? ("belowBar" as const) : ("aboveBar" as const),
-        color: o.side === "BUY" ? "#20B26C" : "#EF454A",
+        color: o.side === "BUY" ? col.up : col.down,
         shape: o.side === "BUY" ? ("arrowUp" as const) : ("arrowDown" as const),
         text: usd(o.quote_usd, 0),
       })).sort((a, b) => a.time - b.time));
     for (const a of alerts.filter((x) => x.symbol === symbol)) {
-      candle.createPriceLine({ price: a.price, color: "#F0A23B", lineWidth: 1, lineStyle: 2, axisLabelVisible: true,
+      candle.createPriceLine({ price: a.price, color: col.warn, lineWidth: 1, lineStyle: 2, axisLabelVisible: true,
         title: `${a.op === "below" ? "↓" : "↑"} ${a.source === "ai" ? "AI" : "提醒"}` });
     }
     c.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 120), to: data.length + 4 });
     return () => {
       try { c.removeSeries(candle); c.removeSeries(vol); } catch { /* chart disposed */ }
     };
-  }, [data, orders, symbol, alerts]);
+  }, [data, orders, symbol, alerts, col]);
 
   return <div ref={el} className="h-[420px] w-full md:h-[520px]" />;
 }

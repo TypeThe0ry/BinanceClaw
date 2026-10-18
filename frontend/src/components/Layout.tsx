@@ -28,7 +28,7 @@ function Logo() {
   return (
     <Link to="/" className="flex items-center gap-2">
       <svg width="22" height="22" viewBox="0 0 64 64" aria-hidden>
-        <path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="#fff" strokeWidth="5" strokeLinecap="round" fill="none" />
+        <path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="currentColor" strokeWidth="5" strokeLinecap="round" fill="none" />
       </svg>
       <span className="text-[16px] font-semibold tracking-tight">BinanceClaw</span>
     </Link>
@@ -102,7 +102,7 @@ export function Layout() {
         <TickerBar />
       </header>
 
-      <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 pb-24 pt-6 md:px-6 md:pb-12">
+      <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 pb-24 pt-6 md:px-6 md:pb-12">
         <Outlet />
       </main>
 

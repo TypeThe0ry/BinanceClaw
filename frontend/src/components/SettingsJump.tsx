@@ -16,6 +16,7 @@ const INDEX: Record<PagePath, { title: string; words: string }[]> = {
     { title: "节奏", words: "决策方式 自主实时 固定间隔 复查间隔 最短间隔 最长不决策 调用上限 波动唤醒 审批有效期 日报时间" },
     { title: "理财", words: "活期 申购 赎回 稳定币 现货保留 最小划转 Simple Earn" },
     { title: "Telegram 推送", words: "推送频率 即时 定时汇总 免打扰 通知 消息" },
+    { title: "外观", words: "主题 浅色 深色 跟随系统" },
     { title: "连接", words: "币安 API Telegram token key OpenAI Anthropic 已配置" },
     { title: "已登录设备", words: "设备 登录 撤销" },
   ],
@@ -43,7 +44,7 @@ const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "");
 
 function flash(el: HTMLElement) {
   el.scrollIntoView?.({ behavior: "smooth", block: "start" });
-  el.animate?.([{ backgroundColor: "rgba(255,255,255,0.08)" }, { backgroundColor: "transparent" }], { duration: 1600 });
+  el.animate?.([{ backgroundColor: "rgb(var(--c-hover))" }, { backgroundColor: "transparent" }], { duration: 1600 });
 }
 
 /** Sticky bar under the 设置 / 配置 title: search box plus one link per section of the current page. */
