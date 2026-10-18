@@ -23,6 +23,7 @@ interface SettingsResp {
     stables: string[];
     futures: FuturesCfg;
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
+    questions?: Questions;
   };
   presets: Record<string, unknown>;
   candidates: string[];
@@ -32,6 +33,8 @@ interface SettingsResp {
   bounds: Record<string, [number, number]>;
   confirm_phrase: string;
 }
+interface Questions { enabled: boolean; question_timeout_minutes: number; on_timeout: "skip" | "auto" }
+const QUESTIONS_DEFAULT: Questions = { enabled: true, question_timeout_minutes: 120, on_timeout: "skip" };
 interface Alloc {
   mode: "targets" | "ai"; universe: "all" | "whitelist" | "blacklist"; enabled: string[]; blocked: string[];
   max_asset_weight: number; ai_candidates: number; auto_rebalance: boolean; rebalance_drift: number;
@@ -149,6 +152,8 @@ export default function Settings() {
   const setLim = (k: string, v: number | boolean) => setD({ ...d, limits: { ...lim, [k]: v } });
   const sch = d.schedule;
   const setSch = (patch: Partial<typeof sch>) => setD({ ...d, schedule: { ...sch, ...patch } });
+  const q = d.questions ?? QUESTIONS_DEFAULT;
+  const setQ = (patch: Partial<Questions>) => setD({ ...d, questions: { ...q, ...patch } });
 
   return (
     <Page className="mx-auto flex max-w-[820px] flex-col gap-10">
@@ -475,6 +480,21 @@ export default function Settings() {
           <input type="time" className="input num h-9 w-32" value={d.schedule.daily_report_time} onChange={(e) => setD({ ...d, schedule: { ...d.schedule, daily_report_time: e.target.value } })} />
         </Row>
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ schedule: d.schedule })}>保存</button></div>
+      </section>
+
+      <section>
+        <SectionHead title="AI 提问" doc="approvals" />
+        <p className="py-2 text-[13px] text-fg-3">遇到高风险或取决于你偏好的决策（比如卖出你原有的持仓、接管某个资产），AI 会先在这里和 Telegram 里问你。你回答后它立即按回答重新决策，操作照常经过风控和审批。</p>
+        <Row label="允许 AI 提问">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={q.enabled} aria-label="允许 AI 提问"
+            onChange={(e) => setQ({ enabled: e.target.checked })} />
+        </Row>
+        <Row label="回答期限"><Num unit="分钟" value={q.question_timeout_minutes} min={b.question_timeout_minutes?.[0]} max={b.question_timeout_minutes?.[1]} onChange={(x) => setQ({ question_timeout_minutes: x })} /></Row>
+        <Row label="超时未回答时">
+          <Seg id="on-timeout" value={q.on_timeout} onChange={(k) => setQ({ on_timeout: k })}
+            items={[{ k: "skip" as const, label: "不操作" }, { k: "auto" as const, label: "按 AI 推荐执行" }]} />
+        </Row>
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ questions: q })}>保存</button></div>
       </section>
 
       <section>

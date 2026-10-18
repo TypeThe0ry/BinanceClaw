@@ -52,7 +52,8 @@ function TickerBar() {
 }
 
 export function Layout() {
-  const { data: ov, reload } = useApi<Overview>("/overview", { poll: 30000, kinds: ["paused", "resumed", "mode", "approval", "approval_created", "order", "cycle", "settings"] });
+  const { data: ov, reload } = useApi<Overview>("/overview", { poll: 30000, kinds: ["paused", "resumed", "mode", "approval", "approval_created", "order", "cycle", "settings", "question", "question_created"] });
+  const waiting = (ov?.pending_approvals ?? 0) + (ov?.pending_questions ?? 0);
   const { connected } = useLive();
   const toast = useToast();
   const loc = useLocation();
@@ -75,8 +76,8 @@ export function Layout() {
               <NavLink key={n.to} to={n.to} end={n.to === "/"}
                 className={`relative flex h-full items-center text-[14px] font-medium transition-colors ${active(n.to) ? "text-fg" : "text-fg-2 hover:text-fg"}`}>
                 {n.label}
-                {n.to === "/approvals" && !!ov?.pending_approvals && (
-                  <span className="num ml-1 rounded bg-warn px-1 text-[11px] font-semibold leading-4 text-bg">{ov.pending_approvals}</span>
+                {n.to === "/approvals" && !!waiting && (
+                  <span className="num ml-1 rounded bg-warn px-1 text-[11px] font-semibold leading-4 text-bg">{waiting}</span>
                 )}
                 {active(n.to) && <motion.span layoutId="nav-underline" className="absolute inset-x-0 bottom-0 h-[2px] bg-fg" />}
               </NavLink>
@@ -108,7 +109,7 @@ export function Layout() {
             <NavLink key={n.to} to={n.to} end={n.to === "/"} className={`relative flex flex-1 flex-col items-center gap-0.5 py-1 text-[11px] ${on ? "text-fg" : "text-fg-3"}`}>
               <n.icon size={22} weight={on ? "fill" : "regular"} />
               {n.label}
-              {n.to === "/approvals" && !!ov?.pending_approvals && <span className="absolute right-[26%] top-0.5 h-2 w-2 rounded-full bg-warn" />}
+              {n.to === "/approvals" && !!waiting && <span className="absolute right-[26%] top-0.5 h-2 w-2 rounded-full bg-warn" />}
             </NavLink>
           );
         })}

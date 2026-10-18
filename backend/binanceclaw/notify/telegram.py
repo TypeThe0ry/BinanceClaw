@@ -15,7 +15,7 @@ from sqlmodel import desc, select
 
 from ..config import ConfirmationRequired
 from ..core.autopilot import TRIGGER_LABELS
-from ..db import Approval, Cycle, Order
+from ..db import AiQuestion, Approval, Cycle, Order
 from . import charts
 
 log = logging.getLogger("binanceclaw.telegram")
@@ -27,7 +27,7 @@ HELP = """BinanceClaw 指令
 /pause   暂停自动执行
 /resume  恢复自动执行
 /kill    紧急停止（暂停并作废所有待审批）
-/pending 待审批列表
+/pending 待审批和 AI 提问
 /log     最近 5 轮决策
 /report  立即生成日报
 /chart   K 线图，例：/chart ETH
@@ -177,6 +177,12 @@ class TelegramBot:
             self.send("⚠️ 下单失败，详见网页「交易」页")
         elif kind == "approval_created":
             self._send_approval(d["id"])
+        elif kind == "question_created":
+            self._send_question(d["id"])
+        elif kind == "question":
+            q = self.svc.db.get(AiQuestion, d["id"])
+            if q:
+                self.edit(q.tg_message_id, self._question_outcome(q))
         elif kind == "approval":
             a = self.svc.db.get(Approval, d["id"])
             if a:
@@ -215,7 +221,7 @@ class TelegramBot:
         elif kind == "cycle" and d.get("status") == "done":
             c = self.svc.db.get(Cycle, d["id"])
             # auto mode: the AI's own routine check-ins that change nothing stay quiet; event-woken rounds report
-            if c and not c.risk and c.trigger != "ai_scheduled":
+            if c and not c.risk and c.trigger != "ai_scheduled" and not (c.plan or {}).get("questions"):
                 why = TRIGGER_LABELS.get(c.trigger)
                 self.send(f"🧠 本轮决策{f'（{why}）' if why and c.trigger not in ('schedule', 'manual') else ''}：不操作\n{c.summary[:600]}")
 
@@ -261,6 +267,33 @@ class TelegramBot:
             mid = self.send(text, buttons)
         self.svc.db.update(Approval, aid, tg_message_id=mid)
 
+    def _send_question(self, qid):
+        q = self.svc.db.get(AiQuestion, qid)
+        if not q or q.status != "pending":
+            return
+        mins = int((q.expires - time.time()) / 60)
+        lines = [f"❓ AI 想问你 [{self.label()}]", q.text, ""]
+        for i, o in enumerate(q.options):
+            star = "（AI 推荐）" if i == q.recommended else ""
+            lines.append(f"{i + 1}. {o['label']}{star}" + (f"：{o['detail']}" if o.get("detail") else ""))
+        miss = ("采用 AI 推荐的选项" if self.svc.settings.questions.on_timeout == "auto" else "这件事不操作")
+        lines.append(f"\n{mins} 分钟内回答；超时{miss}。选中的操作仍会经过风控和审批。")
+        buttons = [[(f"{i + 1}. {o['label']}"[:60], f"qa:{q.id}:{i}")] for i, o in enumerate(q.options)]
+        mid = self.send("\n".join(lines), buttons)
+        self.svc.db.update(AiQuestion, qid, tg_message_id=mid)
+
+    @staticmethod
+    def _question_outcome(q) -> str:
+        head = f"❓ {q.text[:600]}\n\n"
+        if q.status == "answered":
+            by = {"web": "（网页）", "telegram": "（Telegram）"}.get(q.resolved_by, "")
+            return head + f"✅ 你选了「{q.options[q.answer]['label']}」{by}，AI 正在按你的回答决策"
+        if q.status == "expired" and q.answer is not None:
+            return head + f"⌛ 超时未回答，按设置采用 AI 推荐的「{q.options[q.answer]['label']}」"
+        if q.status == "expired":
+            return head + "⌛ 超时未回答，按设置这件事不操作"
+        return head + "⚪ 已作废"
+
     def _send_report(self, text: str):
         try:
             ov = self.svc.overview()
@@ -301,6 +334,8 @@ class TelegramBot:
             lines.append("锁定：" + "，".join(f"{k} {v:g}" for k, v in cap["locked"].items()))
         if ov["pending_approvals"]:
             lines.append(f"待审批：{ov['pending_approvals']} 笔（/pending）")
+        if ov.get("pending_questions"):
+            lines.append(f"AI 提问待回答：{ov['pending_questions']} 个（/pending）")
         return "\n".join(lines)
 
     def handle_text(self, text: str):
@@ -320,11 +355,13 @@ class TelegramBot:
         elif cmd == "/kill":
             svc.kill_switch("telegram")
         elif cmd == "/pending":
-            ps = svc.db.pending_approvals()
-            if not ps:
-                self.send("没有待审批的订单")
+            ps, qs = svc.db.pending_approvals(), svc.db.pending_questions()
+            if not ps and not qs:
+                self.send("没有待审批的订单，也没有待回答的提问")
             for a in ps:
                 self._send_approval(a.id)
+            for q in qs:
+                self._send_question(q.id)
         elif cmd == "/log":
             rows = svc.db.all(select(Cycle).order_by(desc(Cycle.ts)).limit(5))
             out = []
@@ -595,6 +632,12 @@ class TelegramBot:
                         self.answer(cq["id"], "处理中…")
                         if kind in ("cfm", "cfm_drop"):
                             self._resolve_confirm(aid, kind == "cfm")
+                            continue
+                        if kind == "qa":
+                            qid, _, idx = aid.partition(":")
+                            ok, msg = self.svc.answer_question(qid, int(idx) if idx.isdigit() else -1, "telegram")
+                            if not ok:
+                                self.send(f"⚠️ {msg}")
                             continue
                         if kind in ("rerun", "rerun_drop"):
                             if kind == "rerun":
