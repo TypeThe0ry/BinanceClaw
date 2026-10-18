@@ -25,6 +25,7 @@ export interface SettingsResp {
     stables: string[];
     futures: FuturesCfg;
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
+    notify?: NotifyCfg;
   };
   presets: Record<string, unknown>;
   candidates: string[];
@@ -33,6 +34,12 @@ export interface SettingsResp {
   providers: Record<string, { ok: boolean; message: string; default_model: string }>;
   bounds: Record<string, [number, number]>;
   confirm_phrase: string;
+  telegram?: boolean;
+  notify_types?: Record<string, { label: string; always: boolean }>;
+}
+export interface NotifyCfg {
+  types: Record<string, boolean>; mode: "instant" | "digest"; digest_minutes: number;
+  quiet: { enabled: boolean; start: string; end: string };
 }
 export interface Alloc {
   mode: "targets" | "ai"; universe: "all" | "whitelist" | "blacklist"; enabled: string[]; blocked: string[];
@@ -78,7 +85,7 @@ export function useSettingsDraft() {
 }
 
 const PAGES = [
-  { to: "/settings", label: "设置", hint: "系统：交易模式、模型、节奏、理财、连接与设备" },
+  { to: "/settings", label: "设置", hint: "系统：交易模式、模型、节奏、理财、推送、连接与设备" },
   { to: "/config", label: "配置", hint: "投资：AI 怎么分配、目标比例、资金、风控与合约" },
 ];
 

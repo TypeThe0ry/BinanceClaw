@@ -36,3 +36,10 @@ def test_overview_and_api(client):  # noqa: F811
     assert ov["binance_categories"]["USDT"]["primary"] == "稳定币"
     assert client.get("/api/categories").json()[0]["label"] == "Layer 1 / Layer 2"
     assert {r["token"] for r in client.get("/api/markets?tag=Solana").json()} == {"SOL"}
+
+
+def test_overview_categorises_futures_symbols(svc):
+    svc.settings_store.update({"futures": {"symbols": ["SOL"]}})
+    ov = svc.overview()
+    assert ov["futures"]["symbols"] == ["SOL"]
+    assert ov["binance_categories"]["SOL"]["primary"] == "Layer 1 / Layer 2"

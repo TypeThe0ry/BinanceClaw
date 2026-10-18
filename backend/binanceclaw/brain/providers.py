@@ -174,7 +174,9 @@ class AnthropicAPIProvider(Provider):
     def complete(self, system, messages, json_mode=False):
         if not self.secrets.anthropic_api_key:
             raise ProviderError("未配置 ANTHROPIC_API_KEY")
-        body = {"model": self.model, "max_tokens": 4096, "system": system, "messages": messages}
+        # The system prompt is the same every round: cache it so repeat rounds start faster and cost less.
+        body = {"model": self.model, "max_tokens": 4096, "messages": messages,
+                "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]}
         headers = {"x-api-key": self.secrets.anthropic_api_key, "anthropic-version": "2023-06-01"}
         t0 = time.time()
         try:
