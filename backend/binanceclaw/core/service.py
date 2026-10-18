@@ -22,7 +22,7 @@ from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
 from ..config import DATA_DIR, ConfirmationRequired, Secrets, SettingsStore, dangerous_changes, decision_changes
-from ..db import Approval, ChatMessage, Cycle, Database, FuturesPosition, FuturesTrade, Order, PriceAlert, Report
+from ..db import AiQuestion, Approval, ChatMessage, Cycle, Database, FuturesPosition, FuturesTrade, Order, PriceAlert, Report
 from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
 from ..exchange.broker import Broker, OrderUnknown
@@ -38,6 +38,7 @@ from .earn import EarnManager
 from .events import EventBus
 from .track import TrackRecord
 
+MAX_PENDING_QUESTIONS = 5
 FUTURES_ASSET = "FUTURES"          # pseudo-asset: equity of BinanceClaw's futures positions, in USD
 
 log = logging.getLogger("binanceclaw")
@@ -247,6 +248,7 @@ class Service:
             if self.db.claim_approval(a.id, "rejected", by):
                 self.db.update(Approval, a.id, result="紧急停止，已作废")
                 self.events.emit("approval", {"id": a.id, "status": "rejected"})
+        self.cancel_questions(by)
 
     def next_cycle_at(self) -> float:
         return self.db.kv_get("next_cycle_at", 0)
@@ -636,6 +638,7 @@ class Service:
             log.exception("track record unavailable")
         if self.autopilot.auto:
             context["autonomy"] = self.autopilot.context(trigger, why)
+        context["questions"], fresh = self.questions_context()
         t2 = lap("account_ms", t1)
         c = self.db.update(Cycle, c.id, context=context)
 
@@ -650,6 +653,8 @@ class Service:
         self.db.update(Cycle, c.id, prompt=prompt)
         if trigger != "manual" and self.autopilot.auto:
             self.autopilot.count_call()
+        for qid in fresh:
+            self.db.update(AiQuestion, qid, fed_cycle=c.id)
         try:
             comp = self.complete(SYSTEM, [{"role": "user", "content": prompt}], json_mode=True)
         except ProviderError as e:
@@ -689,8 +694,10 @@ class Service:
             risk.extend(self._handle_futures(plan.futures, fv, c.id))
         if plan.alerts:
             self._replace_ai_alerts(plan.alerts, prices)
+        out = plan.model_dump()
+        out["questions"] = self.create_questions(plan.questions, c.id)
         lap("execute_ms", t3)
-        return finish(status="done", plan=plan.model_dump(), risk=risk, summary=plan.summary)
+        return finish(status="done", plan=out, risk=risk, summary=plan.summary)
 
     def _with_rebalance(self, actions: list[dict], pf: Portfolio) -> tuple[list[dict], list[dict]]:
         """手动分配: put the rebalancing trades first; the model's own actions on those assets are
@@ -1143,6 +1150,125 @@ class Service:
                 self.db.update(Approval, a.id, result="超时作废")
                 self.events.emit("approval", {"id": a.id, "status": "expired"})
 
+    # ------------------------------------------------------------------ AI questions
+    def create_questions(self, specs, cycle_id: str) -> list[dict]:
+        """Store the plan's questions (unless asking is off, or the same topic is already waiting).
+        Returns them as stored in the plan record, with their ids."""
+        qs = self.settings.questions
+        if not qs.enabled or not specs:
+            return []
+        pending = self.db.pending_questions()
+        topics = {q.topic.strip().lower() for q in pending}
+        out = []
+        for sp in specs:
+            topic = sp.topic.strip()
+            if topic.lower() in topics or len(pending) + len(out) >= MAX_PENDING_QUESTIONS:
+                continue
+            topics.add(topic.lower())
+            q = self.db.add(AiQuestion(expires=time.time() + qs.question_timeout_minutes * 60, cycle_id=cycle_id,
+                                       topic=topic, text=sp.text, options=[o.model_dump() for o in sp.options],
+                                       recommended=sp.recommended))
+            self.events.emit("question_created", {"id": q.id})
+            out.append({**sp.model_dump(), "id": q.id})
+        return out
+
+    def answer_question(self, qid: str, option: int, by: str) -> tuple[bool, str]:
+        q = self.db.get(AiQuestion, qid)
+        if not q or q.status != "pending":
+            return False, "这个问题已处理或不存在"
+        if not 0 <= option < len(q.options):
+            return False, "没有这个选项"
+        if time.time() > q.expires:
+            self.expire_questions()
+            return False, "已过期"
+        if not self.db.claim_question(qid, "answered", by, option):
+            return False, "这个问题已处理"
+        label = q.options[option]["label"]
+        self.events.emit("question", {"id": qid, "status": "answered", "by": by, "label": label})
+        return True, f"已回答「{label}」，AI 马上按你的回答重新决策"
+
+    def expire_questions(self):
+        auto = self.settings.questions.on_timeout == "auto"
+        now = time.time()
+        for q in self.db.pending_questions():
+            if q.expires < now and self.db.claim_question(q.id, "expired", "timeout", q.recommended if auto else None):
+                self.events.emit("question", {"id": q.id, "status": "expired",
+                                              "label": q.options[q.recommended]["label"] if auto else ""})
+
+    def cancel_questions(self, by: str = "system"):
+        for q in self.db.pending_questions():
+            if self.db.claim_question(q.id, "cancelled", by, None):
+                self.events.emit("question", {"id": q.id, "status": "cancelled"})
+
+    def _resolved_questions(self, days: float = 7, limit: int = 10) -> list[AiQuestion]:
+        since = time.time() - days * 86400
+        return self.db.all(select(AiQuestion).where(AiQuestion.status.in_(("answered", "expired")),
+                                                    AiQuestion.resolved_at >= since)
+                           .order_by(desc(AiQuestion.resolved_at)).limit(limit))
+
+    def _acted_on(self, q: AiQuestion) -> bool:
+        if not q.fed_cycle:
+            return False
+        c = self.db.get(Cycle, q.fed_cycle)
+        return bool(c and c.status == "done")
+
+    def questions_context(self) -> tuple[dict, list[str]]:
+        """What the model is told about its questions, and the ids whose outcome it sees for the first time
+        (to be marked as handed over once the model is called)."""
+        qs = self.settings.questions
+        out: dict = {"enabled": qs.enabled}
+        if not qs.enabled:
+            out["note"] = "主人关闭了提问功能，本轮不要提出 questions，按你的判断在风控内决策"
+            return out, []
+        out["on_timeout"] = qs.on_timeout
+        out["timeout_minutes"] = qs.question_timeout_minutes
+        out["note"] = ("主人超时未回答时：" + ("采用你推荐的选项（recommended）" if qs.on_timeout == "auto"
+                                              else "这件事不操作、维持现状") + "。")
+        pending = self.db.pending_questions()
+        if pending:
+            out["pending"] = [{"topic": q.topic, "text": q.text[:300], "options": [o["label"] for o in q.options],
+                               "asked": self._ago(q.created)} for q in pending]
+            out["pending_note"] = "这些问题还在等主人回答：不要重复提问，也不要对这些事项抢先操作"
+        fresh, answers = [], []
+        for q in self._resolved_questions():
+            new = not self._acted_on(q)
+            if new:
+                fresh.append(q.id)
+            row = {"topic": q.topic, "question": q.text[:300], "options": [o["label"] for o in q.options],
+                   "time": self._ago(q.resolved_at or q.created), "new": new}
+            if q.status == "answered":
+                row["answer"] = q.options[q.answer]["label"]
+                row["by"] = "主人"
+            elif q.answer is not None:
+                row["answer"] = q.options[q.answer]["label"]
+                row["by"] = "超时，按设置采用你推荐的选项"
+            else:
+                row["answer"] = None
+                row["by"] = "超时未回答，按设置这件事不操作"
+            answers.append(row)
+        if answers:
+            out["answers"] = answers
+            out["answers_note"] = ("new 为 true 的是本轮第一次看到的结果，请在本轮按它决策（动作照常经过风控和审批）；"
+                                   "answer 为 null 的事项维持现状。其余是之前的回答，供你参考，不要重复提问同一件事")
+        return out, fresh
+
+    def _ago(self, ts: float) -> str:
+        return dt.datetime.fromtimestamp(ts, self.tz()).strftime("%m-%d %H:%M")
+
+    def question_due(self) -> tuple[str, str] | None:
+        """An answered question (or one the timeout settled on the AI's recommendation) wakes a round at once."""
+        if self.paused()[0]:
+            return None
+        rows = self.db.all(select(AiQuestion).where(AiQuestion.status.in_(("answered", "expired")),
+                                                    AiQuestion.fed_cycle == "", AiQuestion.answer.is_not(None)))
+        if not rows:
+            return None
+        parts = []
+        for q in rows:
+            who = "主人回答" if q.status == "answered" else "超时未回答，按设置采用推荐"
+            parts.append(f"{q.topic}：{who}「{q.options[q.answer]['label']}」")
+        return "answer", "；".join(parts)
+
     # ------------------------------------------------------------------ live gate
     def live_check(self, features: list[str] | None = None) -> dict:
         if not (self.secrets.binance_api_key and self.secrets.binance_api_secret):
@@ -1195,6 +1321,7 @@ class Service:
             "today": {"orders": st.today_orders, "notional": st.today_notional,
                       "max_orders": s.limits.max_orders_per_day, "max_notional": s.limits.max_daily_notional_usd},
             "pending_approvals": len(self.db.pending_approvals()),
+            "pending_questions": len(self.db.pending_questions()),
             "btc_change_7d": btc_change, "anomaly": anomaly, "market": market,
             "targets": s.group_targets(),
             "allocation": s.allocation.model_dump(),
@@ -1469,6 +1596,7 @@ class Service:
             try:
                 self.db.kv_set("heartbeat", time.time())
                 self.expire_approvals()
+                self.expire_questions()
                 self._every("reconcile", 60, self.reconcile_orders)
                 self._every("alerts", 30, self.check_alerts)
                 self._every("futures", 10, self.futures_watch)
@@ -1476,7 +1604,7 @@ class Service:
                 self._every("watchdog", 300, self.watchdog)
                 self._every("backup", 3600, self.backup_db)
                 self._every("stream", 60, self._watch_stream)
-                due = self.autopilot.due()
+                due = self.question_due() or self.autopilot.due()
                 if due:
                     if due[0] == "schedule":
                         self.db.kv_set("next_cycle_at", time.time() + self.settings.schedule.cycle_minutes * 60)

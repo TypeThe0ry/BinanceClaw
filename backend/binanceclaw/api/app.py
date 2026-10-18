@@ -22,7 +22,7 @@ from sqlmodel import desc, select
 
 from ..brain.providers import PROVIDERS, ProviderError
 from ..config import CANDIDATE_TOKENS, HARD_BOUNDS, NOTIFY_TYPES, RISK_PRESETS, ConfirmationRequired, ProviderSettings
-from ..db import Approval, ChatMessage, Cycle, Order, Report
+from ..db import AiQuestion, Approval, ChatMessage, Cycle, Order, Report
 from ..exchange.binance_spot import ExchangeError
 from ..risk.gate import CONFIRM_PHRASE
 
@@ -52,6 +52,10 @@ class PresetIn(BaseModel):
 
 class AllocProposeIn(BaseModel):
     instruction: str = ""
+
+
+class AnswerIn(BaseModel):
+    option: int
 
 
 class AllocResolveIn(BaseModel):
@@ -287,6 +291,18 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         if action not in ("approve", "reject"):
             raise HTTPException(400)
         ok, msg = svc.resolve_approval(aid, action == "approve", "web")
+        return {"ok": ok, "message": msg}
+
+    @app.get("/api/questions", dependencies=auth)
+    def questions(status: str | None = None, limit: int = 50):
+        stmt = select(AiQuestion).order_by(desc(AiQuestion.created)).limit(min(limit, 500))
+        if status:
+            stmt = stmt.where(AiQuestion.status == status)
+        return [q.model_dump() for q in svc.db.all(stmt)]
+
+    @app.post("/api/questions/{qid}/answer", dependencies=auth)
+    def answer_question(qid: str, body: AnswerIn):
+        ok, msg = svc.answer_question(qid, body.option, "web")
         return {"ok": ok, "message": msg}
 
     @app.get("/api/orders", dependencies=auth)

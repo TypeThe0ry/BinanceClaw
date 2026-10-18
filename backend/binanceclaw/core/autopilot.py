@@ -19,6 +19,7 @@ FUTURES_EVENTS = {"STOP_HIT", "TP_HIT", "LIQUIDATED", "EXCHANGE_CLOSED", "STOP_F
 TRIGGER_LABELS = {
     "schedule": "定时", "manual": "手动", "ai_scheduled": "AI 预约复查", "price_move": "价格波动",
     "price_level": "关键价位", "futures": "合约事件", "fill": "成交", "balance": "余额变化",
+    "answer": "主人回答了提问",
 }
 BALANCE_CHECK_SECONDS = 60
 

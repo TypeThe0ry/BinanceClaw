@@ -216,6 +216,20 @@ def test_legacy_session_cookie_rejected(client):
     assert client.get("/api/overview").status_code == 401
 
 
+def test_answer_question_via_api(client):
+    client.post("/api/auth/login", json={"password": "correct-horse-1"})
+    p = plan()
+    p["questions"] = [{"topic": "TRX", "text": "卖出 TRX？", "options": [{"label": "保留"}, {"label": "卖出"}], "recommended": 0}]
+    use(client.svc, p)
+    client.svc.run_cycle("manual")
+    qs = client.get("/api/questions?status=pending").json()
+    assert len(qs) == 1 and qs[0]["options"][1]["label"] == "卖出"
+    assert client.get("/api/overview").json()["pending_questions"] == 1
+    r = client.post(f"/api/questions/{qs[0]['id']}/answer", json={"option": 1}).json()
+    assert r["ok"] and client.get("/api/questions?status=answered").json()[0]["answer"] == 1
+    assert client.post(f"/api/questions/{qs[0]['id']}/answer", json={"option": 0}).json()["ok"] is False
+
+
 def test_track_record_api(client):
     assert client.get("/api/track-record").status_code == 401
     client.post("/api/auth/login", json={"password": "correct-horse-1"})

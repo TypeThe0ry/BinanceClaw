@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import type { Approval } from "../api";
+import type { AiQuestion, Approval } from "../api";
 import { mockApi, renderPage } from "../test/utils";
 import Approvals from "./Approvals";
 
@@ -102,5 +102,25 @@ describe("Approvals page", () => {
     expect(within(rows[0]).getByText("成交 0.1 ETH")).toBeInTheDocument();
     expect(within(rows[1]).getByText("SOL/USDT")).toBeInTheDocument();
     expect(within(rows[1]).getByText("未执行")).toBeInTheDocument();
+  });
+
+  it("answers an AI question with one of its options", async () => {
+    const q: AiQuestion = {
+      id: "q1", created: now() - 60, expires: now() + 3600, cycle_id: "c1", topic: "TRX", text: "发现 1000 TRX 闲置，要卖出吗？",
+      options: [{ label: "保留", detail: "" }, { label: "卖出换 BTC", detail: "卖出全部 TRX" }], recommended: 1,
+      status: "pending", answer: null, resolved_by: "", resolved_at: null,
+    };
+    const api = mockApi({
+      [PENDING]: [], [ALL]: [], "GET /questions?status=pending": [q], "GET /questions?limit=50": [q],
+      "GET /settings": { settings: { questions: { on_timeout: "skip" } } },
+      "POST /questions/q1/answer": { ok: true, message: "已回答「卖出换 BTC」，AI 马上按你的回答重新决策" },
+    });
+    renderPage(<Approvals />);
+    expect(await screen.findByText("发现 1000 TRX 闲置，要卖出吗？")).toBeInTheDocument();
+    expect(screen.getByText("AI 推荐")).toBeInTheDocument();
+    expect(screen.queryByText("没有待处理的审批")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /卖出换 BTC/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent("已回答「卖出换 BTC」");
+    expect(api.find("POST", "/questions/q1/answer")[0].body).toEqual({ option: 1 });
   });
 });

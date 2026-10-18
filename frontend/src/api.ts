@@ -74,6 +74,7 @@ export interface Overview {
   };
   today: { orders: number; notional: number; max_orders: number; max_notional: number };
   pending_approvals: number;
+  pending_questions?: number;
   btc_change_7d: number | null;
   anomaly: string | null;
   market: Record<string, { price: number; change_7d?: number; change_30d?: number; daily_closes_14d?: number[] }>;
@@ -188,6 +189,21 @@ export interface Approval {
   result: string;
   kind?: "spot" | "futures";
   payload?: { leverage?: number; stop_loss?: number; take_profit?: number | null; margin_usd?: number };
+}
+
+export interface AiQuestion {
+  id: string;
+  created: number;
+  expires: number;
+  cycle_id: string;
+  topic: string;
+  text: string;
+  options: { label: string; detail: string }[];
+  recommended: number;
+  status: "pending" | "answered" | "expired" | "cancelled";
+  answer: number | null;
+  resolved_by: string;
+  resolved_at: number | null;
 }
 
 export interface FPosition {

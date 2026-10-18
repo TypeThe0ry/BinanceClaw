@@ -26,6 +26,7 @@ export interface SettingsResp {
     futures: FuturesCfg;
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
     notify?: NotifyCfg;
+    questions?: Questions;
   };
   presets: Record<string, unknown>;
   candidates: string[];
@@ -37,6 +38,8 @@ export interface SettingsResp {
   telegram?: boolean;
   notify_types?: Record<string, { label: string; always: boolean }>;
 }
+export interface Questions { enabled: boolean; question_timeout_minutes: number; on_timeout: "skip" | "auto" }
+export const QUESTIONS_DEFAULT: Questions = { enabled: true, question_timeout_minutes: 120, on_timeout: "skip" };
 export interface NotifyCfg {
   types: Record<string, boolean>; mode: "instant" | "digest"; digest_minutes: number;
   quiet: { enabled: boolean; start: string; end: string };

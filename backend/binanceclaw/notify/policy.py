@@ -20,6 +20,7 @@ EVENT_TYPES: dict[str, str] = {
     "approval_created": "approval",
     "approval": "approval",
     "allocation": "approval",          # a target-allocation proposal waiting for 应用 / 放弃
+    "question_created": "question",
     "question": "question",
     "paused": "critical",
     "resumed": "alerts",
