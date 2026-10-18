@@ -21,7 +21,16 @@ from pydantic import BaseModel
 from sqlmodel import desc, select
 
 from ..brain.providers import PROVIDERS, ProviderError
-from ..config import CANDIDATE_TOKENS, HARD_BOUNDS, NOTIFY_TYPES, RISK_PRESETS, ConfirmationRequired, ProviderSettings
+from ..config import (
+    CANDIDATE_TOKENS,
+    HARD_BOUNDS,
+    MODEL_TASKS,
+    NOTIFY_TYPES,
+    RISK_PRESETS,
+    TIER_MODELS,
+    ConfirmationRequired,
+    ProviderSettings,
+)
 from ..db import AiQuestion, Approval, ChatMessage, Cycle, Order, Report
 from ..exchange.binance_spot import ExchangeError
 from ..risk.gate import CONFIRM_PHRASE
@@ -483,6 +492,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         return {"settings": s.model_dump(), "secrets": svc.secrets.configured(), "providers": avail,
                 "presets": RISK_PRESETS, "candidates": CANDIDATE_TOKENS, "deployed_usd": round(svc.deployed_usd(), 2),
                 "bounds": HARD_BOUNDS, "confirm_phrase": CONFIRM_PHRASE,
+                "model_tasks": MODEL_TASKS, "tier_models": TIER_MODELS,
                 "telegram": bool(svc.secrets.telegram_bot_token and svc.secrets.telegram_chat_id),
                 "notify_types": {k: {"label": label, "always": not mutable} for k, (label, mutable) in NOTIFY_TYPES.items()}}
 
@@ -529,12 +539,23 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/providers/test", dependencies=auth)
     def test_provider():
+        # Every distinct model the task routing uses, so a mistyped fast/strong model shows up here too.
         t0 = time.time()
-        try:
-            c = svc.provider.complete("你是连通性测试。只回复：OK", [{"role": "user", "content": "ping"}])
-            return {"ok": True, "reply": c.text[:200], "model": c.model, "ms": int((time.time() - t0) * 1000)}
-        except ProviderError as e:
-            return {"ok": False, "reply": str(e), "ms": int((time.time() - t0) * 1000)}
+        seen, models = set(), []
+        for task in MODEL_TASKS:
+            p = svc.routed(task)
+            if p.model not in seen:
+                seen.add(p.model)
+                models.append(p)
+        replied = []
+        for p in models:
+            try:
+                c = p.complete("你是连通性测试。只回复：OK", [{"role": "user", "content": "ping"}])
+            except ProviderError as e:
+                return {"ok": False, "reply": f"{p.model or '默认模型'}：{e}", "ms": int((time.time() - t0) * 1000)}
+            replied.append(c)
+        return {"ok": True, "reply": replied[-1].text[:200], "model": "、".join(dict.fromkeys(c.model for c in replied)),
+                "ms": int((time.time() - t0) * 1000)}
 
     @app.get("/api/live/check", dependencies=auth)
     def live_check():

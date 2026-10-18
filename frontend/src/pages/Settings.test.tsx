@@ -129,6 +129,30 @@ describe("Settings page (设置)", () => {
     expect(screen.getByRole("link", { name: "设置" })).toHaveAttribute("aria-current", "page");
   });
 
+  it("maps each task to a model tier and saves the routing with the provider", async () => {
+    const api = mockSettings();
+    renderPage(<Settings />);
+    await screen.findByText("AI 模型", { selector: "h2" });
+    const fast = screen.getByLabelText("轻量模型");
+    expect(fast).toHaveAttribute("placeholder", "claude-haiku-5-5");
+    expect(screen.getByLabelText("决策模型")).toHaveAttribute("placeholder", "claude-opus-5-5");
+    await userEvent.type(fast, "claude-haiku-4-5");
+    await userEvent.click(within(rowOf("对话")).getByRole("button", { name: "轻量" }));
+    await userEvent.click(within(section("AI 模型")).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
+    expect(api.find("PUT", "/settings")[0].body).toMatchObject({
+      model_routing: { enabled: true, tasks: { chat: "fast", decision: "strong" }, models: { claude_code: { fast: "claude-haiku-4-5" } } },
+    });
+  });
+
+  it("hides the per-task choices when routing is off", async () => {
+    mockSettings({ settings: { model_routing: { enabled: false, tasks: {}, models: {} } } });
+    renderPage(<Settings />);
+    await screen.findByText("AI 模型", { selector: "h2" });
+    expect(screen.queryByLabelText("轻量模型")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "按任务分配模型" })).not.toBeChecked();
+  });
+
   it("edits Telegram push types, digest and quiet hours; approvals cannot be muted", async () => {
     const notify = { types: { approval: true, trade: true, earn: false }, mode: "instant", digest_minutes: 60,
       quiet: { enabled: false, start: "23:00", end: "08:00" } };

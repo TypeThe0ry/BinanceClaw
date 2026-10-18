@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shutil
@@ -50,6 +51,14 @@ class Provider:
 
     def available(self) -> tuple[bool, str]:
         return True, ""
+
+    def with_model(self, model: str) -> Provider:
+        """This provider calling ``model`` instead ("" or the same model = this provider)."""
+        if not model or model == self.model:
+            return self
+        p = copy.copy(self)
+        p.model = model
+        return p
 
 
 # --------------------------------------------------------------------------- Claude Code

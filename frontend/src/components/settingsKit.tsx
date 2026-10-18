@@ -22,6 +22,7 @@ export interface SettingsResp {
     capital: { locked: Record<string, number>; budget_usd: number | null };
     allocation: Alloc;
     provider_fallback: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number } | null;
+    model_routing?: Routing;
     stables: string[];
     futures: FuturesCfg;
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
@@ -38,9 +39,13 @@ export interface SettingsResp {
   providers: Record<string, { ok: boolean; message: string; default_model: string }>;
   bounds: Record<string, [number, number]>;
   confirm_phrase: string;
+  model_tasks?: Record<string, string>;
+  tier_models?: Record<string, Partial<Record<"fast" | "strong", string>>>;
   telegram?: boolean;
   notify_types?: Record<string, { label: string; always: boolean }>;
 }
+export type Tier = "fast" | "strong" | "main";
+export interface Routing { enabled: boolean; tasks: Record<string, Tier>; models: Record<string, Partial<Record<"fast" | "strong", string>>> }
 export interface Questions { enabled: boolean; question_timeout_minutes: number; on_timeout: "skip" | "auto" }
 export const QUESTIONS_DEFAULT: Questions = { enabled: true, question_timeout_minutes: 120, on_timeout: "skip" };
 export interface NotifyCfg {

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { post } from "../api";
 import { Page, Seg, SectionHead, Skeleton, Spinner } from "../components/ui";
 import { useApi } from "../lib";
-import { type NotifyCfg, Num, Row, SettingsNav, useSettingsDraft } from "../components/settingsKit";
+import { type NotifyCfg, Num, type Routing, Row, SettingsNav, type Tier, useSettingsDraft } from "../components/settingsKit";
 
 interface EarnResp { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }>;
   products: Record<string, { apr?: string | null; error?: string }> }
@@ -18,6 +18,7 @@ function deviceName(ua: string) {
   return `${os}${br ? " · " + br : ""}`;
 }
 
+const TIER_LABEL: Record<Tier, string> = { fast: "轻量", strong: "决策", main: "主模型" };
 const PROVIDER: Record<string, string> = { claude_code: "Claude 订阅", openai: "OpenAI", openai_compat: "OpenAI 兼容", anthropic_api: "Anthropic API" };
 
 /** 设置: system-level settings. Investment/AI decision config lives on the 配置 page (Config.tsx). */
@@ -44,6 +45,9 @@ export default function Settings() {
     toast(r.ok ? `${r.model} · ${(r.ms / 1000).toFixed(1)}s` : r.reply, r.ok ? "ok" : "err");
   }
   const sch = d.schedule;
+  const rt: Routing = d.model_routing ?? { enabled: false, tasks: {}, models: {} };
+  const setRt = (patch: Partial<Routing>) => setD({ ...d, model_routing: { ...rt, ...patch } });
+  const pname = d.provider.name;
   const setSch = (patch: Partial<typeof sch>) => setD({ ...d, schedule: { ...sch, ...patch } });
 
   return (
@@ -112,9 +116,31 @@ export default function Settings() {
             {Object.entries(data.providers).filter(([k]) => k !== d.provider.name).map(([k, p]) => <option key={k} value={k}>{PROVIDER[k] ?? k}{p.ok ? "" : "（未配置）"}</option>)}
           </select>
         </Row>
+        <Row label="按任务分配模型">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={rt.enabled} aria-label="按任务分配模型"
+            onChange={(e) => setRt({ enabled: e.target.checked })} />
+        </Row>
+        {rt.enabled && (
+          <>
+            {(["fast", "strong"] as const).map((t) => (
+              <Row key={t} label={t === "fast" ? "轻量模型（更新、总结类）" : "决策模型（投资、决策类）"}>
+                <input className="input h-9 w-56" aria-label={`${TIER_LABEL[t]}模型`} value={rt.models[pname]?.[t] ?? ""}
+                  placeholder={data.tier_models?.[pname]?.[t] || "同主模型"}
+                  onChange={(e) => setRt({ models: { ...rt.models, [pname]: { ...rt.models[pname], [t]: e.target.value } } })} />
+              </Row>
+            ))}
+            {Object.entries(data.model_tasks ?? {}).map(([k, label]) => (
+              <Row key={k} label={label}>
+                <Seg id={`route-${k}`} value={rt.tasks[k] ?? "main"}
+                  items={(["fast", "strong", "main"] as const).map((t) => ({ k: t, label: TIER_LABEL[t] }))}
+                  onChange={(t) => setRt({ tasks: { ...rt.tasks, [k]: t } })} />
+              </Row>
+            ))}
+          </>
+        )}
         {!data.providers[d.provider.name]?.ok && <Row label="状态"><span className="text-[13px] text-warn">{data.providers[d.provider.name]?.message}</span></Row>}
         <div className="flex gap-2 pt-4">
-          <button className="btn-primary" onClick={() => save({ provider: d.provider, provider_fallback: d.provider_fallback })}>保存</button>
+          <button className="btn-primary" onClick={() => save({ provider: d.provider, provider_fallback: d.provider_fallback, model_routing: rt })}>保存</button>
           <button className="btn-secondary" onClick={test} disabled={testing}>{testing ? <Spinner /> : "连通测试"}</button>
         </div>
       </section>

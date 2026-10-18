@@ -14,7 +14,7 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
@@ -125,6 +125,50 @@ class ProviderSettings(BaseModel):
     base_url: str = ""                 # only for openai_compat
     timeout_seconds: int = 240
     temperature: float = 0.2
+
+
+# Model calls by task. "strong" tasks shape what gets traded; "fast" ones only describe what happened.
+MODEL_TASKS: dict[str, str] = {
+    "decision": "投资决策",
+    "allocation": "配置提案",
+    "chat": "对话",
+    "report": "日报点评",
+}
+MODEL_TIERS = ("fast", "strong", "main")          # main = the provider's own model setting
+DEFAULT_TASK_TIERS: dict[str, str] = {"decision": "strong", "allocation": "strong", "chat": "strong", "report": "fast"}
+# Built-in tier models per provider; providers without an entry use their main model for every tier.
+TIER_MODELS: dict[str, dict[str, str]] = {
+    "claude_code": {"fast": "claude-haiku-5-5", "strong": "claude-opus-5-5"},
+    "anthropic_api": {"fast": "claude-haiku-5-5", "strong": "claude-opus-5-5"},
+}
+
+
+class ModelRouting(BaseModel):
+    """Which model each kind of call uses. Off = every call uses the provider's model."""
+    enabled: bool = True
+    tasks: dict[str, Literal["fast", "strong", "main"]] = Field(default_factory=lambda: dict(DEFAULT_TASK_TIERS))
+    models: dict[str, dict[str, str]] = Field(default_factory=dict)   # provider -> tier -> model (empty = built-in)
+
+    @field_validator("tasks")
+    @classmethod
+    def _tasks(cls, v):
+        return {**DEFAULT_TASK_TIERS, **{k: t for k, t in v.items() if k in MODEL_TASKS}}
+
+    @field_validator("models")
+    @classmethod
+    def _models(cls, v):
+        names = get_args(ProviderSettings.model_fields["name"].annotation)
+        return {p: {t: str(m or "").strip() for t, m in tiers.items() if t in ("fast", "strong")}
+                for p, tiers in v.items() if p in names}
+
+    def model_for(self, provider: str, main: str, task: str) -> str:
+        """The model a ``task`` call should use on ``provider`` whose own model is ``main`` ("" = its default)."""
+        if not self.enabled:
+            return main
+        tier = self.tasks.get(task, DEFAULT_TASK_TIERS.get(task, "main"))
+        if tier == "main":
+            return main
+        return self.models.get(provider, {}).get(tier) or TIER_MODELS.get(provider, {}).get(tier) or main
 
 
 class Capital(BaseModel):
@@ -407,6 +451,7 @@ class Settings(BaseModel):
     schedule: Schedule = Field(default_factory=Schedule)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     provider_fallback: ProviderSettings | None = None     # used when the primary model fails
+    model_routing: ModelRouting = Field(default_factory=ModelRouting)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     futures: Futures = Field(default_factory=Futures)
     earn: Earn = Field(default_factory=Earn)
@@ -420,6 +465,14 @@ class Settings(BaseModel):
     _universe: list[str] | None = PrivateAttr(default=None)
     # Key permissions the owner knowingly keeps enabled; validated against risk.gate.WAIVABLE
     live_gate_allow: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_routing(cls, data):
+        # Saved before task routing existed with a model picked by hand: keep using that model everywhere.
+        if isinstance(data, dict) and "model_routing" not in data and (data.get("provider") or {}).get("model"):
+            data = {**data, "model_routing": {"enabled": False}}
+        return data
 
     @field_validator("live_gate_allow")
     @classmethod
@@ -604,6 +657,7 @@ DECISION_FIELDS: dict[str, str] = {
     "earn": "理财",
     "stables": "稳定币列表",
     "provider": "AI 模型",
+    "model_routing": "模型分配",
     "approval_free": "免审批",
     "strategy": "交易风格",
     "outlook": "个人观点",

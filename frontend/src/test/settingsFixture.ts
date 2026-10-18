@@ -20,6 +20,7 @@ export function settingsResp(over: Record<string, unknown> = {}) {
       allocation: { mode: "targets", universe: "all", enabled: ["BTC", "ETH"], blocked: [], max_asset_weight: 0.4,
         ai_candidates: 30, auto_rebalance: true, rebalance_drift: 0.05 },
       provider_fallback: null,
+      model_routing: { enabled: true, tasks: { decision: "strong", allocation: "strong", chat: "strong", report: "fast" }, models: {} },
       stables: ["USDT", "USDC"],
       futures: { enabled: false, symbols: ["BTCUSDT"], max_leverage: 3, max_position_margin_usd: 200, max_total_margin_usd: 500,
         max_loss_per_trade_usd: 50, max_stop_distance: 0.05, allow_short: false, auto_open: false,
@@ -37,6 +38,8 @@ export function settingsResp(over: Record<string, unknown> = {}) {
     providers: { claude_code: { ok: true, message: "", default_model: "claude" }, openai: { ok: false, message: "缺少 API key", default_model: "gpt" } },
     bounds: { stable_floor: [0.05, 0.9], max_leverage: [1, 10] },
     confirm_phrase: PHRASE,
+    model_tasks: { decision: "投资决策", allocation: "配置提案", chat: "对话", report: "日报点评" },
+    tier_models: { claude_code: { fast: "claude-haiku-5-5", strong: "claude-opus-5-5" } },
   };
 }
 

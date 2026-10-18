@@ -21,7 +21,7 @@ from ..brain import indicators as ta
 from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
-from ..config import DATA_DIR, ConfirmationRequired, Secrets, SettingsStore, dangerous_changes, decision_changes
+from ..config import DATA_DIR, MODEL_TASKS, ConfirmationRequired, Secrets, SettingsStore, dangerous_changes, decision_changes
 from ..db import AiQuestion, Approval, ChatMessage, Cycle, Database, FuturesPosition, FuturesTrade, Order, PriceAlert, Report
 from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
@@ -78,16 +78,24 @@ class Service:
         self.provider = make_provider(s.provider, self.secrets)
         self.fallback = make_provider(s.provider_fallback, self.secrets) if s.provider_fallback else None
 
-    def complete(self, system: str, messages: list[dict], json_mode: bool = False):
-        """Primary model, then the fallback model if one is configured. Raises if both fail."""
+    def routed(self, task: str, provider=None):
+        """The provider set up with the model that ``task`` calls use (see config.ModelRouting)."""
+        p = provider or self.provider
+        r = self.settings_store.get().model_routing
+        return p.with_model(r.model_for(p.name, p.model, task))
+
+    def complete(self, system: str, messages: list[dict], json_mode: bool = False, task: str = "chat"):
+        """Primary model, then the fallback model if one is configured. Raises if both fail.
+
+        ``task`` (a config.MODEL_TASKS key) picks the model: decisions on the strong one, summaries on the fast one."""
         try:
-            return self.provider.complete(system, messages, json_mode=json_mode)
+            return self.routed(task).complete(system, messages, json_mode=json_mode)
         except ProviderError as e:
             if not self.fallback:
                 raise
             log.warning("primary model failed, using fallback: %s", e)
             try:
-                comp = self.fallback.complete(system, messages, json_mode=json_mode)
+                comp = self.routed(task, self.fallback).complete(system, messages, json_mode=json_mode)
             except ProviderError as e2:
                 raise ProviderError(f"主模型失败：{e}；备用模型也失败：{e2}") from e2
             comp.usage = {**(comp.usage or {}), "fallback": True, "primary_error": str(e)[:300]}
@@ -579,7 +587,7 @@ class Service:
 
     def _run_cycle(self, trigger: str, why: str = "") -> Cycle:
         s = self.settings
-        c = self.db.add(Cycle(mode=s.mode, trigger=trigger, provider=s.provider.name, model=self.provider.model))
+        c = self.db.add(Cycle(mode=s.mode, trigger=trigger, provider=s.provider.name, model=self.routed("decision").model))
         self.events.emit("cycle_started", {"id": c.id})
         t0 = time.time()
         timing: dict[str, int] = {}
@@ -669,7 +677,7 @@ class Service:
         for qid in fresh:
             self.db.update(AiQuestion, qid, fed_cycle=c.id)
         try:
-            comp = self.complete(SYSTEM, [{"role": "user", "content": prompt}], json_mode=True)
+            comp = self.complete(SYSTEM, [{"role": "user", "content": prompt}], json_mode=True, task="decision")
         except ProviderError as e:
             lap("model_ms", t2)
             self.events.emit("alert", {"text": f"模型调用失败，本轮不交易：{e}"})
@@ -1330,7 +1338,8 @@ class Service:
         st = self.risk_state(btc_change, anomaly)
         out = {
             "mode": s.mode, "paused": paused, "pause_reason": reason, "error": err,
-            "provider": {"name": s.provider.name, "model": self.provider.model},
+            "provider": {"name": s.provider.name, "model": self.provider.model,
+                         "models": {t: self.routed(t).model for t in MODEL_TASKS}},
             "next_cycle_at": self.next_cycle_at(), "cycle_minutes": s.schedule.cycle_minutes,
             "autopilot": self.autopilot.status(),
             "today": {"orders": st.today_orders, "notional": st.today_notional,
@@ -1390,7 +1399,7 @@ class Service:
             system = CHAT_SYSTEM + "\n<data>\n" + _json.dumps(slim, ensure_ascii=False, default=str) + "\n</data>"
             msgs = [{"role": m.role, "content": m.text} for m in hist]
             try:
-                comp = self.complete(system, msgs)
+                comp = self.complete(system, msgs, task="chat")
                 reply = comp.text.strip() or "（空回复）"
             except ProviderError as e:
                 reply = f"模型调用失败：{e}"
@@ -1440,7 +1449,7 @@ class Service:
             }
             try:
                 comp = self.complete(alloc.SYSTEM, [{"role": "user", "content": alloc.build_prompt(context, instruction)}],
-                                     json_mode=True)
+                                     json_mode=True, task="allocation")
             except ProviderError as e:
                 raise ValueError(f"模型调用失败：{e}") from e
             try:
@@ -1519,7 +1528,7 @@ class Service:
         try:
             comp = self.complete(CHAT_SYSTEM, [{"role": "user", "content":
                 "根据以下数据写今日点评（不超过 300 字）：当前配置偏离、过去 24 小时决策是否合理、"
-                "距离暂停条件多远、需要我关注的事（每条写理由和判断错了的信号）。\n<data>\n" + body + "\n</data>"}])
+                "距离暂停条件多远、需要我关注的事（每条写理由和判断错了的信号）。\n<data>\n" + body + "\n</data>"}], task="report")
             body += "\n\n— AI 点评 —\n" + comp.text.strip()
         except ProviderError as e:
             body += f"\n\n（AI 点评失败：{e}）"
