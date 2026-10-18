@@ -26,6 +26,9 @@ export interface SettingsResp {
     futures: FuturesCfg;
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
     notify?: NotifyCfg;
+    approval_free: ApprovalFree;
+    strategy: { style: Style };
+    outlook: Outlook;
     questions?: Questions;
   };
   presets: Record<string, unknown>;
@@ -44,6 +47,9 @@ export interface NotifyCfg {
   types: Record<string, boolean>; mode: "instant" | "digest"; digest_minutes: number;
   quiet: { enabled: boolean; start: string; end: string };
 }
+export interface ApprovalFree { mode: "off" | "always" | "window"; start: string; end: string; include_sell: boolean; include_futures: boolean }
+export type Style = "short" | "medium" | "long";
+export interface Outlook { market: number; assets: Record<string, number>; note: string }
 export interface Alloc {
   mode: "targets" | "ai"; universe: "all" | "whitelist" | "blacklist"; enabled: string[]; blocked: string[];
   max_asset_weight: number; ai_candidates: number; auto_rebalance: boolean; rebalance_drift: number;

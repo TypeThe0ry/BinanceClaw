@@ -40,6 +40,7 @@ class FuturesView:
     pause_reason: str = ""
     trigger: str | None = None                    # active pause trigger, if any
     budget_left: float = float("inf")
+    unattended: bool = False                      # 免审批 is active now (opens skip approval if include_futures)
 
 
 @dataclass
@@ -257,6 +258,10 @@ def evaluate_futures(actions: list[dict], fv: FuturesView) -> list[FVerdict]:
         else:
             v.decision = "approve"
             v.reason = "开仓需要你批准" if not f.auto_open else f"保证金 > ${f.auto_open_max_margin_usd:g}，需要你批准"
+            if fv.unattended and s.approval_free.include_futures:
+                v.decision = "execute"
+                ok("免审批", "主人开启了免审批（包含合约开仓）")
+                v.reason = "免审批时段，风控限额内直接开仓"
         opens_left -= 1
         margin_left -= amt
         spendable -= amt

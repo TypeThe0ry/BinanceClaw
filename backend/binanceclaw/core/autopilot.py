@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 
-from ..config import HARD_BOUNDS
+from ..config import HARD_BOUNDS, STYLES
 
 FUTURES_EVENTS = {"STOP_HIT", "TP_HIT", "LIQUIDATED", "EXCHANGE_CLOSED", "STOP_FAILED"}
 TRIGGER_LABELS = {
@@ -53,6 +53,17 @@ class Autopilot:
 
     def calls_left(self) -> int:
         return max(0, self.sched.max_calls_per_day - self.calls_today())
+
+    def check_range(self) -> tuple[int, int]:
+        """Check-in bounds: the trading style's range inside schedule.min_gap/max_gap (which always win)."""
+        s = self.sched
+        lo, hi = STYLES[self.svc.settings.strategy.style]["check_minutes"]
+        lo = min(max(lo, s.min_gap_minutes), s.max_gap_minutes)
+        return lo, min(max(hi, lo), s.max_gap_minutes)
+
+    def default_check(self) -> int:
+        lo, hi = self.check_range()
+        return min(max(STYLES[self.svc.settings.strategy.style]["default"] or self.sched.cycle_minutes, lo), hi)
 
     def wake_move(self) -> float:
         return self._kv("auto_wake_move") or self.sched.move_trigger_pct
@@ -155,11 +166,12 @@ class Autopilot:
 
     def context(self, trigger: str, why: str) -> dict:
         s = self.sched
+        lo, hi = self.check_range()
         return {
             "decision_mode": "auto",
             "this_round": {"trigger": TRIGGER_LABELS.get(trigger, trigger), "why": why},
-            "min_gap_minutes": s.min_gap_minutes, "max_gap_minutes": s.max_gap_minutes,
-            "default_next_check_minutes": s.cycle_minutes, "default_wake_move_pct": s.move_trigger_pct,
+            "min_gap_minutes": lo, "max_gap_minutes": hi,
+            "default_next_check_minutes": self.default_check(), "default_wake_move_pct": s.move_trigger_pct,
             "model_calls_left_today": self.calls_left(),
             "note": "由你决定节奏：next_check_minutes 是下次复查时间，wake_move_pct 是多大波动提前唤醒你，"
                     "alerts 的价位被触及也会唤醒你。行情平静、没有待验证的判断就把间隔拉长、省下调用；"
@@ -170,10 +182,10 @@ class Autopilot:
         """After any round in auto mode: book the AI's next check-in and reset the move/balance baselines."""
         if not self.auto:
             return
-        s = self.sched
         plan = plan or {}
         asked = plan.get("next_check_minutes")
-        minutes = min(max(asked or s.cycle_minutes, s.min_gap_minutes), s.max_gap_minutes)
+        lo, hi = self.check_range()
+        minutes = min(max(asked or self.default_check(), lo), hi)
         self.svc.db.kv_set("next_cycle_at", time.time() + minutes * 60)
         lo, hi = HARD_BOUNDS["move_trigger_pct"]
         mv = plan.get("wake_move_pct")
@@ -193,6 +205,7 @@ class Autopilot:
             nxt = self._kv("auto_next") or {}
             out.update(calls_today=self.calls_today(), max_calls_per_day=s.max_calls_per_day,
                        min_gap_minutes=s.min_gap_minutes, max_gap_minutes=s.max_gap_minutes,
+                       check_range=list(self.check_range()),
                        wake_move_pct=self.wake_move(), next_check_minutes=nxt.get("minutes"),
                        ai_asked_minutes=nxt.get("asked"), streaming=self.svc.stream.connected)
         return out

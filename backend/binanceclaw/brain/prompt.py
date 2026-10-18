@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from ..config import Settings
+from ..config import STYLES, VIEW_LABELS, Settings
 from ..risk.rebalance import drift, rebalance_actions
 from . import indicators as ta
 from .schema import JSON_SCHEMA
@@ -22,6 +22,8 @@ SYSTEM = """你是 BinanceClaw 的投资决策模型，为一位长期投资者�
 - 按 allocation.mode 决策：targets 模式（手动分配）以主人设定的目标比例和允许区间为锚，偏离超过阈值的资产由系统自动再平衡（见 allocation.rebalance），你不要再为它们提出买卖；ai 模式（AI 自主分配）由你在 universe 内自主决定配置。结合行情判断这一轮是否需要买入、买什么、买多少；没有把握时 actions 留空。
 - 可选 alerts：最多 3 个价格提醒（below/above + 价位），通常对应你写的 invalidation 关键价位；触发时会通知账户主人（自主模式下还会立即唤醒你重新决策），不会自动交易。不需要时留空。
 - 有 autonomy 字段时，什么时候再决策由你决定：用 next_check_minutes 定下次复查时间，用 wake_move_pct 定多大价格波动提前唤醒你；系统会按 autonomy 里的最小间隔、最长间隔和每日调用额度收紧。autonomy.this_round 说明了这一轮为什么被唤醒，先回应它；被唤醒不等于必须交易，没有把握时 actions 留空。
+- strategy 是主人选的交易风格（短线 / 中期 / 长期），决定持仓周期、交易频率和复查节奏；按它的 brief 决策，next_check_minutes 落在它的 check_minutes 区间内。
+- 有 owner_view 时，那是主人自己的市场观点（看多 / 看空，可细到单个币种），是指导而不是命令：偏多时更积极地寻找买点、少留现金，偏空时更保守、少买或在允许时减仓，合约开启时可顺着观点考虑对冲或做空；但仍要有行情依据，行情明显与观点相反时在 summary 里说明，风控限额不会因观点改变。
 - 可选 questions：遇到高风险或取决于主人偏好的决策，优先先问主人，而不是直接下单。例如：卖出主人原有的较大持仓（"发现 1000 TRX 闲置，我不看好 TRON，要卖出换成别的吗？"）、
   接管或清仓一个主人可能有自己打算的资产、大幅调整配置、开较大的合约仓位。每个问题写清现状和你的判断（text），给 2–4 个选项（label 简短，detail 写选了之后你会怎么做），用 recommended 标出你推荐的选项，topic 用简短标识。
   提问的这件事本轮不要同时下单；主人回答后会立即唤醒你，那一轮按回答在风控内决策（questions.answers 里 new 为 true 的项）。主人超时未回答时按 questions.on_timeout 处理：skip 表示这件事不操作，auto 表示采用你推荐的选项。
@@ -77,6 +79,8 @@ def build_context(settings: Settings, pf, state, market: dict, recent: list[dict
             "allow_sell": lim.allow_sell,
             "btc_7d_drop_pause": lim.btc_7d_drop_pause,
         },
+        "strategy": _strategy(settings),
+        **_owner_view(settings),
         "today": {"orders": state.today_orders, "notional_usd": round(state.today_notional, 2)},
         "market": _market_for_prompt(market),
         "market_breadth": ta.breadth(market),
@@ -87,6 +91,21 @@ def build_context(settings: Settings, pf, state, market: dict, recent: list[dict
 def _market_for_prompt(market: dict) -> dict:
     """The indicators carry the history; seven daily closes are enough for the model's own eye."""
     return {t: {k: (v[-7:] if k == "daily_closes_14d" else v) for k, v in info.items()} for t, info in market.items()}
+
+
+def _strategy(settings: Settings) -> dict:
+    st = STYLES[settings.strategy.style]
+    return {"style": st["label"], "brief": st["brief"], "check_minutes": list(st["check_minutes"]),
+            "typical_wake_move_pct": st["move_pct"]}
+
+
+def _owner_view(settings: Settings) -> dict:
+    o = settings.outlook
+    if not (o.market or o.assets or o.note):
+        return {}
+    return {"owner_view": {"market": VIEW_LABELS[o.market], "market_score": o.market,
+                           "assets": {t: VIEW_LABELS[x] for t, x in o.assets.items()}, "note": o.note,
+                           "scale": "market_score 从 -2（强烈看空）到 +2（强烈看多）"}}
 
 
 UNIVERSE_NOTE = {
