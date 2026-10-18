@@ -284,11 +284,11 @@ export default function Config() {
         {af.mode !== "off" && (
           <>
             <Row label="也包含卖出">
-              <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={af.include_sell} aria-label="也包含卖出"
+              <input type="checkbox" className="h-4 w-4 accent-warn" checked={af.include_sell} aria-label="也包含卖出"
                 onChange={(e) => setAf({ include_sell: e.target.checked })} />
             </Row>
             <Row label="也包含合约开仓">
-              <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={af.include_futures} aria-label="也包含合约开仓"
+              <input type="checkbox" className="h-4 w-4 accent-warn" checked={af.include_futures} aria-label="也包含合约开仓"
                 onChange={(e) => setAf({ include_futures: e.target.checked })} />
             </Row>
           </>
@@ -301,7 +301,7 @@ export default function Config() {
         <SectionHead title="AI 提问" doc="approvals" />
         <p className="py-2 text-[13px] text-fg-3">遇到高风险或取决于你偏好的决策（比如卖出你原有的持仓、接管某个资产），AI 会先在「审批」页和 Telegram 里问你。你回答后它立即按回答重新决策，操作照常经过风控和审批。</p>
         <Row label="允许 AI 提问">
-          <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={q.enabled} aria-label="允许 AI 提问"
+          <input type="checkbox" className="h-4 w-4 accent-warn" checked={q.enabled} aria-label="允许 AI 提问"
             onChange={(e) => setQ({ enabled: e.target.checked })} />
         </Row>
         <Row label="回答期限"><Num unit="分钟" value={q.question_timeout_minutes} min={b.question_timeout_minutes?.[0]} max={b.question_timeout_minutes?.[1]} onChange={(x) => setQ({ question_timeout_minutes: x })} /></Row>
@@ -347,7 +347,7 @@ export default function Config() {
             onChange={(e) => setD({ ...d, futures: { ...d.futures, allow_short: e.target.checked } })} />
         </Row>
         <Row label="小额自动开仓">
-          <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={d.futures.auto_open}
+          <input type="checkbox" className="h-4 w-4 accent-warn" checked={d.futures.auto_open}
             onChange={(e) => setD({ ...d, futures: { ...d.futures, auto_open: e.target.checked } })} />
           {d.futures.auto_open && <Num unit="USD" value={d.futures.auto_open_max_margin_usd} min={0}
             onChange={(x) => setD({ ...d, futures: { ...d.futures, auto_open_max_margin_usd: x } })} />}

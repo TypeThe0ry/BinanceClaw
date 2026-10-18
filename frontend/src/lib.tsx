@@ -28,7 +28,7 @@ export const token = (symbol: string) => symbol.replace(/USDT$/, "");
 
 export const CATEGORY_LABEL: Record<string, string> = { BTC: "比特币", ETH: "以太坊", US_STOCK: "美股代币", STABLE: "稳定币", OTHER: "其他" };
 export const CATEGORY_COLOR: Record<string, string> = {
-  BTC: "#F7931A", ETH: "#8C8CFF", US_STOCK: "#20B26C", STABLE: "#8C8C8C", OTHER: "#3A3A3A",
+  BTC: "#F7931A", ETH: "#8C8CFF", US_STOCK: "#20B26C", STABLE: "#8C8C8C", OTHER: "rgb(var(--c-line-strong))",
 };
 
 // ---------------------------------------------------------------- live events (SSE)

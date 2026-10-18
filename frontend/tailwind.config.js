@@ -4,16 +4,17 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "#000000",
-        raise: "#0D0D0D",
-        hover: "#141414",
-        field: "#121212",
-        line: "#1F1F1F",
-        "line-strong": "#2E2E2E",
-        fg: { DEFAULT: "#FFFFFF", 2: "#8C8C8C", 3: "#5C5C5C" },
-        up: "#20B26C",
-        down: "#EF454A",
-        warn: "#F0A23B",
+        // Values live in CSS variables (index.css) so light/dark is one attribute flip on <html>.
+        bg: "rgb(var(--c-bg) / <alpha-value>)",
+        raise: "rgb(var(--c-raise) / <alpha-value>)",
+        hover: "rgb(var(--c-hover) / <alpha-value>)",
+        field: "rgb(var(--c-field) / <alpha-value>)",
+        line: "rgb(var(--c-line) / <alpha-value>)",
+        "line-strong": "rgb(var(--c-line-strong) / <alpha-value>)",
+        fg: { DEFAULT: "rgb(var(--c-fg) / <alpha-value>)", 2: "rgb(var(--c-fg-2) / <alpha-value>)", 3: "rgb(var(--c-fg-3) / <alpha-value>)" },
+        up: "rgb(var(--c-up) / <alpha-value>)",
+        down: "rgb(var(--c-down) / <alpha-value>)",
+        warn: "rgb(var(--c-warn) / <alpha-value>)",
       },
       fontFamily: {
         sans: ['"Inter Variable"', '"PingFang SC"', '"Hiragino Sans GB"', '"Noto Sans SC"', '"Microsoft YaHei"', "system-ui", "sans-serif"],

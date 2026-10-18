@@ -9,6 +9,7 @@ import { ConfirmProvider } from "./components/ConfirmDialog";
 import { Layout, More } from "./components/Layout";
 import { Spinner } from "./components/ui";
 import { LiveProvider, TickerProvider, ToastProvider } from "./lib";
+import { initTheme } from "./theme";
 import { AIDetail, AIList } from "./pages/AI";
 import Approvals from "./pages/Approvals";
 import Assets from "./pages/Assets";
@@ -34,7 +35,7 @@ function Login({ onOk }: { onOk: () => void }) {
     <div className="flex min-h-screen items-center justify-center px-6">
       <form onSubmit={submit} className="w-full max-w-[360px]">
         <svg width="34" height="34" viewBox="0 0 64 64" aria-hidden>
-          <path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="#fff" strokeWidth="5" strokeLinecap="round" fill="none" />
+          <path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="currentColor" strokeWidth="5" strokeLinecap="round" fill="none" />
         </svg>
         <h1 className="mt-6 text-[28px] font-semibold tracking-tight">登录 BinanceClaw</h1>
         <input type="password" autoFocus className="input mt-8 h-12" placeholder="密码" value={pw}
@@ -83,6 +84,8 @@ function App() {
     </LiveProvider>
   );
 }
+
+initTheme();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
