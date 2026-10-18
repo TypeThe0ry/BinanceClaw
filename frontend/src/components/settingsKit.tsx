@@ -99,23 +99,20 @@ export function useSettingsDraft() {
 }
 
 const PAGES = [
-  { to: "/settings", label: "设置", hint: "系统：交易模式、模型、节奏、理财、推送、连接与设备" },
-  { to: "/config", label: "配置", hint: "投资：AI 怎么分配、目标比例、资金、风控与合约" },
+  { to: "/settings", label: "设置" },
+  { to: "/config", label: "配置" },
 ];
 
 /** Page title that doubles as the switch between 设置 and 配置. */
 export function SettingsNav({ current }: { current: "/settings" | "/config" }) {
   return (
-    <div>
-      <nav aria-label="设置与配置" className="flex items-baseline gap-5">
-        {PAGES.map((p) => (
-          <Link key={p.to} to={p.to} aria-current={p.to === current ? "page" : undefined}
-            className={`text-[20px] font-semibold transition-colors ${p.to === current ? "text-fg" : "text-fg-3 hover:text-fg-2"}`}>
-            {p.label}
-          </Link>
-        ))}
-      </nav>
-      <p className="mt-1 text-[13px] text-fg-3">{PAGES.find((p) => p.to === current)?.hint}</p>
-    </div>
+    <nav aria-label="设置与配置" className="flex items-baseline gap-5">
+      {PAGES.map((p) => (
+        <Link key={p.to} to={p.to} aria-current={p.to === current ? "page" : undefined}
+          className={`text-[20px] font-semibold transition-colors ${p.to === current ? "text-fg" : "text-fg-3 hover:text-fg-2"}`}>
+          {p.label}
+        </Link>
+      ))}
+    </nav>
   );
 }

@@ -59,7 +59,6 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             <h2 id="confirm-title" className="flex items-center gap-2 text-[16px] font-semibold">
               <Warning size={18} weight="fill" className="text-warn" />确认修改危险设置
             </h2>
-            <p className="mt-1.5 text-[13px] text-fg-2">这些设置会影响资金安全，确认后才会生效。</p>
             <ul className="mt-4 flex flex-col gap-2 text-[14px]">
               {pending.changes.map((c) => (
                 <li key={c.field} className="flex flex-wrap items-baseline justify-between gap-x-4 border-b border-line pb-2">
@@ -82,10 +81,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             <h2 id="rerun-title" className="flex items-center gap-2 text-[16px] font-semibold">
               <Brain size={18} weight="fill" />让 AI 按新设置重新跑一轮？
             </h2>
-            <p className="mt-1.5 text-[14px] text-fg-2">
-              已保存。这些改动会影响 AI 之后的决策：{rerun.join("、")}。现在运行一轮，AI 会立刻按新设置调整；
-              否则等到它下一次复查时才生效。手动运行不占用每日调用额度。
-            </p>
+            <p className="mt-1.5 text-[14px] text-fg-2">{rerun.join("、")}</p>
             <div className="mt-5 flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => setRerun(null)}>稍后</button>
               <button autoFocus className="btn-primary" onClick={runNow}>立即重跑</button>

@@ -41,7 +41,6 @@ function GroupRow({ name, n, open, onToggle, cells, span }:
       <td className="td font-semibold" colSpan={span}>
         <span className={`mr-1.5 inline-block text-fg-3 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
         {name} <span className="text-[12px] font-normal text-fg-3">{n}</span>
-        {name === "自选" && <span className="ml-2 text-[12px] font-normal text-fg-3">AI 持仓与目标</span>}
       </td>
       {cells}
     </tr>
@@ -71,7 +70,7 @@ function FuturesAssets({ o, bcat, collapsed, fold }:
         <div><dt className="text-fg-3">未实现盈亏</dt><dd className={`num mt-1 text-[14px] ${f.unrealized >= 0 ? "text-up" : "text-down"}`}>{f.unrealized >= 0 ? "+" : ""}{num(f.unrealized)}</dd></div>
         <div><dt className="text-fg-3">已实现盈亏</dt><dd className={`num mt-1 text-[14px] ${f.realized >= 0 ? "text-up" : "text-down"}`}>{f.realized >= 0 ? "+" : ""}{num(f.realized)}</dd></div>
       </dl>
-      {!f.enabled && !f.positions.length && <Empty text="合约交易未开启，可在设置里打开" />}
+      {!f.enabled && !f.positions.length && <Empty text="合约交易未开启" />}
       {(f.enabled || !!f.positions.length) && (
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px]">

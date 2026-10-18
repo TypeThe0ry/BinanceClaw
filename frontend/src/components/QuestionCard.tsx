@@ -45,9 +45,7 @@ export const QuestionCard = forwardRef<HTMLDivElement, { q: AiQuestion; onTimeou
             </button>
           ))}
         </div>
-        <p className="mt-2 text-[12px] text-fg-3">
-          回答后 AI 立即按你的选择重新决策，操作仍经过风控和审批；超时{onTimeout === "auto" ? "采用 AI 推荐的选项" : "这件事不操作"}。
-        </p>
+        <p className="mt-2 text-[12px] text-fg-3">超时：{onTimeout === "auto" ? "按 AI 推荐执行" : "不操作"}</p>
       </motion.div>
     );
   });
