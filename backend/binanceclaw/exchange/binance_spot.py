@@ -167,6 +167,12 @@ class BinanceSpot:
     def account(self) -> dict:
         return self._request("GET", "/api/v3/account", {"omitZeroBalances": "true"}, signed=True)
 
+    def account_snapshot(self, start: float, end: float, kind: str = "SPOT") -> list[dict]:
+        """Binance's daily account snapshots (last month only, at most 30 days per call, weight 2400)."""
+        r = self._request("GET", "/sapi/v1/accountSnapshot", {"type": kind, "startTime": int(start * 1000),
+                                                               "endTime": int(end * 1000), "limit": 30}, signed=True)
+        return r.get("snapshotVos") or []
+
     def api_restrictions(self) -> dict:
         return self._request("GET", "/sapi/v1/account/apiRestrictions", signed=True)
 

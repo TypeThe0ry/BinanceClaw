@@ -4,7 +4,7 @@ import { post, type Approval } from "../api";
 import { clock, fmtPrice, token, usd, useToast } from "../lib";
 import { Side } from "./ui";
 
-function useNow() {
+export function useNow() {
   const [now, setNow] = useState(Date.now() / 1000);
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now() / 1000), 1000);
@@ -13,7 +13,7 @@ function useNow() {
   return now;
 }
 
-function Countdown({ left }: { left: number }) {
+export function Countdown({ left }: { left: number }) {
   const mm = String(Math.floor(left / 60)).padStart(2, "0");
   const ss = String(Math.floor(left % 60)).padStart(2, "0");
   return <span className={`num ${left < 300 ? "text-down" : "text-warn"}`}>{mm}:{ss}</span>;

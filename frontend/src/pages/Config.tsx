@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { post } from "../api";
 import AllocationEditor from "../components/AllocationEditor";
-import { type Alloc, type FuturesCfg, Num, Row, SettingsNav, useSettingsDraft } from "../components/settingsKit";
+import { type Alloc, type FuturesCfg, Num, QUESTIONS_DEFAULT, type Questions, Row, SettingsNav, useSettingsDraft } from "../components/settingsKit";
 import TokenPicker from "../components/TokenPicker";
 import { Page, Seg, SectionHead, Skeleton } from "../components/ui";
 
@@ -56,6 +56,8 @@ export default function Config() {
   const lim = d.limits;
   const al = d.allocation;
   const setLim = (k: string, v: number | boolean) => setD({ ...d, limits: { ...lim, [k]: v } });
+  const q = d.questions ?? QUESTIONS_DEFAULT;
+  const setQ = (patch: Partial<Questions>) => setD({ ...d, questions: { ...q, ...patch } });
 
   return (
     <Page className="mx-auto flex max-w-[820px] flex-col gap-10">
@@ -200,6 +202,21 @@ export default function Config() {
           <input type="checkbox" className="h-4 w-4 accent-white" checked={!!lim.allow_sell} onChange={(e) => setLim("allow_sell", e.target.checked)} />
         </Row>
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ limits: lim })}>保存</button></div>
+      </section>
+
+      <section id="questions">
+        <SectionHead title="AI 提问" doc="approvals" />
+        <p className="py-2 text-[13px] text-fg-3">遇到高风险或取决于你偏好的决策（比如卖出你原有的持仓、接管某个资产），AI 会先在「审批」页和 Telegram 里问你。你回答后它立即按回答重新决策，操作照常经过风控和审批。</p>
+        <Row label="允许 AI 提问">
+          <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={q.enabled} aria-label="允许 AI 提问"
+            onChange={(e) => setQ({ enabled: e.target.checked })} />
+        </Row>
+        <Row label="回答期限"><Num unit="分钟" value={q.question_timeout_minutes} min={b.question_timeout_minutes?.[0]} max={b.question_timeout_minutes?.[1]} onChange={(x) => setQ({ question_timeout_minutes: x })} /></Row>
+        <Row label="超时未回答时">
+          <Seg id="on-timeout" value={q.on_timeout} onChange={(k) => setQ({ on_timeout: k })}
+            items={[{ k: "skip" as const, label: "不操作" }, { k: "auto" as const, label: "按 AI 推荐执行" }]} />
+        </Row>
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ questions: q })}>保存</button></div>
       </section>
 
       <section id="futures">
