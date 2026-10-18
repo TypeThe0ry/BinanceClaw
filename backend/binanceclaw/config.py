@@ -51,6 +51,8 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     # earn
     "keep_liquid_usd": (0, 1_000_000),
     "min_move_usd": (1, 100_000),
+    # telegram
+    "digest_minutes": (5, 1440),
 }
 
 # Suggestions for the asset picker (any TRADING <TOKEN>USDT spot pair can also be typed in).
@@ -250,6 +252,59 @@ class Questions(BaseModel):
     on_timeout: Literal["skip", "auto"] = "skip"
 
 
+# Telegram message types: key -> (label, can be muted). Event kinds map onto these in notify/policy.py.
+# Approval requests, the AI's questions and critical risk alerts can never be muted or delayed.
+NOTIFY_TYPES: dict[str, tuple[str, bool]] = {
+    "approval": ("审批请求", False),
+    "question": ("AI 提问", False),
+    "critical": ("重大风险提醒（止损、强平、风控暂停、下单结果未知）", False),
+    "trade": ("自动成交（现货与合约）", True),
+    "rebalance": ("自动再平衡成交", True),
+    "decision": ("不操作的决策", True),
+    "earn": ("理财申购 / 赎回", True),
+    "report": ("日报", True),
+    "price_alert": ("价格提醒", True),
+    "alerts": ("系统提醒（模型失败、下单失败、恢复运行、切换模式等）", True),
+}
+NOTIFY_DEFAULT_OFF = {"earn"}   # pushed only once the owner turns it on
+
+
+def _hhmm(v: str) -> str:
+    h, _, m = str(v).strip().partition(":")
+    if not (h.isdigit() and m.isdigit() and int(h) < 24 and int(m) < 60):
+        raise ValueError(f"时间格式应为 HH:MM：{v}")
+    return f"{int(h):02d}:{int(m):02d}"
+
+
+class QuietHours(BaseModel):
+    """No muteable pushes in this window (settings timezone); what arrives is sent as one digest when it ends."""
+    enabled: bool = False
+    start: str = "23:00"
+    end: str = "08:00"
+
+    @field_validator("start", "end")
+    @classmethod
+    def _time(cls, v):
+        return _hhmm(v)
+
+
+class Notify(BaseModel):
+    """Which Telegram messages are pushed and how often."""
+    types: dict[str, bool] = Field(default_factory=lambda: {k: k not in NOTIFY_DEFAULT_OFF for k in NOTIFY_TYPES})
+    # instant: push as it happens; digest: collect muteable messages and send one summary every digest_minutes
+    mode: Literal["instant", "digest"] = "instant"
+    digest_minutes: int = 60
+    quiet: QuietHours = Field(default_factory=QuietHours)
+
+    @field_validator("types")
+    @classmethod
+    def _types(cls, v):
+        out = {k: k not in NOTIFY_DEFAULT_OFF for k in NOTIFY_TYPES}
+        out.update({k: bool(x) for k, x in v.items() if k in NOTIFY_TYPES})
+        out.update({k: True for k, (_l, mutable) in NOTIFY_TYPES.items() if not mutable})
+        return out
+
+
 class PaperSettings(BaseModel):
     initial_balances: dict[str, float] = {"USDT": 10000}
     slippage: float = 0.0005
@@ -277,6 +332,7 @@ class Settings(BaseModel):
     futures: Futures = Field(default_factory=Futures)
     earn: Earn = Field(default_factory=Earn)
     questions: Questions = Field(default_factory=Questions)
+    notify: Notify = Field(default_factory=Notify)
     investor_notes: str = "长期投资，BTC 为主。只做现货，不承诺收益。"
     # Resolved by the service for "ai" mode over all assets / a blacklist (needs exchange data)
     _universe: list[str] | None = PrivateAttr(default=None)
@@ -299,7 +355,7 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _clamp(self):
-        for sect in (self.limits, self.schedule, self.allocation, self.futures, self.earn, self.questions):
+        for sect in (self.limits, self.schedule, self.allocation, self.futures, self.earn, self.notify, self.questions):
             for k, (lo, hi) in HARD_BOUNDS.items():
                 if hasattr(sect, k):
                     val = getattr(sect, k)

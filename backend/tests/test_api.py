@@ -228,3 +228,10 @@ def test_answer_question_via_api(client):
     r = client.post(f"/api/questions/{qs[0]['id']}/answer", json={"option": 1}).json()
     assert r["ok"] and client.get("/api/questions?status=answered").json()[0]["answer"] == 1
     assert client.post(f"/api/questions/{qs[0]['id']}/answer", json={"option": 0}).json()["ok"] is False
+
+
+def test_track_record_api(client):
+    assert client.get("/api/track-record").status_code == 401
+    client.post("/api/auth/login", json={"password": "correct-horse-1"})
+    r = client.get("/api/track-record")
+    assert r.status_code == 200 and r.json()["trades"] == 0 and r.json()["24h"]["win_rate"] is None
