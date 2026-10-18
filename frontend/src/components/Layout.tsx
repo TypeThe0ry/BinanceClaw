@@ -102,7 +102,7 @@ export function Layout() {
         <TickerBar />
       </header>
 
-      <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 pb-24 pt-6 md:px-6 md:pb-12">
+      <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 pb-24 pt-6 md:px-6 md:pb-12">
         <Outlet />
       </main>
 
