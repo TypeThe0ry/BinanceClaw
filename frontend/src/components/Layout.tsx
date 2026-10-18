@@ -87,6 +87,9 @@ export function Layout() {
             <span className={`hidden h-1.5 w-1.5 rounded-full md:block ${connected ? "bg-up" : "bg-fg-3"}`} title={connected ? "实时" : "重连中"} />
             {ov && <ModePill mode={ov.mode} />}
             {ov && <RunPill paused={ov.paused} />}
+            {ov?.approval_free?.active && (
+              <Link to="/config" className="tag bg-warn/15 text-warn" title="本来要你批准的交易会在风控限额内直接执行">免审批中</Link>
+            )}
             <Link to="/docs" aria-label="文档" className={`hidden rounded-md p-1.5 md:block ${active("/docs") ? "text-fg" : "text-fg-2 hover:text-fg"}`}><BookOpen size={18} /></Link>
             <Link to="/config" aria-label="配置" className={`hidden rounded-md p-1.5 md:block ${active("/config") ? "text-fg" : "text-fg-2 hover:text-fg"}`}><Sliders size={18} /></Link>
             <Link to="/settings" aria-label="设置" className={`hidden rounded-md p-1.5 md:block ${active("/settings") ? "text-fg" : "text-fg-2 hover:text-fg"}`}><GearSix size={18} /></Link>

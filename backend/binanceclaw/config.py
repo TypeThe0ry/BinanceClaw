@@ -9,6 +9,7 @@ Two layers:
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import threading
@@ -349,6 +350,84 @@ class Notify(BaseModel):
         return out
 
 
+class ApprovalFree(BaseModel):
+    """免审批: trades that would wait for the owner's approval run automatically instead, e.g. while
+    they sleep. Only the approval step is skipped; every hard limit of the risk engine still applies."""
+    mode: Literal["off", "always", "window"] = "off"
+    start: str = "00:00"               # window mode, in schedule.timezone; may cross midnight
+    end: str = "08:00"
+    include_sell: bool = False         # sells (needs limits.allow_sell) also skip approval
+    include_futures: bool = False      # futures opens also skip approval
+
+    @field_validator("start", "end")
+    @classmethod
+    def _time(cls, v):
+        return _hhmm(v)
+
+    def active(self, now: dt.datetime) -> bool:
+        if self.mode != "window":
+            return self.mode == "always"
+        cur, a, b = now.strftime("%H:%M"), self.start, self.end
+        return a <= cur < b if a <= b else (cur >= a or cur < b)
+
+
+# 交易风格: how long the AI holds and how often it looks again (auto decision mode). The check-in range
+# narrows schedule.min_gap/max_gap, which stay the hard bounds; "default" is the check-in when the AI names
+# none (None = schedule.cycle_minutes). "medium" keeps the schedule's own cadence.
+STYLES: dict[str, dict] = {
+    "short": {"label": "短线", "check_minutes": (5, 60), "default": 30, "move_pct": 0.01,
+              "brief": "短线交易者：持仓数小时到数天，关注 1h/4h 动量、成交量和关键价位，入场和离场都更快，"
+                       "每笔都要有明确的止损/失效价位；频繁交易会累积手续费，没有清晰优势照样不做。"},
+    "medium": {"label": "中期", "check_minutes": (5, 240), "default": None, "move_pct": 0.02,
+               "brief": "中期（波段）投资者：持仓数天到数周，看日线趋势和关键支撑阻力，回调分批买入，"
+                        "不追逐小时级别的波动。"},
+    "long": {"label": "长期", "check_minutes": (120, 1440), "default": 480, "move_pct": 0.05,
+             "brief": "长期投资者：持仓数月以上，按配置分批建仓、逢大跌加仓，忽略短期噪音，交易次数少，"
+                      "只有基本面或长期趋势变化才调整。"},
+}
+
+
+class Strategy(BaseModel):
+    style: Literal["short", "medium", "long"] = "medium"
+
+
+# 个人观点: the owner's own view, given to the AI as guidance. It never overrides the risk engine.
+VIEW_LABELS = {-2: "强烈看空", -1: "偏空", 0: "中性", 1: "偏多", 2: "强烈看多"}
+
+
+class Outlook(BaseModel):
+    market: int = 0                                           # -2..2 overall dial
+    assets: dict[str, int] = Field(default_factory=dict)      # token -> -2..2
+    note: str = ""                                            # free text, e.g. "觉得 ETH 要做空"
+
+    @field_validator("market")
+    @classmethod
+    def _dial(cls, v):
+        return min(max(int(v), -2), 2)
+
+    @field_validator("assets")
+    @classmethod
+    def _assets(cls, v):
+        out = {}
+        for k, x in v.items():
+            t = k.upper().strip()
+            if not t.isalnum() or len(t) > 15:
+                raise ValueError(f"invalid token {t!r}")
+            x = min(max(int(x), -2), 2)
+            if x:
+                out[t] = x
+        if len(out) > 30:
+            raise ValueError("at most 30 asset views")
+        return out
+
+    @field_validator("note")
+    @classmethod
+    def _note(cls, v):
+        if len(v) > 1000:
+            raise ValueError("观点最多 1000 字")
+        return v.strip()
+
+
 class PaperSettings(BaseModel):
     initial_balances: dict[str, float] = {"USDT": 10000}
     slippage: float = 0.0005
@@ -378,6 +457,9 @@ class Settings(BaseModel):
     earn: Earn = Field(default_factory=Earn)
     questions: Questions = Field(default_factory=Questions)
     notify: Notify = Field(default_factory=Notify)
+    approval_free: ApprovalFree = Field(default_factory=ApprovalFree)
+    strategy: Strategy = Field(default_factory=Strategy)
+    outlook: Outlook = Field(default_factory=Outlook)
     investor_notes: str = "长期投资，BTC 为主。只做现货，不承诺收益。"
     # Resolved by the service for "ai" mode over all assets / a blacklist (needs exchange data)
     _universe: list[str] | None = PrivateAttr(default=None)
@@ -542,6 +624,11 @@ DANGEROUS: dict[str, str] = {
     "quote": "计价币",
     "stables": "稳定币列表",
     "live_gate_allow": "保留的 Key 权限",
+    "approval_free.mode": "免审批模式",
+    "approval_free.start": "免审批开始时间",
+    "approval_free.end": "免审批结束时间",
+    "approval_free.include_sell": "免审批包含卖出",
+    "approval_free.include_futures": "免审批包含合约开仓",
 }
 
 
@@ -571,6 +658,9 @@ DECISION_FIELDS: dict[str, str] = {
     "stables": "稳定币列表",
     "provider": "AI 模型",
     "model_routing": "模型分配",
+    "approval_free": "免审批",
+    "strategy": "交易风格",
+    "outlook": "个人观点",
     "questions": "AI 提问",
 }
 
@@ -638,7 +728,7 @@ class SettingsStore:
 
 def _deep_merge(dst: dict, src: dict):
     for k, v in src.items():
-        if isinstance(v, dict) and isinstance(dst.get(k), dict) and k not in ("categories", "locked", "tokens"):
+        if isinstance(v, dict) and isinstance(dst.get(k), dict) and k not in ("categories", "locked", "tokens", "assets"):
             _deep_merge(dst[k], v)
         else:
             dst[k] = v

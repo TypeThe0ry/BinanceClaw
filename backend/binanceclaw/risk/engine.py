@@ -81,6 +81,10 @@ class RiskState:
     btc_change_7d: float | None = None
     anomaly: str | None = None
     halted: dict[str, str] = field(default_factory=dict)   # symbol -> Binance status, for pairs not TRADING
+    unattended: bool = False           # 免审批 is active now: what would wait for approval executes instead
+
+
+UNATTENDED = "免审批时段，风控限额内直接执行"
 
 
 def pause_trigger(settings: Settings, st: RiskState) -> str | None:
@@ -166,8 +170,13 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
                 fail("持仓", f"{token} 可卖市值 ${held:,.2f} 不足")
                 continue
             v.approved_usd = float(amt)
+            if st.unattended and s.approval_free.include_sell:
+                v.decision = "execute"
+                v.checks.append(Check("免审批", True, "主人开启了免审批（包含卖出）"))
+                v.reason = f"卖出：{UNATTENDED}"
+                continue
             v.decision = "approve"
-            v.checks.append(Check("卖出需人工批准", True, "卖出永远不会自动执行"))
+            v.checks.append(Check("卖出需人工批准", True, "卖出不会自动执行（除非免审批包含卖出）"))
             v.reason = "卖出需要你批准"
             continue
 
@@ -217,6 +226,10 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
         else:
             v.decision = "approve"
             v.reason = f"> ${lim.auto_execute_max_usd:g}，需要你批准"
+        if v.decision == "approve" and st.unattended:
+            v.decision = "execute"
+            v.checks.append(Check("免审批", True, v.reason.replace("，需要你批准", "") + "，本应等待批准"))
+            v.reason = UNATTENDED
         # apply to simulated state
         orders_left -= 1
         notional_left -= amt

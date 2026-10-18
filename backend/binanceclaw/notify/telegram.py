@@ -13,7 +13,7 @@ import time
 import httpx
 from sqlmodel import desc, select
 
-from ..config import NOTIFY_TYPES, ConfirmationRequired
+from ..config import NOTIFY_TYPES, STYLES, VIEW_LABELS, ConfirmationRequired
 from ..core.autopilot import TRIGGER_LABELS
 from ..db import AiQuestion, Approval, Cycle, Order
 from . import charts, policy
@@ -39,6 +39,9 @@ HELP = """BinanceClaw 指令
 /lock    锁定资产：/lock BTC 0.5，/lock BTC 0 解除
 /assets  分配：/assets ai（AI 自主）或 /assets manual（手动）；/assets all|whitelist|blacklist 选 AI 范围；/assets BTC,ETH 设白名单；/assets block DOGE / unblock DOGE 改黑名单
 /alloc   让 AI 调整目标配置：/alloc 加 10% TON，从 BTC 里减；只发 /alloc 则让 AI 生成一份
+/sleep   免审批：/sleep on（一直）、/sleep 23:30-07:30（每天这段时间）、/sleep off；风控限额照常生效
+/style   交易风格：/style short|medium|long（短线 / 中期 / 长期）
+/view    个人观点：/view +1（整体偏多，-2 到 +2）、/view ETH -2（单币）、/view note 觉得要回调、/view clear
 /positions 合约持仓
 /flat yes 平掉 BinanceClaw 的全部合约仓位
 /notify  推送设置：/notify 查看；/notify instant 或 /notify digest 60；/notify quiet 23:00-08:00 或 /notify quiet off；/notify off earn、/notify on earn
@@ -63,7 +66,8 @@ def fmt_setting(v) -> str:
 NOTIFY_ALIAS = {"成交": "trade", "再平衡": "rebalance", "决策": "decision", "理财": "earn", "日报": "report",
                 "价格提醒": "price_alert", "提醒": "alerts", "系统": "alerts"}
 UNIVERSE_LABEL = {"all": "全部资产", "whitelist": "白名单", "blacklist": "黑名单"}
-ENUM_LABEL = {**UNIVERSE_LABEL, "ai": "AI 自主分配", "targets": "手动分配"}
+ENUM_LABEL = {**UNIVERSE_LABEL, "ai": "AI 自主分配", "targets": "手动分配",
+              "off": "关闭", "always": "一直开启", "window": "按时段"}
 
 
 def _token_args(args: list[str]) -> list[str]:
@@ -174,7 +178,7 @@ class TelegramBot:
         if kind == "order" and d.get("via") == "auto" and d.get("text"):
             o = self.svc.db.get(Order, d["id"])
             png = self.chart_png(o.symbol, title="AUTO") if o else None
-            cap = f"🟢 自动执行\n{d['text']}"
+            cap = ("🌙 免审批自动执行" if d.get("unattended") else "🟢 自动执行") + f"\n{d['text']}"
             self.photo(png, cap) if png else self.send(cap)
         elif kind == "order" and d.get("status") == "failed":
             self.send("⚠️ 下单失败，详见网页「交易」页")
@@ -262,7 +266,8 @@ class TelegramBot:
             if d.get("status") == "failed":
                 return "⚠️ 下单失败，详见网页「交易」页"
             if d.get("via") == "auto" and d.get("text"):
-                return ("⚖️ 再平衡 " if d.get("source") == "rebalance" else "🟢 自动执行 ") + d["text"]
+                return ("⚖️ 再平衡 " if d.get("source") == "rebalance" else "🌙 免审批自动执行 " if d.get("unattended")
+                        else "🟢 自动执行 ") + d["text"]
             return None
         if kind == "futures" and d.get("text"):
             return ("🎯 " if d.get("op") == "TP_HIT" else "🟢 " if d.get("ok") else "⚠️ ") + "合约 " + d["text"]
@@ -467,6 +472,10 @@ class TelegramBot:
             lines.append(f"AI 预算：已投入 ${cap['deployed_usd']:,.0f} / ${cap['budget_usd']:,.0f}")
         if cap.get("locked"):
             lines.append("锁定：" + "，".join(f"{k} {v:g}" for k, v in cap["locked"].items()))
+        af = ov.get("approval_free") or {}
+        if af.get("mode", "off") != "off":
+            lines.append(self._approval_free_line() + ("（生效中）" if af.get("active") else "（当前不在时段内）"))
+        lines.append(f"风格：{STYLES[self.svc.settings.strategy.style]['label']} · " + self._view_line(self.svc.settings.outlook))
         if ov["pending_approvals"]:
             lines.append(f"待审批：{ov['pending_approvals']} 笔（/pending）")
         if ov.get("pending_questions"):
@@ -576,7 +585,7 @@ class TelegramBot:
                     lines.append(f"· {tok} 成本 {a['avg_cost']:,.2f} · 浮盈 ${a['unrealized'] or 0:+,.2f}"
                                  + (f"（{a['unrealized_pct']:+.1%}）" if a["unrealized_pct"] is not None else ""))
             self.send("\n".join(lines))
-        elif cmd in ("/preset", "/budget", "/lock", "/assets"):
+        elif cmd in ("/preset", "/budget", "/lock", "/assets", "/sleep", "/style", "/view"):
             self._intervene(cmd, text.split()[1:])
         elif cmd == "/alloc":
             instruction = text.partition(" ")[2].strip()
@@ -643,8 +652,64 @@ class TelegramBot:
                     toks = _token_args(args)
                     self._guarded(lambda tok: svc.update_settings({"allocation": {"enabled": toks}}, guard=True, confirm=tok),
                                   f"✅ 可交易资产：{', '.join(toks)}")
+            elif cmd == "/sleep":
+                if not args:
+                    self.send(self._approval_free_line())
+                    return
+                word = args[0].lower()
+                if word in ("on", "off"):
+                    patch = {"mode": "always" if word == "on" else "off"}
+                else:
+                    start, sep, end = args[0].partition("-")
+                    if not sep:
+                        raise ValueError("格式：/sleep on、/sleep off 或 /sleep 23:30-07:30")
+                    patch = {"mode": "window", "start": start, "end": end}
+                af = svc.settings_store.preview({"approval_free": patch}).approval_free
+                self._guarded(lambda tok: svc.update_settings({"approval_free": patch}, guard=True, confirm=tok),
+                              "✅ " + self._approval_free_line(af))
+            elif cmd == "/style":
+                if not args or args[0].lower() not in STYLES:
+                    cur = STYLES[svc.settings.strategy.style]["label"]
+                    self.send(f"交易风格：{cur}。可选 /style short（短线）、medium（中期）、long（长期）")
+                    return
+                style = args[0].lower()
+                self._guarded(lambda tok: svc.update_settings({"strategy": {"style": style}}, guard=True, confirm=tok),
+                              f"✅ 交易风格：{STYLES[style]['label']}")
+            elif cmd == "/view":
+                o = svc.settings.outlook
+                if not args:
+                    self.send(self._view_line(o))
+                    return
+                word = args[0].lower()
+                if word == "clear":
+                    patch = {"market": 0, "assets": {}, "note": ""}
+                elif word == "note":
+                    patch = {"note": " ".join(args[1:])}
+                elif len(args) >= 2:
+                    patch = {"assets": {**o.assets, args[0].upper(): int(args[1])}}
+                else:
+                    patch = {"market": int(args[0])}
+                new = svc.settings_store.preview({"outlook": patch}).outlook
+                self._guarded(lambda tok: svc.update_settings({"outlook": patch}, guard=True, confirm=tok),
+                              "✅ " + self._view_line(new))
         except (ValueError, TypeError) as e:
             self.send(f"⚠️ 没有生效：{e}")
+
+    def _approval_free_line(self, af=None) -> str:
+        af = af or self.svc.settings.approval_free
+        if af.mode == "off":
+            return "免审批：关闭（超过自动执行额度的交易等待你批准）"
+        when = "一直开启" if af.mode == "always" else f"每天 {af.start}–{af.end}（{self.svc.settings.schedule.timezone}）"
+        extra = [x for x, on in (("卖出", af.include_sell), ("合约开仓", af.include_futures)) if on]
+        return f"免审批：{when}" + (f"，包含{'、'.join(extra)}" if extra else "") + "；风控限额照常生效"
+
+    @staticmethod
+    def _view_line(o) -> str:
+        parts = [f"整体{VIEW_LABELS[o.market]}"]
+        parts += [f"{t} {VIEW_LABELS[x]}" for t, x in o.assets.items()]
+        if o.note:
+            parts.append(f"备注：{o.note}")
+        return "个人观点：" + "，".join(parts)
 
     @staticmethod
     def _assets_line(al) -> str:

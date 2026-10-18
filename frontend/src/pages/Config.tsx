@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { post } from "../api";
 import AllocationEditor from "../components/AllocationEditor";
-import { type Alloc, type FuturesCfg, Num, QUESTIONS_DEFAULT, type Questions, Row, SettingsNav, useSettingsDraft } from "../components/settingsKit";
+import { type Alloc, type ApprovalFree, type FuturesCfg, Num, type Outlook, QUESTIONS_DEFAULT, type Questions, Row, SettingsNav,
+  type Style, useSettingsDraft } from "../components/settingsKit";
 import TokenPicker from "../components/TokenPicker";
 import { Page, Seg, SectionHead, Skeleton } from "../components/ui";
 
@@ -34,6 +35,28 @@ const FUT_LIMITS: { k: keyof FuturesCfg; label: string; unit: string; pct?: bool
   { k: "max_opens_per_day", label: "每日开仓次数", unit: "次" },
 ];
 
+const STYLE_HINT: Record<Style, string> = {
+  short: "持仓数小时到数天，AI 每 5–60 分钟复查，入场离场更快。",
+  medium: "持仓数天到数周，看日线趋势和支撑阻力，按「设置 → 节奏」里的间隔复查。",
+  long: "持仓数月以上，分批建仓、少交易，AI 每 2–24 小时复查。",
+};
+const VIEW_LABEL: Record<number, string> = { [-2]: "强烈看空", [-1]: "偏空", 0: "中性", 1: "偏多", 2: "强烈看多" };
+
+function ViewDial({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex overflow-hidden rounded-lg border border-line-strong">
+      {[-2, -1, 0, 1, 2].map((v) => (
+        <button key={v} role="radio" aria-checked={value === v} onClick={() => onChange(v)}
+          className={`px-2.5 py-1.5 text-[12.5px] font-medium transition-colors ${value === v
+            ? v < 0 ? "bg-down text-white" : v > 0 ? "bg-up text-white" : "bg-fg text-bg"
+            : "text-fg-2 hover:text-fg"}`}>
+          {VIEW_LABEL[v]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const PRESET_LABEL: Record<string, string> = { conservative: "保守", balanced: "均衡", aggressive: "积极", custom: "自定义" };
 
 const LIMITS: { k: string; label: string; unit: string; pct?: boolean }[] = [
@@ -51,11 +74,16 @@ export default function Config() {
   const { data, reload, d, setD, save, toast } = useSettingsDraft();
   const [lockAsset, setLockAsset] = useState("");
   const [lockAmt, setLockAmt] = useState("");
+  const [viewAsset, setViewAsset] = useState("");
   if (!data || !d) return <Skeleton className="h-96" />;
   const b = data.bounds;
   const lim = d.limits;
   const al = d.allocation;
   const setLim = (k: string, v: number | boolean) => setD({ ...d, limits: { ...lim, [k]: v } });
+  const af = d.approval_free;
+  const setAf = (patch: Partial<ApprovalFree>) => setD({ ...d, approval_free: { ...af, ...patch } });
+  const ol = d.outlook;
+  const setOl = (patch: Partial<Outlook>) => setD({ ...d, outlook: { ...ol, ...patch } });
   const q = d.questions ?? QUESTIONS_DEFAULT;
   const setQ = (patch: Partial<Questions>) => setD({ ...d, questions: { ...q, ...patch } });
 
@@ -73,6 +101,42 @@ export default function Config() {
               try { await post("/risk-preset", { name: k }); toast(`已套用：${PRESET_LABEL[k]}`); reload(); } catch (e) { toast((e as Error).message, "err"); }
             }} />
         </Row>
+      </section>
+
+      <section>
+        <SectionHead title="交易风格与观点" doc="decisions-and-risk" />
+        <Row label="交易风格">
+          <Seg id="style" value={d.strategy.style} onChange={(k) => setD({ ...d, strategy: { style: k } })}
+            items={[{ k: "short" as const, label: "短线" }, { k: "medium" as const, label: "中期" }, { k: "long" as const, label: "长期" }]} />
+        </Row>
+        <p className="border-b border-line py-3 text-[13px] text-fg-3">{STYLE_HINT[d.strategy.style]}复查间隔仍不会越过「设置 → 节奏」里的最短和最长间隔。</p>
+        <Row label={<>整体看法 <span className="text-fg-3">· 指导 AI 看好还是不看好</span></>}>
+          <ViewDial label="整体看法" value={ol.market} onChange={(v) => setOl({ market: v })} />
+        </Row>
+        {Object.entries(ol.assets).map(([t, v]) => (
+          <Row key={t} label={<>看法 <b className="text-fg">{t}</b></>}>
+            <ViewDial label={`${t} 看法`} value={v} onChange={(x) => setOl({ assets: { ...ol.assets, [t]: x } })} />
+            <button className="btn-secondary btn-sm" onClick={() => { const a = { ...ol.assets }; delete a[t]; setOl({ assets: a }); }}>移除</button>
+          </Row>
+        ))}
+        <form className="flex flex-wrap items-center gap-2 border-b border-line py-3" onSubmit={(e) => {
+          e.preventDefault();
+          const t = viewAsset.trim().toUpperCase();
+          if (t && !(t in ol.assets)) setOl({ assets: { ...ol.assets, [t]: 1 } });
+          setViewAsset("");
+        }}>
+          <span className="mr-auto text-[14px] text-fg-2">单个币种的看法</span>
+          <input className="input h-9 w-24" placeholder="ETH" value={viewAsset} onChange={(e) => setViewAsset(e.target.value)} />
+          <button className="btn-secondary h-9">添加</button>
+        </form>
+        <div className="border-b border-line py-3">
+          <p className="text-[14px] text-fg-2">我的观点</p>
+          <textarea className="input mt-2 min-h-[72px] w-full py-2" maxLength={1000} value={ol.note} aria-label="我的观点"
+            placeholder="例如：觉得 ETH 短期要回调，想做空对冲；BTC 跌到 7 万以下就多买"
+            onChange={(e) => setOl({ note: e.target.value })} />
+        </div>
+        <p className="py-3 text-[13px] text-fg-3">观点只是给 AI 的指导：它仍要找行情依据，行情明显相反时会说明。风控限额不会因观点改变；现货不能做空，看空时 AI 会少买、多留稳定币，开启合约后才可能做空。</p>
+        <div className="pt-1"><button className="btn-primary" onClick={() => save({ strategy: d.strategy, outlook: d.outlook })}>保存</button></div>
       </section>
 
       <section>
@@ -202,6 +266,35 @@ export default function Config() {
           <input type="checkbox" className="h-4 w-4 accent-white" checked={!!lim.allow_sell} onChange={(e) => setLim("allow_sell", e.target.checked)} />
         </Row>
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ limits: lim })}>保存</button></div>
+      </section>
+
+      <section>
+        <SectionHead title="免审批" doc="approvals" />
+        <Row label="免审批模式">
+          <Seg id="approval-free" value={af.mode} onChange={(k) => setAf({ mode: k })}
+            items={[{ k: "off" as const, label: "关闭" }, { k: "window" as const, label: "按时段" }, { k: "always" as const, label: "一直开启" }]} />
+        </Row>
+        {af.mode === "window" && (
+          <Row label={`每天 · ${d.schedule.timezone}`}>
+            <input type="time" aria-label="免审批开始" className="input num h-9 w-32" value={af.start} onChange={(e) => setAf({ start: e.target.value })} />
+            <span className="text-fg-3">至</span>
+            <input type="time" aria-label="免审批结束" className="input num h-9 w-32" value={af.end} onChange={(e) => setAf({ end: e.target.value })} />
+          </Row>
+        )}
+        {af.mode !== "off" && (
+          <>
+            <Row label="也包含卖出">
+              <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={af.include_sell} aria-label="也包含卖出"
+                onChange={(e) => setAf({ include_sell: e.target.checked })} />
+            </Row>
+            <Row label="也包含合约开仓">
+              <input type="checkbox" className="h-4 w-4 accent-[#F0A23B]" checked={af.include_futures} aria-label="也包含合约开仓"
+                onChange={(e) => setAf({ include_futures: e.target.checked })} />
+            </Row>
+          </>
+        )}
+        <p className="py-3 text-[13px] text-fg-3">适合睡觉或没空看手机的时候。免审批期间，本来要等你批准的交易会直接执行，但单笔上限、每日笔数和金额、稳定币下限、暂停条件等风控照常生效，超出的部分照样截断或拒绝。卖出需要先在「风控」里允许卖出。</p>
+        <div className="pt-1"><button className="btn-primary" onClick={() => save({ approval_free: d.approval_free })}>保存</button></div>
       </section>
 
       <section id="questions">
