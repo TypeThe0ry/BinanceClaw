@@ -322,4 +322,29 @@ describe("Settings page", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(api.find("POST", "/cycles/run")).toHaveLength(0);
   });
+
+  it("edits Telegram push types, digest and quiet hours; approvals cannot be muted", async () => {
+    const notify = { types: { approval: true, trade: true, earn: false }, mode: "instant", digest_minutes: 60,
+      quiet: { enabled: false, start: "23:00", end: "08:00" } };
+    const api = mockApi({
+      "GET /settings": { ...settingsResp({ notify }), telegram: true,
+        notify_types: { approval: { label: "审批请求", always: true }, trade: { label: "自动成交", always: false },
+          earn: { label: "理财申购 / 赎回", always: false } } },
+      "GET /live/check": liveCheck(true), "GET /devices": [], "GET /earn": { enabled: false, positions: {}, products: {} },
+      "PUT /settings": { ok: true },
+    });
+    renderPage(<Settings />);
+    const sec = await waitFor(() => section("Telegram 推送"));
+    expect(within(rowOf("审批请求")).getByText("始终推送")).toBeInTheDocument();
+    expect(within(sec).queryByRole("checkbox", { name: "审批请求" })).toBeNull();
+    await userEvent.click(within(sec).getByRole("checkbox", { name: "自动成交" }));
+    await userEvent.click(within(sec).getByRole("checkbox", { name: "理财申购 / 赎回" }));
+    await userEvent.click(within(sec).getByRole("button", { name: "定时汇总" }));
+    await userEvent.click(within(sec).getByRole("checkbox", { name: "免打扰" }));
+    expect(within(sec).getByLabelText("免打扰开始")).toHaveValue("23:00");
+    await userEvent.click(within(sec).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
+    expect(api.find("PUT", "/settings")[0].body).toEqual({ notify: { ...notify, mode: "digest",
+      types: { approval: true, trade: false, earn: true }, quiet: { enabled: true, start: "23:00", end: "08:00" } } });
+  });
 });

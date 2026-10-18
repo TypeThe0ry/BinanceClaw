@@ -69,7 +69,7 @@ class Valuation:
         try:
             snaps = self.svc.client.account_snapshot(start, end)
             closes = {int(k["t"] // DAY): k["c"] for k in self.svc.client.klines(
-                f"BTC{self.svc.settings.quote}", "1d", 40, start=start - DAY)}
+                f"BTC{self.svc.settings.quote}", "1d", 40)}
         except ExchangeError as e:
             log.info("valuation backfill skipped: %s", e)
             return 0

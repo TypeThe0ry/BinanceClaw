@@ -1,10 +1,39 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { CycleFull, CycleRow } from "../api";
+import type { CycleFull, CycleRow, TrackRecord, WinStat } from "../api";
 import { Decision, DocLink, Empty, Page, RiskChecks, SectionHead, Side, Skeleton, Tabs } from "../components/ui";
 import { clock, pct, token, usd, useApi, fmtPrice } from "../lib";
 
 type F = "all" | "trade" | "none" | "issue";
+
+function Win({ label, s }: { label: string; s: WinStat | undefined }) {
+  return (
+    <div>
+      <dt className="text-[12px] text-fg-3">{label}</dt>
+      <dd className="num mt-0.5 text-[15px]">
+        {s?.win_rate != null ? pct(s.win_rate, 0) : "—"}
+        {s?.evaluated ? <span className="ml-1.5 text-[12px] text-fg-3">{s.wins}/{s.evaluated} 笔 · 平均 {pct(s.avg_return)}</span> : null}
+      </dd>
+    </div>
+  );
+}
+
+export function TrackStrip() {
+  const { data: t } = useApi<TrackRecord>("/track-record", { kinds: ["order", "cycle"], poll: 300000 });
+  if (!t || (!t.trades && !t.futures.trades)) return null;
+  return (
+    <section className="mb-4">
+      <dl className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg bg-raise px-4 py-3" title={t.rule}>
+        <Win label="胜率 · 24 小时" s={t["24h"]} />
+        <Win label="胜率 · 7 天" s={t["7d"]} />
+        <Win label="买入 · 24 小时" s={t.by_side_24h.BUY} />
+        <Win label="卖出 · 24 小时" s={t.by_side_24h.SELL} />
+        {t.futures.trades > 0 && <Win label="合约" s={{ evaluated: t.futures.trades, wins: t.futures.wins, win_rate: t.futures.win_rate, avg_return: null }} />}
+        {t.pending_24h > 0 && <div><dt className="text-[12px] text-fg-3">待评估</dt><dd className="num mt-0.5 text-[15px]">{t.pending_24h} 笔</dd></div>}
+      </dl>
+    </section>
+  );
+}
 
 export function AIList() {
   const { data, loading } = useApi<CycleRow[]>("/cycles?limit=100", { kinds: ["cycle", "cycle_started", "approval"] });
@@ -17,6 +46,7 @@ export function AIList() {
       <div className="mb-1 flex items-center gap-1.5"><h1 className="text-[20px] font-semibold">AI 决策</h1><DocLink to="decisions-and-risk" /></div>
       <Tabs id="ai" value={f} onChange={setF} items={[
         { k: "all", label: "全部" }, { k: "trade", label: "有交易" }, { k: "none", label: "不操作" }, { k: "issue", label: "失败 / 跳过" }]} />
+      <TrackStrip />
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px]">
           <thead><tr className="border-b border-line">
@@ -49,6 +79,13 @@ export function AIList() {
   );
 }
 
+const STAGES = [["market_ms", "行情"], ["account_ms", "账户"], ["model_ms", "模型"], ["execute_ms", "执行"]] as const;
+
+function timing(c: CycleFull) {
+  const parts = STAGES.filter(([k]) => c.timing?.[k] != null).map(([k, label]) => `${label} ${((c.timing?.[k] ?? 0) / 1000).toFixed(1)}s`);
+  return parts.length ? `（${parts.join(" · ")}）` : "";
+}
+
 function Raw({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -70,7 +107,7 @@ export function AIDetail() {
       <div>
         <Link to="/ai" className="text-[13px] text-fg-2 hover:text-fg">‹ AI 决策</Link>
         <h1 className="num mt-2 text-[20px] font-semibold">{clock(c.ts)}</h1>
-        <p className="mt-1 text-[13px] text-fg-2">{c.model || c.provider} · {(c.duration_ms / 1000).toFixed(1)}s · {c.mode === "live" ? "实盘" : "模拟"}</p>
+        <p className="mt-1 text-[13px] text-fg-2">{c.model || c.provider} · {(c.duration_ms / 1000).toFixed(1)}s{timing(c)} · {c.mode === "live" ? "实盘" : "模拟"}</p>
       </div>
 
       <section>

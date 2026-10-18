@@ -137,6 +137,7 @@ class BinanceSpot:
         return {d["symbol"]: (float(d["bidPrice"]), float(d["askPrice"])) for d in data}
 
     def klines(self, symbol: str, interval: str = "1d", limit: int = 30, start: float | None = None) -> list[dict]:
+        """``start``: epoch seconds of the first candle (default: the latest ``limit`` candles)."""
         rows = self._request("GET", "/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit,
                                                         "startTime": int(start * 1000) if start else None})
         return [{"t": r[0] / 1000, "o": float(r[1]), "h": float(r[2]), "l": float(r[3]),

@@ -62,9 +62,16 @@ class FakeSpot:
         self._chk()
         return {s: (self.prices_map[s] * 0.9999, self.prices_map[s] * 1.0001) for s in symbols}
 
+    horizon_px = {}                 # symbol -> price of candles fetched with a start time (track record)
+    kline_calls = 0
+
     def klines(self, symbol, interval="1d", limit=30, start=None):
         self._chk()
+        self.kline_calls += 1
         p = PRICES[symbol]          # history stays at the base price; tests move only the live price
+        if start is not None:
+            hp = self.horizon_px.get(symbol, p)
+            return [{"t": start, "o": hp, "h": hp, "l": hp, "c": hp, "v": 1, "close_t": start + 3600}]
         now = time.time()
         return [{"t": now - (limit - i - 1) * 86400, "o": p, "h": p * 1.01, "l": p * 0.99, "c": p, "v": 1, "close_t": now}
                 for i in range(limit)]
