@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 DATA_DIR = Path(os.environ.get("BINANCECLAW_DATA", "./data")).resolve()
 
@@ -37,6 +37,8 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "move_trigger_pct": (0.003, 0.2),
     "approval_timeout_minutes": (5, 720),
     "max_asset_weight": (0.05, 1.0),
+    "ai_candidates": (5, 30),
+    "rebalance_drift": (0.01, 0.5),
     # futures
     "max_leverage": (1, 20),
     "max_position_margin_usd": (5, 10000),
@@ -145,25 +147,52 @@ class Capital(BaseModel):
         return v
 
 
+def _token_list(v: list[str], cap: int) -> list[str]:
+    out = []
+    for t in v:
+        t = t.upper().strip()
+        if not t.isalnum() or len(t) > 15:
+            raise ValueError(f"invalid token {t!r}")
+        if t not in out:
+            out.append(t)
+    if len(out) > cap:
+        raise ValueError(f"at most {cap} tokens")
+    return out
+
+
 class Allocation(BaseModel):
+    # "targets" = 手动分配: the owner sets target weights and the system keeps the portfolio near them.
+    # "ai" = AI 自主分配: no fixed targets, the model decides the weights itself.
     mode: Literal["targets", "ai"] = "targets"
-    # Tokens the AI may trade. In "targets" mode only tokens that also have a target are tradable.
+    # "ai" mode: which assets the AI may trade. "all" = every Binance spot asset with a <TOKEN><quote>
+    # pair; "whitelist" = only ``enabled``; "blacklist" = everything except ``blocked``.
+    universe: Literal["all", "whitelist", "blacklist"] = "all"
+    # Whitelist in "ai" mode; in "targets" mode only tokens that also have a target are tradable.
     enabled: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "QQQB", "NVDAB"])
+    blocked: list[str] = Field(default_factory=list)   # blacklist: never traded in "ai" mode
     max_asset_weight: float = 0.7        # "ai" mode: ceiling per asset (share of managed value)
+    # "all" / "blacklist": assets with full market data each round (holdings first, then by 24h volume)
+    ai_candidates: int = 30
+    auto_rebalance: bool = True          # "targets" mode: trade back to target when an asset drifts too far
+    rebalance_drift: float = 0.05        # ... by more than this (absolute weight, 0.05 = 5 percentage points)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate(cls, data):
+        # Settings saved before universes existed: an "ai" mode owner chose an explicit list, keep it.
+        if isinstance(data, dict) and "universe" not in data and data.get("mode") == "ai":
+            data = {**data, "universe": "whitelist"}
+        return data
 
     @field_validator("enabled")
     @classmethod
     def _enabled(cls, v):
-        out = []
-        for t in v:
-            t = t.upper().strip()
-            if not t.isalnum() or len(t) > 15:
-                raise ValueError(f"invalid token {t!r}")
-            if t not in out:
-                out.append(t)
-        if len(out) > 30:
-            raise ValueError("at most 30 tradable tokens")
-        return out
+        return _token_list(v, 30)
+
+    @field_validator("blocked")
+    @classmethod
+    def _blocked(cls, v):
+        return _token_list(v, 300)
 
 
 class Futures(BaseModel):
@@ -237,6 +266,8 @@ class Settings(BaseModel):
     futures: Futures = Field(default_factory=Futures)
     earn: Earn = Field(default_factory=Earn)
     investor_notes: str = "长期投资，BTC 为主。只做现货，不承诺收益。"
+    # Resolved by the service for "ai" mode over all assets / a blacklist (needs exchange data)
+    _universe: list[str] | None = PrivateAttr(default=None)
     # Key permissions the owner knowingly keeps enabled; validated against risk.gate.WAIVABLE
     live_gate_allow: list[str] = Field(default_factory=list)
 
@@ -281,9 +312,13 @@ class Settings(BaseModel):
 
     # ---- derived helpers ----
     def tradable_tokens(self) -> list[str]:
-        enabled = [t for t in self.allocation.enabled if t not in self.stables and t != self.quote]
-        if self.allocation.mode == "ai":
-            return enabled
+        al = self.allocation
+        enabled = [t for t in al.enabled if t not in self.stables and t != self.quote]
+        if al.mode == "ai":
+            if al.universe != "whitelist" and self._universe is not None:
+                return [t for t in self._universe if t not in al.blocked and t not in self.stables and t != self.quote]
+            # whitelist, or the market list is not available: the explicit list (minus the blacklist)
+            return [t for t in enabled if al.universe == "whitelist" or t not in al.blocked]
         with_target = [t for name, c in self.categories.items() if name != "STABLE" for t in c.tokens]
         return [t for t in with_target if t in enabled]
 
@@ -362,6 +397,11 @@ DANGEROUS: dict[str, str] = {
     "capital.locked": "锁定资产",
     "capital.budget_usd": "AI 投入预算",
     "allocation.mode": "分配方式",
+    "allocation.universe": "AI 可交易范围",
+    "allocation.enabled": "可交易资产 / 白名单",
+    "allocation.blocked": "黑名单",
+    "allocation.auto_rebalance": "自动再平衡",
+    "allocation.rebalance_drift": "再平衡偏离阈值",
     "allocation.max_asset_weight": "单币占比上限",
     "futures.enabled": "合约交易",
     "futures.max_leverage": "最大杠杆",

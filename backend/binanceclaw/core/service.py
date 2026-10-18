@@ -27,8 +27,9 @@ from ..exchange.broker import Broker, OrderUnknown
 from ..exchange.futures_broker import FuturesBroker
 from ..exchange.stream import PriceStream
 from ..risk import gate
-from ..risk.engine import Portfolio, RiskState, evaluate, pause_trigger
+from ..risk.engine import Check, Portfolio, RiskState, Verdict, evaluate, normalize_symbol, pause_trigger
 from ..risk.futures import OPEN_OPS, FuturesView, evaluate_futures, perp_symbol
+from ..risk.rebalance import rebalance_actions
 from . import categories as cats
 from .autopilot import Autopilot
 from .earn import EarnManager
@@ -86,7 +87,55 @@ class Service:
 
     @property
     def settings(self):
-        return self.settings_store.get()
+        s = self.settings_store.get()
+        if s.allocation.mode == "ai" and s.allocation.universe != "whitelist":
+            s._universe = self.ai_universe(s)
+        return s
+
+    UNIVERSE_TTL = 600
+
+    def ai_universe(self, s) -> list[str] | None:
+        """AI 自主分配 over all of Binance spot (minus the blacklist): the assets tradable this round.
+
+        Every asset with a <TOKEN><quote> pair is eligible. Each round needs a klines call per
+        asset, so the round's universe is what the account holds, assets with a trade waiting for
+        approval, then the most-traded others, up to ``allocation.ai_candidates``. Cached for 10
+        minutes; None (fall back to the explicit list) when the market list cannot be read."""
+        al = s.allocation
+        key = (s.mode, s.quote, al.universe, tuple(al.blocked), al.ai_candidates, tuple(s.stables))
+        cached = getattr(self, "_universe", None)
+        if cached and cached[1] == key and time.time() - cached[0] < self.UNIVERSE_TTL:
+            return cached[2]
+        if getattr(self, "_universe_busy", False):          # settings read while resolving it
+            return cached[2] if cached and cached[1] == key else None
+        self._universe_busy = True
+        try:
+            pairs = {m["base"]: m.get("status", "TRADING") for m in self._spot_markets() if m["quote"] == s.quote}
+            tickers = self._tickers_24h()
+            held = self.broker.balances()
+        except ExchangeError as e:
+            log.warning("AI universe unavailable: %s", e)
+            return cached[2] if cached and cached[1] == key else None
+        finally:
+            self._universe_busy = False
+        skip = set(s.stables) | {s.quote} | set(al.blocked)
+        px = {b: (tickers.get(f"{b}{s.quote}") or {}).get("price") or 0.0 for b in pairs}
+        mine = sorted((b for b, amt in held.items() if b in pairs and b not in skip and amt * px.get(b, 0.0) >= 1),
+                      key=lambda b: -held[b] * px[b])
+        pending = [a.symbol[: -len(s.quote)] for a in self.db.pending_approvals()
+                   if a.kind == "spot" and a.symbol.endswith(s.quote)]
+        top = sorted((b for b, st in pairs.items() if st == "TRADING" and b not in skip),
+                     key=lambda b: -((tickers.get(f"{b}{s.quote}") or {}).get("quote_volume") or 0))
+        out = [b for b in dict.fromkeys([*mine, *pending, *top]) if b in pairs and b not in skip][:al.ai_candidates]
+        self._universe = (time.time(), key, out)
+        return out
+
+    def _tickers_24h(self) -> dict[str, dict]:
+        tk = getattr(self, "_tickers", None)
+        if not tk or time.time() - tk[0] > 120:
+            tk = (time.time(), self.client.all_tickers_24h())
+            self._tickers = tk
+        return tk[1]
 
     def tz(self):
         return ZoneInfo(self.settings.schedule.timezone)
@@ -301,12 +350,10 @@ class Service:
         quote = self.settings.quote
         mk = (now, self._spot_markets())
         tags = self.token_tags()
-        tk = getattr(self, "_tickers", None)
-        if not tk or now - tk[0] > 120:
-            tk = (now, self.client.all_tickers_24h())
-            self._tickers = tk
+        tk = (now, self._tickers_24h())
         held = set(self.broker.balances())
         enabled = set(self.settings.allocation.enabled)
+        blocked = set(self.settings.allocation.blocked)
         stables = set(self.settings.stables)
         q = q.strip().upper()
         pairs: dict[str, dict] = {}
@@ -325,13 +372,13 @@ class Service:
             status = m.get("status", "TRADING")
             rows.append({"token": base, "symbol": m["symbol"], "price": t.get("price"), "change_pct": t.get("change_pct"),
                          "quote_volume": t.get("quote_volume", 0.0), "held": base in held, "enabled": base in enabled,
-                         "status": status, "trading": status == "TRADING", "selectable": True,
+                         "blocked": base in blocked, "status": status, "trading": status == "TRADING", "selectable": True,
                          "tags": tags.get(base, []), "category": cats.label(cats.primary(tags.get(base, [])))})
         for base, quotes in others.items():
             if base in pairs:
                 continue
             rows.append({"token": base, "symbol": "", "price": None, "change_pct": None, "quote_volume": 0.0,
-                         "held": base in held, "enabled": base in enabled, "status": "NO_PAIR", "trading": False,
+                         "held": base in held, "enabled": base in enabled, "blocked": base in blocked, "status": "NO_PAIR", "trading": False,
                          "selectable": False, "quotes": sorted(quotes), "tags": tags.get(base, []),
                          "category": cats.label(cats.primary(tags.get(base, [])))})
         rows.sort(key=lambda r: (not r["enabled"], not r["held"], r["token"] != q, not r["selectable"],
@@ -565,11 +612,12 @@ class Service:
             self.events.emit("alert", {"text": f"模型输出不合规，本轮不交易：{e}"})
             return finish(status="error", error=f"输出校验失败：{e}")
 
-        actions = [a.model_dump() for a in plan.actions]
+        actions, superseded = self._with_rebalance([a.model_dump() for a in plan.actions], pf)
         verdicts = evaluate(actions, pf, st)
         risk = []
         for a, v in zip(actions, verdicts, strict=True):
             row = v.to_dict()
+            row["source"] = a.get("source", "ai")
             row["reason_model"] = a["reason"]
             row["invalidation"] = a["invalidation"]
             if v.decision == "execute":
@@ -583,11 +631,33 @@ class Service:
                 row["approval_id"] = ap.id
                 row["result"] = "等待批准"
             risk.append(row)
+        risk.extend(superseded)
         if plan.futures:
             risk.extend(self._handle_futures(plan.futures, fv, c.id))
         if plan.alerts:
             self._replace_ai_alerts(plan.alerts, prices)
         return finish(status="done", plan=plan.model_dump(), risk=risk, summary=plan.summary)
+
+    def _with_rebalance(self, actions: list[dict], pf: Portfolio) -> tuple[list[dict], list[dict]]:
+        """手动分配: put the rebalancing trades first; the model's own actions on those assets are
+        dropped (and reported) so the same asset is not traded twice in one round."""
+        q = pf.settings.quote
+        pending = {a.symbol[: -len(q)] for a in self.db.pending_approvals() if a.kind == "spot" and a.symbol.endswith(q)}
+        reb = rebalance_actions(pf, skip=pending)
+        if not reb:
+            return actions, []
+        mine = {a["symbol"] for a in reb}
+        keep, dropped = [], []
+        for a in actions:
+            sym = normalize_symbol(str(a.get("symbol", "")), q)
+            if sym in mine:
+                v = Verdict(-1, str(a.get("side", "")).upper(), sym, float(a.get("quote_usd") or 0), reason="本轮由自动再平衡处理这个资产",
+                            checks=[Check("自动再平衡", False, "本轮由自动再平衡处理这个资产")])
+                dropped.append({**v.to_dict(), "source": "ai", "reason_model": a.get("reason", ""),
+                                "invalidation": a.get("invalidation", "")})
+            else:
+                keep.append(a)
+        return reb + keep, dropped
 
     def _handle_futures(self, acts, fv: FuturesView | None, cycle_id: str) -> list[dict]:
         actions = [a.model_dump() for a in acts]

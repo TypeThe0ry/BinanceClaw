@@ -19,7 +19,8 @@ function settingsResp(over: Record<string, unknown> = {}) {
       live_gate_allow: [],
       risk_preset: "balanced",
       capital: { locked: {}, budget_usd: null },
-      allocation: { mode: "targets", enabled: ["BTC", "ETH"], max_asset_weight: 0.4 },
+      allocation: { mode: "targets", universe: "all", enabled: ["BTC", "ETH"], blocked: [], max_asset_weight: 0.4,
+        ai_candidates: 30, auto_rebalance: true, rebalance_drift: 0.05 },
       provider_fallback: null,
       stables: ["USDT", "USDC"],
       futures: { enabled: false, symbols: ["BTCUSDT"], max_leverage: 3, max_position_margin_usd: 200, max_total_margin_usd: 500,
@@ -251,5 +252,41 @@ describe("Settings page", () => {
     expect(screen.getByText("只申购这些稳定币")).toBeInTheDocument();
     await userEvent.click(within(section("理财")).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(api.find("PUT", "/settings")[0]?.body).toMatchObject({ earn: { enabled: true, auto_all: false } }));
+  });
+
+  it("manual allocation keeps the portfolio at its targets with a drift threshold", async () => {
+    const api = mockSettings();
+    renderPage(<Settings />);
+    await screen.findByText("资产与分配", { selector: "h2" });
+    expect(screen.getByRole("checkbox", { name: "自动再平衡" })).toBeChecked();
+    const thr = within(rowOf("偏离阈值")).getByRole("spinbutton");
+    expect(thr).toHaveValue(5);
+    await userEvent.clear(thr);
+    await userEvent.type(thr, "8");
+    await userEvent.click(within(section("资产与分配")).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
+    const { allocation } = api.find("PUT", "/settings")[0].body as { allocation: Record<string, unknown> };
+    expect(allocation).toMatchObject({ mode: "targets", auto_rebalance: true });
+    expect(allocation.rebalance_drift as number).toBeCloseTo(0.08);
+  });
+
+  it("AI allocation covers every asset by default and can switch to a blacklist", async () => {
+    const api = mockSettings({ extra: { "GET /markets?q=&limit=40": [
+      { token: "DOGE", symbol: "DOGEUSDT", price: 0.1, change_pct: 0, quote_volume: 1, held: false, enabled: false },
+    ], "GET /categories": [] } });
+    renderPage(<Settings />);
+    await screen.findByText("资产与分配", { selector: "h2" });
+    await userEvent.click(screen.getByRole("button", { name: "AI 自主分配" }));
+    expect(screen.queryByRole("checkbox", { name: "自动再平衡" })).not.toBeInTheDocument();
+    expect(screen.getByText(/币安全部现货资产都可以交易/)).toBeInTheDocument();
+    expect(screen.queryByText("白名单", { selector: "p" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "黑名单" }));
+    expect(screen.getByText("还没有，搜索添加")).toBeInTheDocument();
+    await userEvent.click(screen.getByPlaceholderText("搜索要排除的资产"));
+    await userEvent.click(await screen.findByText("DOGE"));
+    await userEvent.click(within(section("资产与分配")).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
+    expect(api.find("PUT", "/settings")[0].body).toMatchObject({ allocation: { mode: "ai", universe: "blacklist", blocked: ["DOGE"] } });
   });
 });
