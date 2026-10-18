@@ -111,11 +111,11 @@ describe("Config page (配置)", () => {
     await screen.findByText("资产与分配", { selector: "h2" });
     await userEvent.click(screen.getByRole("button", { name: "AI 自主分配" }));
     expect(screen.queryByRole("checkbox", { name: "自动再平衡" })).not.toBeInTheDocument();
-    expect(screen.getByText(/币安全部现货资产都可以交易/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "全部资产" })).toBeInTheDocument();
     expect(screen.queryByText("白名单", { selector: "p" })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "黑名单" }));
-    expect(screen.getByText("还没有，搜索添加")).toBeInTheDocument();
+    expect(screen.getByText("黑名单", { selector: "p" })).toBeInTheDocument();
     await userEvent.click(screen.getByPlaceholderText("搜索要排除的资产"));
     await userEvent.click(await screen.findByText("DOGE"));
     await userEvent.click(within(section("资产与分配")).getByRole("button", { name: "保存" }));

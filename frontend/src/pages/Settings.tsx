@@ -153,7 +153,6 @@ export default function Settings() {
         </Row>
         {(sch.decision_mode ?? "auto") === "auto" ? (
           <>
-            <p className="py-2 text-[13px] text-fg-3">AI 自己决定下次什么时候看，价格大幅波动、触及它设的关键价位、合约止损止盈、交易成交或余额变化时会提前唤醒它。下面是它不能越过的边界；风控和审批照常生效。</p>
             <Row label="AI 未指定时的复查间隔"><Num unit="分钟" value={sch.cycle_minutes} min={b.cycle_minutes?.[0]} max={b.cycle_minutes?.[1]} onChange={(x) => setSch({ cycle_minutes: x })} /></Row>
             <Row label="两轮最短间隔"><Num unit="分钟" value={sch.min_gap_minutes ?? 5} min={b.min_gap_minutes?.[0]} max={b.min_gap_minutes?.[1]} onChange={(x) => setSch({ min_gap_minutes: x })} /></Row>
             <Row label="最长不决策"><Num unit="分钟" value={sch.max_gap_minutes ?? 240} min={b.max_gap_minutes?.[0]} max={b.max_gap_minutes?.[1]} onChange={(x) => setSch({ max_gap_minutes: x })} /></Row>
@@ -172,7 +171,7 @@ export default function Settings() {
 
       <section>
         <SectionHead title="理财" doc="earn" />
-        <Row label={<>闲置资产自动申购活期 <span className="text-fg-3">· 随时可赎回</span></>}>
+        <Row label="闲置资产自动申购活期">
           <input type="checkbox" className="h-4 w-4 accent-white" checked={d.earn.enabled} aria-label="闲置资产自动申购活期"
             onChange={(e) => setD({ ...d, earn: { ...d.earn, enabled: e.target.checked } })} />
         </Row>
@@ -221,7 +220,7 @@ export default function Settings() {
         return (
           <section>
             <SectionHead title="Telegram 推送" doc="telegram" />
-            {data.telegram === false && <p className="py-2 text-[13px] text-fg-3">还没有配置 Telegram，这些设置会在配置后生效。</p>}
+            {data.telegram === false && <p className="py-2 text-[13px] text-warn">Telegram 未配置</p>}
             <Row label="推送频率">
               <Seg id="notify-mode" value={n.mode} onChange={(k) => setN({ mode: k })}
                 items={[{ k: "instant" as const, label: "即时" }, { k: "digest" as const, label: "定时汇总" }]} />
@@ -238,7 +237,6 @@ export default function Settings() {
                 <input type="time" className="input num h-9 w-28" aria-label="免打扰结束" value={n.quiet.end} onChange={(e) => setN({ quiet: { ...n.quiet, end: e.target.value } })} />
               </>}
             </Row>
-            <p className="py-2 text-[13px] text-fg-3">定时汇总和免打扰期间，消息会攒起来合成一条发送。审批请求、AI 提问和重大风险提醒始终立即推送。</p>
             {Object.entries(data.notify_types).map(([k, t]) => (
               <Row key={k} label={t.label}>
                 {t.always ? <span className="text-[13px] text-fg-3">始终推送</span> : (
