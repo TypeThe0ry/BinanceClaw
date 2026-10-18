@@ -85,7 +85,7 @@ export default function Futures() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-[20px] font-semibold">USDⓈ-M 永续</h1>
-            {!data.enabled && <Link to="/settings#futures" className="tag bg-hover text-fg-2">未开启</Link>}
+            {!data.enabled && <Link to="/config#futures" className="tag bg-hover text-fg-2">未开启</Link>}
           </div>
           <dl className="mt-4 grid grid-cols-2 gap-x-10 gap-y-3 text-[13px] sm:grid-cols-4">
             <div><dt className="text-fg-3">合约权益</dt><dd className="num mt-1 text-[18px] font-semibold">{usd(data.equity)}</dd></div>

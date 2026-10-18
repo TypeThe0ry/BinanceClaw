@@ -109,7 +109,7 @@ def evaluate_futures(actions: list[dict], fv: FuturesView) -> list[FVerdict]:
             fail("每轮动作数", f"每轮最多 {MAX_FUTURES_ACTIONS} 个合约动作")
             continue
         if not f.enabled:
-            fail("合约开关", "合约交易未开启（设置 → 合约）")
+            fail("合约开关", "合约交易未开启（配置 → 合约）")
             continue
         if op in OPEN_OPS and sym not in allowed:
             fail("合约白名单", f"{sym} 不在合约白名单 {sorted(allowed)} 中")

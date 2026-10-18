@@ -1,5 +1,5 @@
 import {
-  BookOpen, ChartLineUp, ChatCircle, DotsThreeOutline, GearSix, Lightning, Newspaper, Sparkle, Stamp, Stop, Wallet,
+  BookOpen, ChartLineUp, ChatCircle, DotsThreeOutline, GearSix, Lightning, Newspaper, Sliders, Sparkle, Stamp, Stop, Wallet,
 } from "@phosphor-icons/react";
 import { motion } from "framer-motion";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -87,9 +87,10 @@ export function Layout() {
             {ov && <ModePill mode={ov.mode} />}
             {ov && <RunPill paused={ov.paused} />}
             {ov?.approval_free?.active && (
-              <Link to="/settings" className="tag bg-warn/15 text-warn" title="本来要你批准的交易会在风控限额内直接执行">免审批中</Link>
+              <Link to="/config" className="tag bg-warn/15 text-warn" title="本来要你批准的交易会在风控限额内直接执行">免审批中</Link>
             )}
             <Link to="/docs" aria-label="文档" className={`hidden rounded-md p-1.5 md:block ${active("/docs") ? "text-fg" : "text-fg-2 hover:text-fg"}`}><BookOpen size={18} /></Link>
+            <Link to="/config" aria-label="配置" className={`hidden rounded-md p-1.5 md:block ${active("/config") ? "text-fg" : "text-fg-2 hover:text-fg"}`}><Sliders size={18} /></Link>
             <Link to="/settings" aria-label="设置" className={`hidden rounded-md p-1.5 md:block ${active("/settings") ? "text-fg" : "text-fg-2 hover:text-fg"}`}><GearSix size={18} /></Link>
             <button onClick={kill} aria-label="紧急停止" title="紧急停止"
               className="flex h-7 w-7 items-center justify-center rounded-md bg-down/15 text-down transition-colors hover:bg-down/25 active:scale-95">
@@ -106,7 +107,7 @@ export function Layout() {
 
       <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-bg pb-[max(env(safe-area-inset-bottom),6px)] pt-1.5 md:hidden">
         {MOBILE.map((n) => {
-          const on = n.to === "/more" ? ["/more", "/ai", "/chat", "/reports", "/settings", "/docs"].some((p) => loc.pathname.startsWith(p)) : active(n.to);
+          const on = n.to === "/more" ? ["/more", "/ai", "/chat", "/reports", "/config", "/settings", "/docs"].some((p) => loc.pathname.startsWith(p)) : active(n.to);
           return (
             <NavLink key={n.to} to={n.to} end={n.to === "/"} className={`relative flex flex-1 flex-col items-center gap-0.5 py-1 text-[11px] ${on ? "text-fg" : "text-fg-3"}`}>
               <n.icon size={22} weight={on ? "fill" : "regular"} />
@@ -125,6 +126,7 @@ export function More() {
     { to: "/ai", label: "AI 决策", icon: Sparkle },
     { to: "/chat", label: "对话", icon: ChatCircle },
     { to: "/reports", label: "日报", icon: Newspaper },
+    { to: "/config", label: "配置", icon: Sliders },
     { to: "/settings", label: "设置", icon: GearSix },
     { to: "/docs", label: "文档", icon: BookOpen },
   ];
