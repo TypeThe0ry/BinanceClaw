@@ -89,7 +89,7 @@ export default function AllocationEditor({ categories, enabled, notes, stables, 
   return (
     <>
       {mode === "ai" && (
-        <p className="border-b border-line py-3 text-[13px] text-fg-3">当前是「AI 自主分配」，目标配置暂不生效；应用 AI 提案会切换回「按目标配置」。</p>
+        <p className="border-b border-line py-3 text-[13px] text-fg-3">当前是「AI 自主分配」，目标配置暂不生效；应用 AI 提案会切换为「手动分配」。</p>
       )}
       {Object.entries(cats).map(([cat, c]) => (
         <div key={cat} className="border-b border-line py-3">

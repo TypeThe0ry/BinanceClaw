@@ -13,12 +13,12 @@ def test_suspended_pair_is_listed_and_selectable(svc):
     assert rows["TON"]["status"] == "BREAK" and rows["TON"]["selectable"] and not rows["TON"]["trading"]
     assert rows["XYZ"]["selectable"] is False and rows["XYZ"]["quotes"] == ["BTC"]   # no USDT pair, still listed
     assert "USDT" not in rows                                                        # stables aren't assets to pick
-    svc.update_settings({"allocation": {"enabled": ["BTC", "TON"], "mode": "ai"}})
+    svc.update_settings({"allocation": {"enabled": ["BTC", "TON"], "mode": "ai", "universe": "whitelist"}})
     assert svc.settings.tradable_tokens() == ["BTC", "TON"]
 
 
 def test_risk_engine_refuses_suspended_pair(svc):
-    svc.update_settings({"allocation": {"enabled": ["BTC", "TON"], "mode": "ai"}})
+    svc.update_settings({"allocation": {"enabled": ["BTC", "TON"], "mode": "ai", "universe": "whitelist"}})
     p = use(svc, plan(("BUY", "TONUSDT", 50), ("BUY", "BTCUSDT", 50)))
     c = svc.run_cycle("manual")
     assert [r["decision"] for r in c.risk] == ["reject", "execute"]

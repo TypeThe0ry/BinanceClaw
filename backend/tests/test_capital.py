@@ -84,14 +84,14 @@ def test_deselected_holdings_are_out_of_scope(svc):
 
 
 def test_validate_tokens_against_exchange(svc):
-    svc.update_settings({"allocation": {"enabled": ["BTC", "SOL"], "mode": "ai"}})
+    svc.update_settings({"allocation": {"enabled": ["BTC", "SOL"], "mode": "ai", "universe": "whitelist"}})
     assert svc.settings.tradable_tokens() == ["BTC", "SOL"]
     with pytest.raises(ValueError):
         svc.update_settings({"allocation": {"enabled": ["BTC", "NOTACOIN"]}})
 
 
 def test_ai_mode_cycle_end_to_end(svc):
-    svc.update_settings({"allocation": {"enabled": ["BTC", "SOL"], "mode": "ai"}})
+    svc.update_settings({"allocation": {"enabled": ["BTC", "SOL"], "mode": "ai", "universe": "whitelist"}})
     p = use(svc, plan(("BUY", "SOLUSDT", 150), ("BUY", "ETHUSDT", 50)))
     c = svc.run_cycle("manual")
     assert [r["decision"] for r in c.risk] == ["execute", "reject"]   # ETH not selected

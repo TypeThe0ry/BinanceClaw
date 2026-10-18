@@ -3,8 +3,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setConfirmer, type DangerChange } from "../api";
 
 const PCT = new Set(["limits.stable_floor", "limits.btc_7d_drop_pause", "limits.price_deviation_anomaly", "limits.fee_buffer_ratio",
-  "allocation.max_asset_weight", "futures.max_stop_distance"]);
-const ENUM: Record<string, string> = { targets: "按目标配置", ai: "AI 自主分配" };
+  "allocation.max_asset_weight", "allocation.rebalance_drift", "futures.max_stop_distance"]);
+const ENUM: Record<string, string> = { targets: "手动分配", ai: "AI 自主分配", all: "全部资产", whitelist: "白名单", blacklist: "黑名单" };
 
 /** Human-readable value of a setting, as shown in the second-confirmation dialog. */
 export function fmtSetting(field: string, v: unknown): string {

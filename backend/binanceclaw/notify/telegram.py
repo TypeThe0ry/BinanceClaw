@@ -37,7 +37,7 @@ HELP = """BinanceClaw 指令
 /preset  风险预设：/preset conservative|balanced|aggressive
 /budget  AI 投入预算：/budget 3000，/budget off
 /lock    锁定资产：/lock BTC 0.5，/lock BTC 0 解除
-/assets  可交易资产：/assets BTC,ETH；/assets ai 或 /assets targets 切换分配方式
+/assets  分配：/assets ai（AI 自主）或 /assets manual（手动）；/assets all|whitelist|blacklist 选 AI 范围；/assets BTC,ETH 设白名单；/assets block DOGE / unblock DOGE 改黑名单
 /alloc   让 AI 调整目标配置：/alloc 加 10% TON，从 BTC 里减；只发 /alloc 则让 AI 生成一份
 /positions 合约持仓
 /flat yes 平掉 BinanceClaw 的全部合约仓位
@@ -56,7 +56,15 @@ def fmt_setting(v) -> str:
         return "、".join(map(str, v)) or "无"
     if isinstance(v, dict):
         return "，".join(f"{k} {fmt_setting(x) if not isinstance(x, dict) else '…'}" for k, x in v.items()) or "无"
-    return str(v)
+    return ENUM_LABEL.get(v, str(v))
+
+
+UNIVERSE_LABEL = {"all": "全部资产", "whitelist": "白名单", "blacklist": "黑名单"}
+ENUM_LABEL = {**UNIVERSE_LABEL, "ai": "AI 自主分配", "targets": "手动分配"}
+
+
+def _token_args(args: list[str]) -> list[str]:
+    return [t for t in " ".join(args).replace("，", ",").replace(" ", ",").split(",") if t]
 
 
 class TelegramBot:
@@ -285,9 +293,8 @@ class TelegramBot:
             lines.append(f"决策：AI 自主实时{nxt}，今日调用 {ap.get('calls_today', 0)}/{ap.get('max_calls_per_day')}")
         elif ov.get("next_cycle_at"):
             lines.append(f"下一轮：{dt.datetime.fromtimestamp(ov['next_cycle_at'], self.svc.tz()):%H:%M}")
-        al, cap = ov.get("allocation", {}), ov.get("capital", {})
-        lines.append(f"资产：{', '.join(al.get('enabled', []))} · {'AI 自主分配' if al.get('mode') == 'ai' else '按目标配置'}"
-                     f" · 风险 {ov.get('risk_preset')}")
+        cap = ov.get("capital", {})
+        lines.append(self._assets_line(self.svc.settings.allocation) + f" · 风险 {ov.get('risk_preset')}")
         if cap.get("budget_usd") is not None:
             lines.append(f"AI 预算：已投入 ${cap['deployed_usd']:,.0f} / ${cap['budget_usd']:,.0f}")
         if cap.get("locked"):
@@ -442,19 +449,39 @@ class TelegramBot:
                               f"✅ 已解除 {asset} 锁定" if amt == 0 else f"✅ 已锁定 {amt:g} {asset}，AI 不会看到也不会使用")
             elif cmd == "/assets":
                 if not args:
-                    al = svc.settings.allocation
-                    self.send(f"可交易：{', '.join(al.enabled)}；分配：{'AI 自主' if al.mode == 'ai' else '按目标配置'}")
+                    self.send(self._assets_line(svc.settings.allocation))
                     return
-                if args[0].lower() in ("ai", "targets"):
-                    mode = args[0].lower()
+                word = args[0].lower()
+                if word in ("ai", "targets", "manual"):
+                    mode = "targets" if word == "manual" else word
                     self._guarded(lambda tok: svc.update_settings({"allocation": {"mode": mode}}, guard=True, confirm=tok),
-                                  f"✅ 分配方式：{'AI 自主分配' if mode == 'ai' else '按目标配置'}")
+                                  f"✅ 分配方式：{'AI 自主分配' if mode == 'ai' else '手动分配'}")
+                elif word in UNIVERSE_LABEL:
+                    self._guarded(lambda tok: svc.update_settings({"allocation": {"universe": word}}, guard=True, confirm=tok),
+                                  f"✅ AI 可交易范围：{UNIVERSE_LABEL[word]}")
+                elif word in ("block", "unblock"):
+                    toks = _token_args(args[1:])
+                    al = svc.settings.allocation
+                    blocked = ([*al.blocked, *toks] if word == "block" else [t for t in al.blocked if t not in toks])
+                    self._guarded(lambda tok: svc.update_settings({"allocation": {"blocked": blocked}}, guard=True, confirm=tok),
+                                  "✅ 黑名单已更新")
                 else:
-                    toks = [t for t in " ".join(args).replace("，", ",").replace(" ", ",").split(",") if t]
-                    svc.update_settings({"allocation": {"enabled": toks}}, guard=True)
-                    self.send(f"✅ 可交易资产：{', '.join(svc.settings.allocation.enabled)}")
+                    toks = _token_args(args)
+                    self._guarded(lambda tok: svc.update_settings({"allocation": {"enabled": toks}}, guard=True, confirm=tok),
+                                  f"✅ 可交易资产：{', '.join(toks)}")
         except (ValueError, TypeError) as e:
             self.send(f"⚠️ 没有生效：{e}")
+
+    @staticmethod
+    def _assets_line(al) -> str:
+        if al.mode == "targets":
+            return f"分配：手动分配（自动再平衡{'开，阈值 ' + format(al.rebalance_drift, '.0%') if al.auto_rebalance else '关'}）；可交易：{', '.join(al.enabled)}"
+        line = f"分配：AI 自主分配 · 范围 {UNIVERSE_LABEL[al.universe]}"
+        if al.universe == "whitelist":
+            line += f"：{', '.join(al.enabled)}"
+        elif al.blocked:
+            line += f" · 黑名单 {', '.join(al.blocked)}"
+        return line
 
     def _guarded(self, apply, done: str):
         """Run a settings change; a dangerous one is held until the owner taps 确认修改."""
@@ -497,7 +524,7 @@ class TelegramBot:
             mark = "" if abs(a - b) < 1e-6 else f"（原 {a:.1%}）"
             lines.append(f"· {tok} {b:.1%}{mark}")
         lines += [f"⚠️ {n}" for n in p["notes"]]
-        lines.append("\n应用后切换为「按目标配置」，之后的买入照常经过风控和审批。")
+        lines.append("\n应用后切换为「手动分配」，之后的买入照常经过风控和审批。")
         self.send("\n".join(lines), buttons=[[("✅ 应用", f"alloc_apply:{p['id']}"), ("放弃", f"alloc_drop:{p['id']}")]])
 
     def _safe(self, fn):

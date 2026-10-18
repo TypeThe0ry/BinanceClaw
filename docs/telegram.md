@@ -33,7 +33,7 @@
 | `/preset 名称` | 套用风险预设 |
 | `/budget 3000` · `/budget off` | 设置或取消 AI 投入预算 |
 | `/lock BTC 0.5` · `/lock BTC 0` | 锁定或解除锁定资产 |
-| `/assets BTC,ETH` · `/assets ai` · `/assets targets` | 选择可交易资产、切换分配方式 |
+| `/assets ai` · `/assets manual` · `/assets all\|whitelist\|blacklist` · `/assets BTC,ETH` · `/assets block DOGE` | 切换 AI 自主 / 手动分配、AI 可交易范围、白名单和黑名单 |
 | `/alloc 加 10% TON，从 BTC 里减` · `/alloc` | 让 AI 修改或生成目标配置，点按钮应用或放弃 |
 | `/new` | 开始新的对话 |
 

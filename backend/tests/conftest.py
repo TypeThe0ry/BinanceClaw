@@ -253,6 +253,8 @@ def svc(tmp_path):
     from binanceclaw.core.service import Service
     s = Service(data_dir=tmp_path, secrets=Secrets(binance_api_key="k", binance_api_secret="s"), client=FakeSpot(),
                 fclient=FakeFutures())
+    # most tests exercise the model's own plan; tests/test_universe.py covers rebalancing
+    s.settings_store.update({"allocation": {"auto_rebalance": False}})
     return s
 
 
