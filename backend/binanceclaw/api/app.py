@@ -386,6 +386,13 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         msgs = svc.earn.sweep()
         return {"ok": True, "message": "；".join(msgs) or "没有可申购的闲置资产"}
 
+    @app.get("/api/track-record", dependencies=auth)
+    def track_record():
+        try:
+            return svc.track.compute()
+        except ExchangeError as e:
+            raise HTTPException(502, str(e)) from e
+
     @app.get("/api/performance", dependencies=auth)
     def performance():
         try:

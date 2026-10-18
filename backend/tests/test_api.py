@@ -214,3 +214,10 @@ def test_legacy_session_cookie_rejected(client):
     legacy = TimestampSigner("x" * 64).sign("owner").decode()
     client.cookies.set("bclaw_session", legacy)
     assert client.get("/api/overview").status_code == 401
+
+
+def test_track_record_api(client):
+    assert client.get("/api/track-record").status_code == 401
+    client.post("/api/auth/login", json={"password": "correct-horse-1"})
+    r = client.get("/api/track-record")
+    assert r.status_code == 200 and r.json()["trades"] == 0 and r.json()["24h"]["win_rate"] is None

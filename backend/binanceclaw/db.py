@@ -34,6 +34,7 @@ class Cycle(SQLModel, table=True):
     error: str = ""
     duration_ms: int = 0
     usage: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    timing: dict = Field(default_factory=dict, sa_column=Column(JSON))   # ms per stage: market, account, model, execute
 
 
 class Order(SQLModel, table=True):
