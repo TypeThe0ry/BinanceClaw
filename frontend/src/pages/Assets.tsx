@@ -1,8 +1,8 @@
 import { AnimatePresence } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
-import { post, type Approval, type CycleRow, type Overview, type Performance } from "../api";
+import { post, type Approval, type CycleRow, type FuturesResp, type Overview, type Performance } from "../api";
 import { ApprovalRow } from "../components/ApprovalRow";
 import { Band, Change, Decision, Empty, FlashNum, Page, SectionHead, Seg, Side, Skeleton } from "../components/ui";
 import { CATEGORY_COLOR, ago, fmtPrice, token, usd, useApi, useTicker, useToast } from "../lib";
@@ -18,6 +18,110 @@ function NextIn({ at }: { at: number }) {
   return <span className="num">{s < 1 ? "进行中" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`}</span>;
 }
 
+const PICKED = "__picked";
+const isStable = (t: string) => t.startsWith("USD") || t === "FDUSD";
+
+/** 自选 first (by `weight`), then one section per Binance category, biggest first; empty sections are left out. */
+function sectionsOf<R>(rows: R[], picked: (r: R) => boolean, cat: (r: R) => string, weight: (r: R) => number) {
+  const mine = rows.filter(picked);
+  const rest = rows.filter((r) => !picked(r));
+  const groups = Object.entries(rest.reduce<Record<string, R[]>>((g, r) => ((g[cat(r)] ??= []).push(r), g), {}))
+    .map(([name, rs]) => ({ key: name, name, rows: rs, value: rs.reduce((x, r) => x + weight(r), 0) }))
+    // stablecoins and the uncategorised go last, like on binance.com
+    .sort((a, b) => Number(a.name === "稳定币" || a.name === "未分类") - Number(b.name === "稳定币" || b.name === "未分类")
+      || b.value - a.value || a.name.localeCompare(b.name));
+  return [...(mine.length ? [{ key: PICKED, name: "自选", rows: mine, value: mine.reduce((x, r) => x + weight(r), 0) }] : []), ...groups];
+}
+
+/** A section's header row; click to fold it. */
+function GroupRow({ name, n, open, onToggle, cells, span }:
+  { name: string; n: number; open: boolean; onToggle: () => void; cells: ReactNode; span: number }) {
+  return (
+    <tr className="cursor-pointer border-b border-line bg-raise hover:bg-hover" onClick={onToggle} aria-expanded={open}>
+      <td className="td font-semibold" colSpan={span}>
+        <span className={`mr-1.5 inline-block text-fg-3 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+        {name} <span className="text-[12px] font-normal text-fg-3">{n}</span>
+        {name === "自选" && <span className="ml-2 text-[12px] font-normal text-fg-3">AI 持仓与目标</span>}
+      </td>
+      {cells}
+    </tr>
+  );
+}
+
+interface FMarket { token: string; symbol: string; price: number | null; change_pct: number | null; quote_volume: number; enabled: boolean }
+
+/** Futures tab: the AI's open positions first (自选), then the contracts it may trade, by Binance category. */
+function FuturesAssets({ o, bcat, collapsed, fold }:
+  { o: Overview | null; bcat: (t: string) => string; collapsed: Set<string>; fold: (k: string) => void }) {
+  const fut = useApi<FuturesResp>("/futures", { poll: 10000, kinds: ["futures", "settings", "paper_reset"] });
+  const syms = o?.futures?.symbols ?? [];
+  const mk = useApi<FMarket[]>(syms.length ? `/futures/markets?limit=${Math.max(syms.length, 1)}` : null, { poll: 60000, kinds: ["settings"] });
+  const f = fut.data;
+  if (!f) return fut.error ? <Empty text={`合约数据读取失败：${fut.error}`} /> : <Skeleton className="mt-3 h-32" />;
+  const held = new Set(f.positions.map((p) => token(p.symbol)));
+  const markets = (mk.data ?? []).filter((m) => m.enabled && !held.has(m.token));
+  const open = !collapsed.has(`futures:${PICKED}`);
+  const groups = sectionsOf(markets, () => false, (m) => bcat(m.token), (m) => m.quote_volume || 0);
+  const num = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (
+    <>
+      <dl className="mb-3 grid grid-cols-2 gap-y-3 text-[13px] sm:grid-cols-4">
+        <div><dt className="text-fg-3">合约权益</dt><dd className="num mt-1 text-[14px]">{num(f.equity)}</dd></div>
+        <div><dt className="text-fg-3">保证金占用</dt><dd className="num mt-1 text-[14px]">{num(f.margin_used)}</dd></div>
+        <div><dt className="text-fg-3">未实现盈亏</dt><dd className={`num mt-1 text-[14px] ${f.unrealized >= 0 ? "text-up" : "text-down"}`}>{f.unrealized >= 0 ? "+" : ""}{num(f.unrealized)}</dd></div>
+        <div><dt className="text-fg-3">已实现盈亏</dt><dd className={`num mt-1 text-[14px] ${f.realized >= 0 ? "text-up" : "text-down"}`}>{f.realized >= 0 ? "+" : ""}{num(f.realized)}</dd></div>
+      </dl>
+      {!f.enabled && !f.positions.length && <Empty text="合约交易未开启，可在设置里打开" />}
+      {(f.enabled || !!f.positions.length) && (
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px]">
+          <thead>
+            <tr className="border-b border-line">
+              <th className="th">合约</th><th className="th text-right">方向 / 杠杆</th><th className="th text-right">开仓价</th>
+              <th className="th text-right">最新价</th><th className="th text-right">保证金 / 成交额</th><th className="th text-right">盈亏 / 24h</th>
+            </tr>
+          </thead>
+          {!!f.positions.length && (
+          <tbody>
+            <GroupRow name="自选" n={f.positions.length} open={open} onToggle={() => fold(`futures:${PICKED}`)} span={4}
+              cells={<><td className="td num text-right font-medium">{num(f.margin_used)}</td>
+                <td className={`td num text-right ${f.unrealized >= 0 ? "text-up" : "text-down"}`}>{f.unrealized >= 0 ? "+" : ""}{num(f.unrealized)}</td></>} />
+            {open && f.positions.map((p) => (
+              <tr key={p.id} className="border-b border-line">
+                <td className="td"><span className="flex items-center gap-2"><Link to="/futures" className="font-semibold hover:underline">{token(p.symbol)}</Link>
+                  <span className="text-[12px] text-fg-3">{bcat(token(p.symbol))}</span></span></td>
+                <td className="td text-right"><span className={p.side === "LONG" ? "text-up" : "text-down"}>{p.side === "LONG" ? "多" : "空"}</span> <span className="num text-fg-2">{p.leverage}x</span></td>
+                <td className="td num text-right text-fg-2">{fmtPrice(p.entry)}</td>
+                <td className="td text-right"><FlashNum value={p.mark}>{fmtPrice(p.mark)}</FlashNum></td>
+                <td className="td num text-right">{num(p.margin)}</td>
+                <td className={`td num text-right ${p.upnl >= 0 ? "text-up" : "text-down"}`}>{p.upnl >= 0 ? "+" : ""}{num(p.upnl)}
+                  {p.roe != null && <span className="ml-1 text-[12px]">({(p.roe * 100).toFixed(1)}%)</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+          )}
+          {groups.map((g) => (
+          <tbody key={g.key}>
+            <GroupRow name={g.name} n={g.rows.length} open={!collapsed.has(`futures:${g.key}`)} onToggle={() => fold(`futures:${g.key}`)} span={6} cells={null} />
+            {!collapsed.has(`futures:${g.key}`) && g.rows.map((m) => (
+              <tr key={m.symbol} className="border-b border-line">
+                <td className="td"><span className="font-semibold">{m.token}</span> <span className="text-[12px] text-fg-3">永续 · 未持仓</span></td>
+                <td className="td text-right text-fg-3">—</td>
+                <td className="td text-right text-fg-3">—</td>
+                <td className="td text-right">{m.price ? fmtPrice(m.price) : "—"}</td>
+                <td className="td num text-right text-fg-2">{m.quote_volume ? usd(m.quote_volume, 0) : "—"}</td>
+                <td className="td text-right"><Change v={m.change_pct} /></td>
+              </tr>
+            ))}
+          </tbody>
+          ))}
+        </table>
+      </div>
+      )}
+    </>
+  );
+}
+
 export default function Assets() {
   const ov = useApi<Overview>("/overview", { poll: 30000 });
   const eq = useApi<{ t: number; total: number }[]>("/equity", { kinds: ["cycle"] });
@@ -27,8 +131,8 @@ export default function Assets() {
   const tick = useTicker();
   const toast = useToast();
   const [running, setRunning] = useState(false);
-  const [view, setView] = useState<"value" | "category">(() => {
-    try { return localStorage.getItem("bclaw:assets-view") === "category" ? "category" : "value"; } catch { return "value"; }
+  const [view, setView] = useState<"spot" | "futures">(() => {
+    try { return localStorage.getItem("bclaw:assets-view") === "futures" ? "futures" : "spot"; } catch { return "spot"; }
   });
   const o = ov.data;
 
@@ -52,14 +156,24 @@ export default function Assets() {
       target: target === undefined ? 0 : target, locked: o?.capital?.locked?.[t] ?? 0, pf: perf.data?.assets?.[t] };
   }).sort((a, b) => b.value - a.value || (b.target ?? 0) - (a.target ?? 0));
 
-  // Binance's own categories (display only; risk bands above still follow the target categories)
-  const bcat = (t: string) => t === "FUTURES" ? "合约" : o?.binance_categories?.[t]?.primary ?? "未分类";
+  // spot | futures as on Binance's own asset page; inside each, 自选 (what the AI holds or targets) first,
+  // then everything else grouped by Binance's categories (display only; risk bands follow the target categories)
+  const bcat = (t: string) => o?.binance_categories?.[t]?.primary ?? (isStable(t) ? "稳定币" : "未分类");
   const acctTotal = Object.values(acct).reduce((x, y) => x + y, 0);
-  const groups = Object.entries(rows.reduce<Record<string, typeof rows>>((g, r) => ((g[bcat(r.t)] ??= []).push(r), g), {}))
-    .map(([name, rs]) => ({ name, rows: rs, value: rs.reduce((x, r) => x + r.value, 0) }))
-    .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
-  const sections = view === "category" ? groups : [{ name: "", rows, value: 0 }];
-  function pickView(v: "value" | "category") {
+  const spotRows = rows.filter((r) => r.t !== "FUTURES");
+  const picked = (r: (typeof rows)[number]) => !isStable(r.t) && bcat(r.t) !== "稳定币"
+    && ((o?.values?.[r.t] ?? 0) >= 1 || Object.values(s).some((c) => r.t in c.tokens));
+  const spotSections = sectionsOf(spotRows, picked, (r) => bcat(r.t), (r) => r.value);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("bclaw:assets-collapsed") ?? "[]")); } catch { return new Set(); }
+  });
+  function fold(key: string) {
+    const next = new Set(collapsed);
+    if (!next.delete(key)) next.add(key);
+    setCollapsed(next);
+    try { localStorage.setItem("bclaw:assets-collapsed", JSON.stringify([...next])); } catch { /* private mode */ }
+  }
+  function pickView(v: "spot" | "futures") {
     setView(v);
     try { localStorage.setItem("bclaw:assets-view", v); } catch { /* private mode */ }
   }
@@ -145,8 +259,9 @@ export default function Assets() {
       <section>
         <SectionHead title="资产" doc="dashboard" right={
           <Seg id="assets-view" value={view} onChange={pickView}
-            items={[{ k: "value" as const, label: "按估值" }, { k: "category" as const, label: "按币安分类" }]} />
+            items={[{ k: "spot" as const, label: "现货" }, { k: "futures" as const, label: <>合约{!!o?.futures?.open && <span className="num ml-1 text-fg-3">{o.futures.open}</span>}</> }]} />
         } />
+        {view === "spot" ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px]">
             <thead>
@@ -156,17 +271,15 @@ export default function Assets() {
                 <th className="th text-right">占比 / 目标</th><th className="th w-[18%] pl-8">区间</th>
               </tr>
             </thead>
-            {sections.map((sec) => (
-            <tbody key={sec.name || "all"}>
-              {sec.name && (
-                <tr className="border-b border-line bg-raise">
-                  <td className="td font-semibold" colSpan={3}>{sec.name} <span className="text-[12px] font-normal text-fg-3">{sec.rows.length}</span></td>
+            {spotSections.map((sec) => (
+            <tbody key={sec.key}>
+              <GroupRow name={sec.name} n={sec.rows.length} open={!collapsed.has(`spot:${sec.key}`)} onToggle={() => fold(`spot:${sec.key}`)}
+                cells={<>
                   <td className="td num text-right font-medium">{sec.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="td num text-right text-fg-3" colSpan={3}>{acctTotal > 0 ? `${((sec.value / acctTotal) * 100).toFixed(1)}%` : ""}</td>
                   <td className="td" />
-                </tr>
-              )}
-              {sec.rows.map((r) => {
+                </>} span={3} />
+              {!collapsed.has(`spot:${sec.key}`) && sec.rows.map((r) => {
                 const band = s[r.cat]?.band ?? [0, 1];
                 const catW = o?.category_weights?.[r.cat] ?? 0;
                 const tv = Object.values(s[r.cat]?.tokens ?? {}).filter((x): x is number => x != null);
@@ -174,19 +287,19 @@ export default function Assets() {
                 return (
                   <tr key={r.t} className="border-b border-line">
                     <td className="td"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ background: CATEGORY_COLOR[r.cat] ?? "#8C8C8C" }} />
-                      {r.t === "FUTURES" ? <Link to="/futures" className="font-semibold hover:underline">合约权益</Link> : <b className="font-semibold">{r.t}</b>}
-                      {view === "value" && r.t !== "FUTURES" && <span className="text-[12px] text-fg-3" title={o?.binance_categories?.[r.t]?.tags.join(" · ")}>{bcat(r.t)}</span>}
+                      <b className="font-semibold">{r.t}</b>
+                      {sec.key === PICKED && <span className="text-[12px] text-fg-3" title={o?.binance_categories?.[r.t]?.tags.join(" · ")}>{bcat(r.t)}</span>}
                       {!!o?.earn?.positions?.[r.t]?.amount && <span className="tag bg-hover text-fg-2" title="活期理财">理财 {o.earn.positions[r.t].amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>}
                       {r.locked > 0 && <span className="tag bg-hover text-fg-3" title={`锁定 ${r.locked}`}>锁定 {r.locked}</span>}</span></td>
-                    <td className="td num text-right text-fg-2">{r.t === "FUTURES" ? "—" : r.qty ? r.qty.toLocaleString("en-US", { maximumFractionDigits: 8 }) : "0"}</td>
-                    <td className="td text-right"><FlashNum value={r.price}>{r.price && r.t !== "FUTURES" ? fmtPrice(r.price) : "—"}</FlashNum></td>
+                    <td className="td num text-right text-fg-2">{r.qty ? r.qty.toLocaleString("en-US", { maximumFractionDigits: 8 }) : "0"}</td>
+                    <td className="td text-right"><FlashNum value={r.price}>{r.price ? fmtPrice(r.price) : "—"}</FlashNum></td>
                     <td className="td num text-right">{r.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="td num text-right text-fg-2">{r.pf?.avg_cost ? fmtPrice(r.pf.avg_cost) : "—"}</td>
                     <td className="td num text-right">{r.pf?.unrealized != null && r.pf.qty > 1e-12
                       ? <span className={r.pf.unrealized >= 0 ? "text-up" : "text-down"}>{r.pf.unrealized >= 0 ? "+" : ""}{r.pf.unrealized.toFixed(2)}</span>
                       : <span className="text-fg-3">—</span>}</td>
-                    <td className="td num text-right"><span>{(r.w * 100).toFixed(1)}%</span>{r.t !== "FUTURES" && <span className="text-fg-3"> / {r.target == null ? "AI" : `${(r.target * 100).toFixed(0)}%`}</span>}</td>
-                    <td className="td pl-8">{r.t === "FUTURES" ? <span className="text-[12px] text-fg-3">保证金 + 浮动盈亏</span> : s[r.cat] ? <Band w={catW} lo={band[0]} hi={band[1]} target={catT ?? -1} color={CATEGORY_COLOR[r.cat] ?? "#8C8C8C"} /> : <span className="text-[12px] text-fg-3">不在管理范围</span>}</td>
+                    <td className="td num text-right"><span>{(r.w * 100).toFixed(1)}%</span><span className="text-fg-3"> / {r.target == null ? "AI" : `${(r.target * 100).toFixed(0)}%`}</span></td>
+                    <td className="td pl-8">{s[r.cat] ? <Band w={catW} lo={band[0]} hi={band[1]} target={catT ?? -1} color={CATEGORY_COLOR[r.cat] ?? "#8C8C8C"} /> : <span className="text-[12px] text-fg-3">不在管理范围</span>}</td>
                   </tr>
                 );
               })}
@@ -194,6 +307,7 @@ export default function Assets() {
             ))}
           </table>
         </div>
+        ) : <FuturesAssets o={o} bcat={bcat} collapsed={collapsed} fold={fold} />}
         {!o && <Skeleton className="mt-3 h-40" />}
       </section>
 

@@ -1153,7 +1153,8 @@ class Service:
                         "deployed_usd": round(self.deployed_usd(), 2)},
             "risk_preset": s.risk_preset,
             "limits": s.limits.model_dump(),
-            "futures": {"enabled": s.futures.enabled, "open": len([p for p in self.fbroker.open_rows() if p.status == "open"])},
+            "futures": {"enabled": s.futures.enabled, "symbols": list(s.futures.symbols),
+                        "open": len([p for p in self.fbroker.open_rows() if p.status == "open"])},
             "earn": {"enabled": s.earn.enabled, "positions": self.earn.positions() if s.earn.enabled else {}},
         }
         if pf:
@@ -1164,7 +1165,8 @@ class Service:
                 out.update(account_balances=acct.balances, account_values=acct.values(), account_total=acct.total())
             except ExchangeError:
                 pass
-        shown = {*out.get("account_values", {}), *out.get("values", {}), *(t for g in out["targets"].values() for t in g["tokens"])}
+        shown = {*out.get("account_values", {}), *out.get("values", {}), *(t for g in out["targets"].values() for t in g["tokens"]),
+                 *s.futures.symbols, *(p.symbol.removesuffix("USDT") for p in self.fbroker.open_rows())}
         out["binance_categories"] = {}
         for t in sorted(shown - {FUTURES_ASSET}):
             tags = self.tags_of(t)

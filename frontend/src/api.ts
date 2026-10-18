@@ -91,7 +91,7 @@ export interface Overview {
     max_asset_weight: number; auto_rebalance: boolean; rebalance_drift: number };
   capital?: { locked: Record<string, number>; budget_usd: number | null; deployed_usd: number };
   risk_preset?: string;
-  futures?: { enabled: boolean; open: number };
+  futures?: { enabled: boolean; open: number; symbols?: string[] };
   earn?: { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }> };
   binance_categories?: Record<string, { primary: string; tags: string[] }>;
 }
