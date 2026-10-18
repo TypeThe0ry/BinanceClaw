@@ -641,6 +641,11 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
+        # CSRF backstop on top of the SameSite=Strict cookie: browsers mark every request with
+        # Sec-Fetch-Site, so a write coming from another site (or another port on the same host) is refused.
+        if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("sec-fetch-site", "same-origin") not in (
+                "same-origin", "none"):
+            return JSONResponse({"detail": "跨站请求被拒绝"}, status_code=403)
         resp = await call_next(request)
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("X-Frame-Options", "DENY")

@@ -527,8 +527,10 @@ class Service:
     def risk_state(self, btc_change=None, anomaly=None) -> RiskState:
         orders = self.db.orders_for_day(self.today())
         buys = [o for o in orders if o.side == "BUY"]
+        auto_sells = [o for o in orders if o.side == "SELL" and o.via == "auto"]
         paused, reason = self.paused()
         return RiskState(today_orders=len(buys), today_notional=sum(o.quote_usd for o in buys),
+                         today_auto_sells=len(auto_sells), today_auto_sell_usd=sum(o.quote_usd for o in auto_sells),
                          deployed_usd=self.deployed_usd() + sum(p.margin for p in self.fbroker.open_rows()),
                          today_auto_notional=sum(o.quote_usd for o in buys if o.via == "auto"),
                          paused=paused, pause_reason=reason, btc_change_7d=btc_change, anomaly=anomaly,
@@ -1369,8 +1371,18 @@ class Service:
         b = gate.blockers(r, allow, need)
         return {"ok": not b, "rows": gate.check_restrictions(r, allow, need), "blockers": b}
 
+    def _void_approvals(self, why: str):
+        """Pending approvals were sized for the other mode's account: approving one after a switch
+        must never turn a paper idea into a live order (or the reverse)."""
+        for a in self.db.pending_approvals():
+            if self.db.claim_approval(a.id, "rejected", "system"):
+                self.db.update(Approval, a.id, result=why)
+                self.events.emit("approval", {"id": a.id, "status": "rejected"})
+
     def set_mode(self, mode: str, confirm: str = "", by: str = "web") -> tuple[bool, str]:
         if mode == "paper":
+            if self.settings.mode != "paper":
+                self._void_approvals("切换到模拟盘，已作废")
             self.settings_store.update({"mode": "paper"}, allow_mode_change=True)
             self._rebuild()
             self.events.emit("mode", {"mode": "paper", "by": by})
@@ -1382,6 +1394,8 @@ class Service:
         chk = self.live_check()
         if not chk["ok"]:
             return False, "无法开启实盘：" + "；".join(chk["blockers"])
+        if self.settings.mode != "live":
+            self._void_approvals("切换到实盘，已作废")
         self.settings_store.update({"mode": "live"}, allow_mode_change=True)
         self._rebuild()
         self.events.emit("mode", {"mode": "live", "by": by})
