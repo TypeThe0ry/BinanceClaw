@@ -25,10 +25,12 @@ from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
 from ..exchange.broker import Broker, OrderUnknown
 from ..exchange.futures_broker import FuturesBroker
+from ..exchange.stream import PriceStream
 from ..risk import gate
 from ..risk.engine import Portfolio, RiskState, evaluate, pause_trigger
 from ..risk.futures import OPEN_OPS, FuturesView, evaluate_futures, perp_symbol
 from . import categories as cats
+from .autopilot import Autopilot
 from .earn import EarnManager
 from .events import EventBus
 
@@ -48,6 +50,9 @@ class Service:
         self.client = client or BinanceSpot(self.secrets.binance_api_key, self.secrets.binance_api_secret)
         self.fclient = fclient or BinanceFutures(self.secrets.binance_api_key, self.secrets.binance_api_secret)
         self.earn = EarnManager(self)
+        self.stream = PriceStream()
+        self.autopilot = Autopilot(self)
+        self.events.on(self.autopilot.on_event)
         self._confirm_key = ((self.secrets.session_secret or os.urandom(32).hex()) + ":confirm").encode()
         self._cycle_lock = threading.Lock()
         self._exec_lock = threading.RLock()
@@ -227,6 +232,23 @@ class Service:
                 elif closes and abs(prices["BTC"] / closes[-1] - 1) > s.limits.price_deviation_anomaly:
                     anomaly = anomaly or "BTC 实时价与日线收盘价偏离过大"
         return prices, market, btc_change, anomaly
+
+    def live_prices(self, tokens) -> dict[str, float]:
+        """Latest price per token: the websocket stream when fresh, else REST (cached 10 s)."""
+        q = self.settings.quote
+        syms = [f"{t}{q}" for t in tokens]
+        got = self.stream.prices(syms)
+        missing = [x for x in syms if x not in got]
+        if missing:
+            cached = getattr(self, "_rest_px", (0.0, {}))
+            if time.time() - cached[0] > 10 or any(x not in cached[1] for x in missing):
+                try:
+                    cached = (time.time(), {**cached[1], **self.client.prices(missing)})
+                except ExchangeError:
+                    pass
+                self._rest_px = cached
+            got.update({x: cached[1][x] for x in missing if x in cached[1]})
+        return {x[: -len(q)]: p for x, p in got.items()}
 
     def token_tags(self) -> dict[str, list[str]]:
         """Binance's categories per asset (cached 6 h). Empty when binance.com is unreachable."""
@@ -450,15 +472,22 @@ class Service:
         return out
 
     # ------------------------------------------------------------------ cycle
-    def run_cycle(self, trigger: str = "schedule") -> Cycle | None:
+    def run_cycle(self, trigger: str = "schedule", why: str = "") -> Cycle | None:
         if not self._cycle_lock.acquire(blocking=False):
             return None
+        row = None
         try:
-            return self._run_cycle(trigger)
+            self.autopilot.started(trigger)
+            row = self._run_cycle(trigger, why)
+            return row
         finally:
+            try:
+                self.autopilot.finished(row.plan if row else None)
+            except Exception:
+                log.exception("could not book the next decision round")
             self._cycle_lock.release()
 
-    def _run_cycle(self, trigger: str) -> Cycle:
+    def _run_cycle(self, trigger: str, why: str = "") -> Cycle:
         s = self.settings
         c = self.db.add(Cycle(mode=s.mode, trigger=trigger, provider=s.provider.name, model=self.provider.model))
         self.events.emit("cycle_started", {"id": c.id})
@@ -509,6 +538,8 @@ class Service:
             context["account_total_usd"] = round(self.account_portfolio(prices).total(), 2)
         except ExchangeError:
             pass
+        if self.autopilot.auto:
+            context["autonomy"] = self.autopilot.context(trigger, why)
         c = self.db.update(Cycle, c.id, context=context)
 
         if st.paused:
@@ -520,6 +551,8 @@ class Service:
 
         prompt = build_user_prompt(context)
         self.db.update(Cycle, c.id, prompt=prompt)
+        if trigger != "manual" and self.autopilot.auto:
+            self.autopilot.count_call()
         try:
             comp = self.complete(SYSTEM, [{"role": "user", "content": prompt}], json_mode=True)
         except ProviderError as e:
@@ -734,6 +767,7 @@ class Service:
         for r in rows:
             out.append({
                 "time": dt.datetime.fromtimestamp(r.ts, self.tz()).strftime("%m-%d %H:%M"),
+                "trigger": r.trigger,
                 "summary": r.summary[:300],
                 "actions": [{"side": x.get("side") or x.get("op"), "symbol": x.get("symbol"),
                              "usd": x.get("approved_usd", x.get("margin")),
@@ -1031,6 +1065,7 @@ class Service:
             "mode": s.mode, "paused": paused, "pause_reason": reason, "error": err,
             "provider": {"name": s.provider.name, "model": self.provider.model},
             "next_cycle_at": self.next_cycle_at(), "cycle_minutes": s.schedule.cycle_minutes,
+            "autopilot": self.autopilot.status(),
             "today": {"orders": st.today_orders, "notional": st.today_notional,
                       "max_orders": s.limits.max_orders_per_day, "max_notional": s.limits.max_daily_notional_usd},
             "pending_approvals": len(self.db.pending_approvals()),
@@ -1225,6 +1260,7 @@ class Service:
     # ------------------------------------------------------------------ scheduler
     def start_scheduler(self):
         self.db.kv_set("started_at", time.time())
+        self.stream.start()
         threading.Thread(target=self._supervise, name="scheduler", daemon=True).start()
 
     def _supervise(self):
@@ -1241,10 +1277,14 @@ class Service:
         return rows[0].ts if rows else 0.0
 
     def watchdog(self):
-        """Alert once if no decision round has succeeded for 3 cycle intervals (while not paused)."""
-        limit = 3 * self.settings.schedule.cycle_minutes * 60 + 300
+        """Alert once if no decision round has succeeded for 3 cycle intervals (while not paused).
+        In auto mode the interval is the longest gap allowed, and a spent daily call budget is not a fault."""
+        sch = self.settings.schedule
+        limit = 3 * (sch.max_gap_minutes if self.autopilot.auto else sch.cycle_minutes) * 60 + 300
         last = self.last_good_cycle() or self.db.kv_get("started_at", time.time())
         stale = time.time() - last > limit and not self.paused()[0]
+        if self.autopilot.auto and self.autopilot.calls_left() <= 0:
+            stale = False
         alerted = self.db.kv_get("watchdog_alerted", False)
         if stale and not alerted:
             mins = int((time.time() - last) / 60)
@@ -1289,6 +1329,11 @@ class Service:
             except Exception:
                 log.exception("periodic task %s failed", name)
 
+    def _watch_stream(self):
+        s = self.settings
+        tokens = set(s.tradable_tokens()) | {"BTC"}
+        self.stream.watch(f"{t}{s.quote}" for t in tokens if t not in s.stables)
+
     def _loop(self):
         if not self.next_cycle_at() or self.next_cycle_at() < time.time():
             self.db.kv_set("next_cycle_at", time.time() + 20)
@@ -1302,9 +1347,12 @@ class Service:
                 self._every("earn", 600, self.earn.sweep)
                 self._every("watchdog", 300, self.watchdog)
                 self._every("backup", 3600, self.backup_db)
-                if time.time() >= self.next_cycle_at():
-                    self.db.kv_set("next_cycle_at", time.time() + self.settings.schedule.cycle_minutes * 60)
-                    self.run_cycle("schedule")
+                self._every("stream", 60, self._watch_stream)
+                due = self.autopilot.due()
+                if due:
+                    if due[0] == "schedule":
+                        self.db.kv_set("next_cycle_at", time.time() + self.settings.schedule.cycle_minutes * 60)
+                    self.run_cycle(*due)
                 hh, mm = map(int, self.settings.schedule.daily_report_time.split(":"))
                 now = self.now()
                 if (now.hour, now.minute) >= (hh, mm) and self.db.kv_get("last_report_day") != self.today():

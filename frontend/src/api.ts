@@ -57,6 +57,10 @@ export interface Overview {
   provider: { name: string; model: string };
   next_cycle_at: number;
   cycle_minutes: number;
+  autopilot?: {
+    decision_mode: "auto" | "fixed"; next_cycle_at: number; calls_today?: number; max_calls_per_day?: number;
+    wake_move_pct?: number; next_check_minutes?: number | null; ai_asked_minutes?: number | null; streaming?: boolean;
+  };
   today: { orders: number; notional: number; max_orders: number; max_notional: number };
   pending_approvals: number;
   btc_change_7d: number | null;

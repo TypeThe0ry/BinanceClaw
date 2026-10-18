@@ -46,6 +46,9 @@ class TradePlan(BaseModel):
     futures: list[FuturesAction] = Field(default_factory=list, max_length=5)
     alerts: list[AlertSpec] = Field(default_factory=list, max_length=3)
     confidence: float = Field(ge=0, le=1)
+    # Timing, used when schedule.decision_mode is "auto". The system clamps both to the owner's limits.
+    next_check_minutes: int | None = Field(default=None, ge=1, le=1440, description="多少分钟后再看一次（没有事件也会按时醒来）")
+    wake_move_pct: float | None = Field(default=None, gt=0, le=0.5, description="任一关注币种较本轮价格涨跌超过这个比例就提前唤醒你")
 
 
 JSON_SCHEMA = TradePlan.model_json_schema()

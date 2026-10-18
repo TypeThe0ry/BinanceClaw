@@ -25,7 +25,7 @@ def test_both_models_fail_means_no_trade(svc):
 def test_watchdog_alerts_once_and_rearms(svc):
     alerts = []
     svc.events.on(lambda k, d: alerts.append(d) if k == "alert" else None)
-    svc.db.kv_set("started_at", time.time() - 10 * 3600)
+    svc.db.kv_set("started_at", time.time() - 13 * 3600)
     svc.watchdog()
     svc.watchdog()
     assert len(alerts) == 1
@@ -37,7 +37,7 @@ def test_watchdog_alerts_once_and_rearms(svc):
 def test_watchdog_silent_while_paused(svc):
     alerts = []
     svc.events.on(lambda k, d: alerts.append(d) if k == "alert" else None)
-    svc.db.kv_set("started_at", time.time() - 10 * 3600)
+    svc.db.kv_set("started_at", time.time() - 13 * 3600)
     svc.pause("test")
     alerts.clear()
     svc.watchdog()

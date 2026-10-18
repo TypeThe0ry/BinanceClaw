@@ -11,7 +11,8 @@ interface SettingsResp {
     mode: "paper" | "live";
     categories: Record<string, Category>;
     limits: Record<string, number | boolean>;
-    schedule: { cycle_minutes: number; approval_timeout_minutes: number; daily_report_time: string; timezone: string };
+    schedule: { decision_mode?: "auto" | "fixed"; cycle_minutes: number; min_gap_minutes?: number; max_gap_minutes?: number;
+      max_calls_per_day?: number; move_trigger_pct?: number; approval_timeout_minutes: number; daily_report_time: string; timezone: string };
     provider: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number };
     investor_notes: string;
     live_gate_allow: string[];
@@ -121,6 +122,8 @@ export default function Settings() {
   }
   const lim = d.limits;
   const setLim = (k: string, v: number | boolean) => setD({ ...d, limits: { ...lim, [k]: v } });
+  const sch = d.schedule;
+  const setSch = (patch: Partial<typeof sch>) => setD({ ...d, schedule: { ...sch, ...patch } });
 
   return (
     <Page className="mx-auto flex max-w-[820px] flex-col gap-10">
@@ -385,7 +388,22 @@ export default function Settings() {
 
       <section>
         <SectionHead title="节奏" doc="decisions-and-risk" />
-        <Row label="决策间隔"><Num unit="分钟" value={d.schedule.cycle_minutes} min={b.cycle_minutes?.[0]} max={b.cycle_minutes?.[1]} onChange={(x) => setD({ ...d, schedule: { ...d.schedule, cycle_minutes: x } })} /></Row>
+        <Row label="决策方式">
+          <Seg id="decision" value={sch.decision_mode ?? "auto"} onChange={(k) => setSch({ decision_mode: k })}
+            items={[{ k: "auto" as const, label: "AI 自主实时" }, { k: "fixed" as const, label: "固定间隔" }]} />
+        </Row>
+        {(sch.decision_mode ?? "auto") === "auto" ? (
+          <>
+            <p className="py-2 text-[13px] text-fg-3">AI 自己决定下次什么时候看，价格大幅波动、触及它设的关键价位、合约止损止盈、交易成交或余额变化时会提前唤醒它。下面是它不能越过的边界；风控和审批照常生效。</p>
+            <Row label="AI 未指定时的复查间隔"><Num unit="分钟" value={sch.cycle_minutes} min={b.cycle_minutes?.[0]} max={b.cycle_minutes?.[1]} onChange={(x) => setSch({ cycle_minutes: x })} /></Row>
+            <Row label="两轮最短间隔"><Num unit="分钟" value={sch.min_gap_minutes ?? 5} min={b.min_gap_minutes?.[0]} max={b.min_gap_minutes?.[1]} onChange={(x) => setSch({ min_gap_minutes: x })} /></Row>
+            <Row label="最长不决策"><Num unit="分钟" value={sch.max_gap_minutes ?? 240} min={b.max_gap_minutes?.[0]} max={b.max_gap_minutes?.[1]} onChange={(x) => setSch({ max_gap_minutes: x })} /></Row>
+            <Row label="每日模型调用上限"><Num unit="次" value={sch.max_calls_per_day ?? 48} min={b.max_calls_per_day?.[0]} max={b.max_calls_per_day?.[1]} onChange={(x) => setSch({ max_calls_per_day: x })} /></Row>
+            <Row label="默认波动唤醒阈值"><Num unit="%" step={0.1} value={+((sch.move_trigger_pct ?? 0.02) * 100).toFixed(2)} onChange={(x) => setSch({ move_trigger_pct: x / 100 })} /></Row>
+          </>
+        ) : (
+          <Row label="决策间隔"><Num unit="分钟" value={sch.cycle_minutes} min={b.cycle_minutes?.[0]} max={b.cycle_minutes?.[1]} onChange={(x) => setSch({ cycle_minutes: x })} /></Row>
+        )}
         <Row label="审批有效期"><Num unit="分钟" value={d.schedule.approval_timeout_minutes} min={b.approval_timeout_minutes?.[0]} max={b.approval_timeout_minutes?.[1]} onChange={(x) => setD({ ...d, schedule: { ...d.schedule, approval_timeout_minutes: x } })} /></Row>
         <Row label={`日报时间 · ${d.schedule.timezone}`}>
           <input type="time" className="input num h-9 w-32" value={d.schedule.daily_report_time} onChange={(e) => setD({ ...d, schedule: { ...d.schedule, daily_report_time: e.target.value } })} />
