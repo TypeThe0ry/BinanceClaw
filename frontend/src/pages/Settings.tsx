@@ -3,6 +3,7 @@ import { useState } from "react";
 import { post } from "../api";
 import { Page, Seg, SectionHead, Skeleton, Spinner } from "../components/ui";
 import { useApi } from "../lib";
+import { setPref, useThemePref } from "../theme";
 import { type NotifyCfg, Num, type Routing, Row, SettingsNav, type Tier, useSettingsDraft } from "../components/settingsKit";
 
 interface EarnResp { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }>;
@@ -27,6 +28,7 @@ export default function Settings() {
   const live = useApi<LiveCheck>("/live/check");
   const devs = useApi<Device[]>("/devices");
   const earn = useApi<EarnResp>("/earn", { kinds: ["earn", "settings"] });
+  const themePref = useThemePref();
   const [phrase, setPhrase] = useState("");
   const [testing, setTesting] = useState(false);
   if (!data || !d) return <Skeleton className="h-96" />;
@@ -72,7 +74,7 @@ export default function Settings() {
                 </span>
                 {r.waivable && r.actual === true && (
                   <label className="flex items-center gap-1.5 text-[12.5px] text-fg-3">
-                    <input type="checkbox" className="h-3.5 w-3.5 accent-[#F0A23B]" checked={d.live_gate_allow.includes(r.field)}
+                    <input type="checkbox" className="h-3.5 w-3.5 accent-warn" checked={d.live_gate_allow.includes(r.field)}
                       onChange={async (e) => {
                         const next = e.target.checked ? [...d.live_gate_allow, r.field] : d.live_gate_allow.filter((x) => x !== r.field);
                         await save({ live_gate_allow: next }); live.reload();
@@ -251,6 +253,14 @@ export default function Settings() {
           </section>
         );
       })()}
+
+      <section>
+        <SectionHead title="外观" />
+        <Row label={<>主题<span className="mt-0.5 block text-[12px] text-fg-3">跟随系统时随电脑、手机的深浅色自动切换，只对这个浏览器生效</span></>}>
+          <Seg id="theme" value={themePref} onChange={setPref}
+            items={[{ k: "system", label: "跟随系统" }, { k: "light", label: "浅色" }, { k: "dark", label: "深色" }]} />
+        </Row>
+      </section>
 
       <section>
         <SectionHead title="连接" doc="getting-started" />

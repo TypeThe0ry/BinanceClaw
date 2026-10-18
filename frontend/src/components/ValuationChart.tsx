@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useApi } from "../lib";
+import { useColors } from "../theme";
 import { Skeleton } from "./ui";
 
 export type ValRange = "1d" | "7d" | "30d" | "90d" | "1y";
@@ -43,6 +44,7 @@ export function rangeChange(base: Base | undefined, current: number | null | und
 
 /** Home page: valuation line chart with 1D / 7D / 30D / 90D / 1Y tabs, change amount and percent. */
 export function ValuationChart({ current }: { current: number | null | undefined }) {
+  const col = useColors();
   const [rng, setRng] = useState<ValRange>(() => {
     try { const v = localStorage.getItem("bclaw:val-range"); return RANGES.some((r) => r.k === v) ? (v as ValRange) : "7d"; } catch { return "7d"; }
   });
@@ -56,7 +58,7 @@ export function ValuationChart({ current }: { current: number | null | undefined
   const pts = data ? [...data.points] : [];
   if (pts.length && current != null) pts.push({ t: Date.now() / 1000, total: current });
   const ch = rangeChange(data?.bases[rng], current);
-  const color = (ch?.diff ?? 0) >= 0 ? "#20B26C" : "#EF454A";
+  const color = (ch?.diff ?? 0) >= 0 ? col.up : col.down;
 
   return (
     <div className="w-full">
@@ -97,10 +99,10 @@ export function ValuationChart({ current }: { current: number | null | undefined
                 </linearGradient>
               </defs>
               <XAxis dataKey="t" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticksFor(rng, pts[0].t, pts[pts.length - 1].t)} tickFormatter={(t) => stamp(t, rng)}
-                tick={{ fill: "#5C5C5C", fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={40} />
+                tick={{ fill: col.fg3, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={40} />
               <YAxis domain={["dataMin", "dataMax"]} hide />
-              <Tooltip cursor={{ stroke: "#2E2E2E" }} isAnimationActive={false}
-                contentStyle={{ background: "#0D0D0D", border: "1px solid #2E2E2E", borderRadius: 8, fontSize: 12 }}
+              <Tooltip cursor={{ stroke: col.lineStrong }} isAnimationActive={false}
+                contentStyle={{ background: col.raise, border: `1px solid ${col.lineStrong}`, color: col.fg, borderRadius: 8, fontSize: 12 }}
                 labelFormatter={(t) => stamp(Number(t), rng, true)} formatter={(v) => [money(Number(v)), "估值"]} />
               <Area type="monotone" dataKey="total" stroke={color} strokeWidth={1.5} fill="url(#val-fill)" isAnimationActive={false} />
             </AreaChart>

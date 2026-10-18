@@ -1,8 +1,9 @@
-import { ColorType, CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "lightweight-charts";
+import { CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { post, type FPosition, type FuturesResp, type Kline } from "../api";
 import { Empty, Page, SectionHead, Seg, Side, Skeleton, Tabs } from "../components/ui";
+import { candleColors, chartTheme, useColors } from "../theme";
 import { clock, fmtPrice, token, usd, useApi, useToast } from "../lib";
 
 type Iv = "15m" | "1h" | "4h" | "1d";
@@ -13,39 +14,39 @@ const pnlCls = (v: number | null | undefined) => (v == null ? "text-fg-3" : v >=
 function PerpChart({ symbol, iv, pos }: { symbol: string; iv: Iv; pos?: FPosition }) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi>();
+  const col = useColors();
   const { data } = useApi<Kline[]>(`/futures/klines?symbol=${symbol}&interval=${iv}&limit=300`, { poll: 30000 });
 
   useEffect(() => {
     if (!el.current) return;
     const c = createChart(el.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: "#000000" }, textColor: "#5C5C5C", fontSize: 11, fontFamily: "Inter Variable, system-ui" },
-      grid: { vertLines: { color: "#111111" }, horzLines: { color: "#111111" } },
-      rightPriceScale: { borderColor: "#1F1F1F", scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: "#1F1F1F", timeVisible: iv !== "1d", rightOffset: 6 },
-      crosshair: { mode: CrosshairMode.Normal, vertLine: { color: "#5C5C5C", labelBackgroundColor: "#2E2E2E" }, horzLine: { color: "#5C5C5C", labelBackgroundColor: "#2E2E2E" } },
+      ...chartTheme(col),
+      layout: { ...chartTheme(col).layout, fontSize: 11, fontFamily: "Inter Variable, system-ui" },
+      rightPriceScale: { borderColor: col.line, scaleMargins: { top: 0.08, bottom: 0.08 } },
+      timeScale: { borderColor: col.line, timeVisible: iv !== "1d", rightOffset: 6 },
+      crosshair: { ...chartTheme(col).crosshair, mode: CrosshairMode.Normal },
     });
     chart.current = c;
     return () => c.remove();
-  }, [iv]);
+  }, [iv]); // theme changes go through applyOptions below, so the chart is not rebuilt
+
+  useEffect(() => { chart.current?.applyOptions(chartTheme(col)); }, [col]);
 
   useEffect(() => {
     const c = chart.current;
     if (!c || !data?.length) return;
-    const s = c.addCandlestickSeries({
-      upColor: "#20B26C", downColor: "#EF454A", borderUpColor: "#20B26C", borderDownColor: "#EF454A",
-      wickUpColor: "#20B26C", wickDownColor: "#EF454A", priceLineColor: "#8C8C8C",
-    });
+    const s = c.addCandlestickSeries(candleColors(col));
     s.setData(data.map((k) => ({ time: Math.floor(k.t) as UTCTimestamp, open: k.o, high: k.h, low: k.l, close: k.c })));
     if (pos) {
-      s.createPriceLine({ price: pos.entry, color: "#8C8C8C", lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: "开仓" });
-      s.createPriceLine({ price: pos.stop, color: "#EF454A", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "止损" });
-      if (pos.take_profit) s.createPriceLine({ price: pos.take_profit, color: "#20B26C", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "止盈" });
-      if (pos.liq_est) s.createPriceLine({ price: pos.liq_est, color: "#F0A23B", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "强平≈" });
+      s.createPriceLine({ price: pos.entry, color: col.fg2, lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: "开仓" });
+      s.createPriceLine({ price: pos.stop, color: col.down, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "止损" });
+      if (pos.take_profit) s.createPriceLine({ price: pos.take_profit, color: col.up, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "止盈" });
+      if (pos.liq_est) s.createPriceLine({ price: pos.liq_est, color: col.warn, lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "强平≈" });
     }
     c.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 120), to: data.length + 4 });
     return () => { try { c.removeSeries(s); } catch { /* disposed */ } };
-  }, [data, pos]);
+  }, [data, pos, col]);
 
   return <div ref={el} className="h-[340px] w-full md:h-[420px]" />;
 }

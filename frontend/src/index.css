@@ -2,7 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
+/* Theme tokens as "R G B" so Tailwind's /<alpha> modifiers work. Keep in sync with PALETTE in src/theme.ts. */
+:root, :root[data-theme="dark"] {
+  color-scheme: dark;
+  --c-bg: 0 0 0; --c-raise: 13 13 13; --c-hover: 20 20 20; --c-field: 18 18 18;
+  --c-line: 31 31 31; --c-line-strong: 46 46 46; --c-scroll: 38 38 38;
+  --c-fg: 255 255 255; --c-fg-2: 140 140 140; --c-fg-3: 92 92 92;
+  --c-up: 32 178 108; --c-down: 239 69 74; --c-warn: 240 162 59;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --c-bg: 255 255 255; --c-raise: 247 247 247; --c-hover: 238 238 238; --c-field: 243 243 243;
+  --c-line: 230 230 230; --c-line-strong: 221 221 221; --c-scroll: 210 210 210;
+  --c-fg: 10 10 10; --c-fg-2: 92 92 92; --c-fg-3: 138 138 138;
+  --c-up: 14 159 92; --c-down: 224 56 62; --c-warn: 199 125 18;
+}
 html, body, #root { min-height: 100%; }
 body {
   @apply bg-bg text-fg font-sans antialiased;
@@ -15,10 +29,10 @@ body {
   .btn {
     @apply inline-flex h-9 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-4 text-[14px] font-medium
            transition-[transform,background-color,opacity] duration-150 active:scale-[0.97]
-           disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40;
+           disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg/40;
   }
-  .btn-primary { @apply btn bg-fg text-bg hover:bg-[#E6E6E6]; }
-  .btn-secondary { @apply btn bg-hover text-fg hover:bg-[#1C1C1C]; }
+  .btn-primary { @apply btn bg-fg text-bg hover:bg-fg/90; }
+  .btn-secondary { @apply btn bg-hover text-fg hover:bg-line; }
   .btn-up { @apply btn bg-up text-white hover:brightness-110; }
   .btn-down { @apply btn bg-down text-white hover:brightness-110; }
   .btn-sm { @apply h-7 rounded-md px-3 text-[13px]; }
@@ -32,7 +46,7 @@ body {
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #262626; border-radius: 8px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--c-scroll)); border-radius: 8px; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; }
 

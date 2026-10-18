@@ -6,6 +6,18 @@ import { mockApi, renderPage, Status } from "../test/utils";
 import Settings from "./Settings";
 
 describe("Settings page (设置)", () => {
+  it("switches the theme from 外观 and remembers it in this browser", async () => {
+    mockSettings();
+    renderPage(<Settings />);
+    await userEvent.click(await screen.findByRole("button", { name: "浅色" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("bclaw:theme")).toBe("light");
+    await userEvent.click(screen.getByRole("button", { name: "深色" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    await userEvent.click(screen.getByRole("button", { name: "跟随系统" }));
+    expect(localStorage.getItem("bclaw:theme")).toBeNull();
+  });
+
   it("only enables going live once the checks pass and the confirm phrase matches", async () => {
     const api = mockSettings({ extra: { "POST /mode": { ok: true, message: "已切换到实盘" } } });
     renderPage(<Settings />);
