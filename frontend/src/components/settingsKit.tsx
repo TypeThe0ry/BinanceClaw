@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type Category } from "../api";
 import { useApi, useToast } from "../lib";
+import { SettingsJump } from "./SettingsJump";
 
 /**
  * Shared plumbing for the two settings pages: 设置 (system: connections, models, pacing, earn, devices) and
@@ -69,7 +70,7 @@ export type SettingsDoc = SettingsResp["settings"];
 
 export function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex min-h-[52px] flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-line py-2.5">
+    <div data-setting className="flex min-h-[52px] flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-line py-2.5">
       <span className="text-[14px] text-fg-2">{label}</span>
       <div className="flex items-center gap-2">{children}</div>
     </div>
@@ -103,19 +104,22 @@ const PAGES = [
   { to: "/config", label: "配置", hint: "投资：AI 怎么分配、目标比例、资金、风控与合约" },
 ];
 
-/** Page title that doubles as the switch between 设置 and 配置. */
+/** Page title that doubles as the switch between 设置 and 配置, followed by the search / category bar. */
 export function SettingsNav({ current }: { current: "/settings" | "/config" }) {
   return (
-    <div>
-      <nav aria-label="设置与配置" className="flex items-baseline gap-5">
-        {PAGES.map((p) => (
-          <Link key={p.to} to={p.to} aria-current={p.to === current ? "page" : undefined}
-            className={`text-[20px] font-semibold transition-colors ${p.to === current ? "text-fg" : "text-fg-3 hover:text-fg-2"}`}>
-            {p.label}
-          </Link>
-        ))}
-      </nav>
-      <p className="mt-1 text-[13px] text-fg-3">{PAGES.find((p) => p.to === current)?.hint}</p>
-    </div>
+    <>
+      <div>
+        <nav aria-label="设置与配置" className="flex items-baseline gap-5">
+          {PAGES.map((p) => (
+            <Link key={p.to} to={p.to} aria-current={p.to === current ? "page" : undefined}
+              className={`text-[20px] font-semibold transition-colors ${p.to === current ? "text-fg" : "text-fg-3 hover:text-fg-2"}`}>
+              {p.label}
+            </Link>
+          ))}
+        </nav>
+        <p className="mt-1 text-[13px] text-fg-3">{PAGES.find((p) => p.to === current)?.hint}</p>
+      </div>
+      <SettingsJump current={current} />
+    </>
   );
 }
