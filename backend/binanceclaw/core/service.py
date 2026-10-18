@@ -463,7 +463,11 @@ class Service:
                          deployed_usd=self.deployed_usd() + sum(p.margin for p in self.fbroker.open_rows()),
                          today_auto_notional=sum(o.quote_usd for o in buys if o.via == "auto"),
                          paused=paused, pause_reason=reason, btc_change_7d=btc_change, anomaly=anomaly,
-                         halted=self.halted_symbols())
+                         halted=self.halted_symbols(), unattended=self.approval_free_active())
+
+    def approval_free_active(self) -> bool:
+        """免审批 right now (always on, or inside the owner's window in schedule.timezone)."""
+        return self.settings.approval_free.active(self.now())
 
     def halted_symbols(self) -> dict[str, str]:
         """Whitelisted pairs Binance is not trading right now ({symbol: status}). On a lookup
@@ -528,7 +532,7 @@ class Service:
         return FuturesView(settings=s, marks=marks, rules=rules, positions=positions, foreign=foreign,
                            spendable_usd=max(spendable, 0.0), margin_used=sum(p.margin for p in rows),
                            opens_today=len(opens), paused=st.paused, pause_reason=st.pause_reason,
-                           trigger=pause_trigger(s, st),
+                           trigger=pause_trigger(s, st), unattended=st.unattended,
                            budget_left=(budget - st.deployed_usd) if budget is not None else float("inf"))
 
     def futures_context(self, fv: FuturesView | None) -> dict:
@@ -636,6 +640,13 @@ class Service:
             log.exception("track record unavailable")
         if self.autopilot.auto:
             context["autonomy"] = self.autopilot.context(trigger, why)
+        if st.unattended:
+            af = s.approval_free
+            context["approval"] = {
+                "unattended": True,
+                "covers": ["现货买入"] + (["卖出"] if af.include_sell else []) + (["合约开仓"] if af.include_futures else []),
+                "note": "主人开启了免审批（例如在睡觉），covers 里本应等待批准的交易会在风控限额内直接执行，"
+                        "没有人复核；只提出你在无人看管时也愿意执行的方案"}
         t2 = lap("account_ms", t1)
         c = self.db.update(Cycle, c.id, context=context)
 
@@ -949,7 +960,8 @@ class Service:
             label = "模拟盘" if s.mode == "paper" else "实盘"
             msg = (f"[{label}] {'买入' if side == 'BUY' else '卖出'} {fill.qty:.8g} {symbol[: -len(s.quote)]} "
                    f"@ ${fill.avg_price:,.2f}，金额 ${abs(fill.quote_spent):,.2f}")
-            self.events.emit("order", {"id": o.id, "status": o.status, "text": msg, "via": via, "source": source})
+            self.events.emit("order", {"id": o.id, "status": o.status, "text": msg, "via": via, "source": source,
+                                       "unattended": any(c.name == "免审批" for c in v.checks)})
             return True, msg, o.id
 
     # ------------------------------------------------------------------ performance
@@ -1201,6 +1213,9 @@ class Service:
             "capital": {"locked": s.capital.locked, "budget_usd": s.capital.budget_usd,
                         "deployed_usd": round(self.deployed_usd(), 2)},
             "risk_preset": s.risk_preset,
+            "approval_free": {**s.approval_free.model_dump(), "active": st.unattended},
+            "strategy": s.strategy.style,
+            "outlook": s.outlook.model_dump(),
             "limits": s.limits.model_dump(),
             "futures": {"enabled": s.futures.enabled, "symbols": list(s.futures.symbols),
                         "open": len([p for p in self.fbroker.open_rows() if p.status == "open"])},

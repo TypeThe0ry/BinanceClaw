@@ -94,6 +94,8 @@ export interface Overview {
   futures?: { enabled: boolean; open: number; symbols?: string[] };
   earn?: { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }> };
   binance_categories?: Record<string, { primary: string; tags: string[] }>;
+  approval_free?: { mode: "off" | "always" | "window"; start: string; end: string; active: boolean };
+  strategy?: "short" | "medium" | "long";
 }
 
 export interface PerfAsset { qty: number; avg_cost: number | null; cost: number; value: number | null; price: number | null;

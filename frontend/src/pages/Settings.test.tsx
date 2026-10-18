@@ -27,6 +27,9 @@ function settingsResp(over: Record<string, unknown> = {}) {
         max_loss_per_trade_usd: 50, max_stop_distance: 0.05, allow_short: false, auto_open: false,
         auto_open_max_margin_usd: 20, max_opens_per_day: 3 },
       earn: { enabled: true, auto_all: true, assets: ["USDT"], keep_liquid_usd: 100, min_move_usd: 10 },
+      approval_free: { mode: "off", start: "00:00", end: "08:00", include_sell: false, include_futures: false },
+      strategy: { style: "medium" },
+      outlook: { market: 0, assets: {}, note: "" },
       ...over,
     },
     presets: {},
@@ -164,7 +167,7 @@ describe("Settings page", () => {
     await screen.findByText("资金管理", { selector: "h2" });
     await userEvent.type(screen.getByPlaceholderText("BTC"), "bnb");
     await userEvent.type(screen.getByPlaceholderText("数量"), "1.5");
-    await userEvent.click(screen.getByRole("button", { name: "添加" }));
+    await userEvent.click(within(section("资金管理")).getByRole("button", { name: "添加" }));
     expect(screen.getByText("BNB")).toBeInTheDocument();
     await userEvent.click(within(section("资金管理")).getByRole("button", { name: "保存" }));
 
@@ -346,5 +349,36 @@ describe("Settings page", () => {
     await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
     expect(api.find("PUT", "/settings")[0].body).toEqual({ notify: { ...notify, mode: "digest",
       types: { approval: true, trade: false, earn: true }, quiet: { enabled: true, start: "23:00", end: "08:00" } } });
+  });
+
+  it("sets approval-free hours and saves the window", async () => {
+    const api = mockSettings();
+    renderPage(<Settings />);
+    await screen.findByText("免审批", { selector: "h2" });
+    const sec = section("免审批");
+    expect(within(sec).queryByLabelText("免审批开始")).not.toBeInTheDocument();
+    await userEvent.click(within(sec).getByRole("button", { name: "按时段" }));
+    const start = within(sec).getByLabelText("免审批开始");
+    await userEvent.clear(start);
+    await userEvent.type(start, "23:30");
+    await userEvent.click(within(sec).getByRole("checkbox", { name: "也包含卖出" }));
+    await userEvent.click(within(sec).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")[0]?.body).toEqual({
+      approval_free: { mode: "window", start: "23:30", end: "08:00", include_sell: true, include_futures: false } }));
+  });
+
+  it("saves trading style and the owner's views", async () => {
+    const api = mockSettings();
+    renderPage(<Settings />);
+    await screen.findByText("交易风格与观点", { selector: "h2" });
+    const sec = section("交易风格与观点");
+    await userEvent.click(within(sec).getByRole("button", { name: "长期" }));
+    await userEvent.click(within(within(sec).getByRole("radiogroup", { name: "整体看法" })).getByRole("radio", { name: "偏空" }));
+    await userEvent.type(within(sec).getByPlaceholderText("ETH"), "eth{enter}");
+    await userEvent.click(within(within(sec).getByRole("radiogroup", { name: "ETH 看法" })).getByRole("radio", { name: "强烈看多" }));
+    await userEvent.type(within(sec).getByLabelText("我的观点"), "等回调");
+    await userEvent.click(within(sec).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")[0]?.body).toEqual({
+      strategy: { style: "long" }, outlook: { market: -1, assets: { ETH: 2 }, note: "等回调" } }));
   });
 });
