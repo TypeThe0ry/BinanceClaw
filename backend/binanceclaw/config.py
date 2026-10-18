@@ -436,6 +436,27 @@ def dangerous_changes(old: Settings, new: Settings) -> list[dict]:
     return out
 
 
+# Settings the AI reads (or the risk engine applies to its plans) when it decides. After a person changes
+# one, they are offered a fresh manual round so the AI adapts now instead of at its next check-in.
+DECISION_FIELDS: dict[str, str] = {
+    "categories": "目标配置",
+    "investor_notes": "投资备注",
+    "allocation": "资产分配",
+    "capital": "资金与预算",
+    "limits": "风控限额",
+    "futures": "合约",
+    "earn": "理财",
+    "stables": "稳定币列表",
+    "provider": "AI 模型",
+}
+
+
+def decision_changes(old: Settings, new: Settings) -> list[str]:
+    """Labels of the decision-relevant setting groups that differ between the two."""
+    a, b = old.model_dump(mode="json"), new.model_dump(mode="json")
+    return [label for k, label in DECISION_FIELDS.items() if a.get(k) != b.get(k)]
+
+
 class ConfirmationRequired(Exception):
     """A settings change touches dangerous fields and was sent without a valid confirmation token."""
 

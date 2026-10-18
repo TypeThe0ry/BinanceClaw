@@ -19,7 +19,7 @@ from ..brain import allocation as alloc
 from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
-from ..config import DATA_DIR, ConfirmationRequired, Secrets, SettingsStore, dangerous_changes
+from ..config import DATA_DIR, ConfirmationRequired, Secrets, SettingsStore, dangerous_changes, decision_changes
 from ..db import Approval, ChatMessage, Cycle, Database, FuturesPosition, FuturesTrade, Order, PriceAlert, Report
 from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
@@ -169,6 +169,13 @@ class Service:
         self._rebuild()
         self.events.emit("settings", {"mode": s.mode})
         return s
+
+    def rerun_offer(self, before) -> list[str]:
+        """What changed since ``before`` that the AI should adapt to, for the "run a new round now?" prompt.
+        Empty when nothing decision-relevant changed or the bot is paused (a round would only be skipped)."""
+        if self.paused()[0]:
+            return []
+        return decision_changes(before, self.settings_store.get())
 
     def _confirm_sig(self, changes: list[dict], exp: int) -> str:
         msg = json.dumps(changes, sort_keys=True, ensure_ascii=False, default=str) + f"|{exp}"

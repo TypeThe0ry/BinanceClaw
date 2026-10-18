@@ -457,10 +457,13 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
 
     @app.put("/api/settings", dependencies=auth)
     def put_settings(patch: dict, request: Request):
+        before = svc.settings_store.get()
         try:
-            return svc.update_settings(patch, guard=True, confirm=request.headers.get(CONFIRM_HEADER, "")).model_dump()
+            s = svc.update_settings(patch, guard=True, confirm=request.headers.get(CONFIRM_HEADER, ""))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+        # "rerun": decision-relevant groups that changed; the client offers to run a manual round now
+        return {**s.model_dump(), "rerun": svc.rerun_offer(before)}
 
     @app.get("/api/allocation/proposal", dependencies=auth)
     def allocation_proposal():
@@ -477,17 +480,21 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/allocation/resolve", dependencies=auth)
     def allocation_resolve(body: AllocResolveIn):
+        before = svc.settings_store.get()
         try:
-            return svc.resolve_allocation(body.id, body.apply, "web")
+            p = svc.resolve_allocation(body.id, body.apply, "web")
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+        return {**p, "rerun": svc.rerun_offer(before)}
 
     @app.post("/api/risk-preset", dependencies=auth)
     def risk_preset(body: PresetIn, request: Request):
+        before = svc.settings_store.get()
         try:
-            return svc.apply_preset(body.name, guard=True, confirm=request.headers.get(CONFIRM_HEADER, "")).model_dump()
+            s = svc.apply_preset(body.name, guard=True, confirm=request.headers.get(CONFIRM_HEADER, ""))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+        return {**s.model_dump(), "rerun": svc.rerun_offer(before)}
 
     @app.post("/api/providers/test", dependencies=auth)
     def test_provider():

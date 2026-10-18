@@ -1,6 +1,7 @@
-import { Warning } from "@phosphor-icons/react";
+import { Brain, Warning } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { setConfirmer, type DangerChange } from "../api";
+import { post, setConfirmer, setRerunOfferer, type DangerChange } from "../api";
+import { useToast } from "../lib";
 
 const PCT = new Set(["limits.stable_floor", "limits.btc_7d_drop_pause", "limits.price_deviation_anomaly", "limits.fee_buffer_ratio",
   "allocation.max_asset_weight", "allocation.rebalance_drift", "futures.max_stop_distance"]);
@@ -18,14 +19,24 @@ export function fmtSetting(field: string, v: unknown): string {
   return e.length ? e.map(([k, x]) => `${k} ${fmtSetting("", x)}`).join("，") : "无";
 }
 
-/** Owns the confirmation dialog that api() opens when the server asks to confirm a dangerous change. */
+/**
+ * Owns the dialogs api() opens: the confirmation the server asks for before a dangerous change, and,
+ * after a save that affects future decisions, the offer to run a new round now so the AI adapts.
+ */
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<{ changes: DangerChange[]; done: (ok: boolean) => void } | null>(null);
+  const [rerun, setRerun] = useState<string[] | null>(null);
   const confirmBtn = useRef<HTMLButtonElement>(null);
+  const toast = useToast();
   useEffect(() => {
     setConfirmer((changes) => new Promise<boolean>((done) => setPending({ changes, done })));
-    return () => setConfirmer(null);
+    setRerunOfferer((changed) => setRerun(changed));
+    return () => { setConfirmer(null); setRerunOfferer(null); };
   }, []);
+  async function runNow() {
+    setRerun(null);
+    try { await post("/cycles/run"); toast("已开始新一轮决策"); } catch (e) { toast((e as Error).message, "err"); }
+  }
   useEffect(() => {
     if (!pending) return;
     confirmBtn.current?.focus();
@@ -60,6 +71,24 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             <div className="mt-5 flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => close(false)}>取消</button>
               <button ref={confirmBtn} className="btn-down" onClick={() => close(true)}>确认修改</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {rerun && !pending && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center" onMouseDown={() => setRerun(null)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="rerun-title" onMouseDown={(e) => e.stopPropagation()}
+            className="w-full max-w-[440px] rounded-xl border border-line-strong bg-raise p-5 shadow-2xl">
+            <h2 id="rerun-title" className="flex items-center gap-2 text-[16px] font-semibold">
+              <Brain size={18} weight="fill" />让 AI 按新设置重新跑一轮？
+            </h2>
+            <p className="mt-1.5 text-[14px] text-fg-2">
+              已保存。这些改动会影响 AI 之后的决策：{rerun.join("、")}。现在运行一轮，AI 会立刻按新设置调整；
+              否则等到它下一次复查时才生效。手动运行不占用每日调用额度。
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setRerun(null)}>稍后</button>
+              <button autoFocus className="btn-primary" onClick={runNow}>立即重跑</button>
             </div>
           </div>
         </div>

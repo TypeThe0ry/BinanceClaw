@@ -485,6 +485,7 @@ class TelegramBot:
 
     def _guarded(self, apply, done: str):
         """Run a settings change; a dangerous one is held until the owner taps 确认修改."""
+        before = self.svc.settings_store.get()
         try:
             apply("")
         except ConfirmationRequired as e:
@@ -496,7 +497,7 @@ class TelegramBot:
             lines += [f"· {c['label']}：{fmt_setting(c['old'])} → {fmt_setting(c['new'])}" for c in e.changes]
             self.send("\n".join(lines), buttons=[[("确认修改", f"cfm:{cid}"), ("取消", f"cfm_drop:{cid}")]])
             return
-        self.send(done)
+        self._done(done, before)
 
     def _resolve_confirm(self, cid: str, ok: bool):
         item = self._confirms.pop(cid, None)
@@ -507,6 +508,7 @@ class TelegramBot:
             self.send("已取消，设置没有改动。")
             return
         _, apply, done, token = item
+        before = self.svc.settings_store.get()
         try:
             apply(token)
         except ConfirmationRequired:
@@ -515,7 +517,29 @@ class TelegramBot:
         except (ValueError, TypeError) as e:
             self.send(f"⚠️ 没有生效：{e}")
             return
-        self.send(done)
+        self._done(done, before)
+
+    RERUN_TTL = 600
+
+    def _done(self, text: str, before):
+        """Report a saved change; if it affects decisions, offer a manual round so the AI adapts now."""
+        changed = self.svc.rerun_offer(before)
+        if not changed:
+            self.send(text)
+            return
+        self.send(f"{text}\n\n这会影响 AI 之后的决策（{'、'.join(changed)}）。要让 AI 现在按新设置重新跑一轮吗？",
+                  buttons=[[("🧠 立即重跑", f"rerun:{int(time.time())}"), ("稍后", "rerun_drop:")]])
+
+    def _rerun(self, ts: str):
+        if not ts.isdigit() or time.time() - int(ts) > self.RERUN_TTL:
+            self.send("这个提示已过期，需要的话发送 /run 运行一轮决策。")
+            return
+        if self.svc.paused()[0]:
+            self.send("机器人已暂停，本轮不会运行。恢复后发送 /run。")
+            return
+        self.send("🧠 正在按新设置运行一轮决策…")
+        threading.Thread(target=self._safe, args=(lambda: self.svc.run_cycle("manual") or self.send("上一轮还在运行"),),
+                         daemon=True).start()
 
     def _send_proposal(self, p: dict):
         lines = ["📐 目标配置提案（应用前不会生效）", p["summary"], ""]
@@ -572,10 +596,18 @@ class TelegramBot:
                         if kind in ("cfm", "cfm_drop"):
                             self._resolve_confirm(aid, kind == "cfm")
                             continue
+                        if kind in ("rerun", "rerun_drop"):
+                            if kind == "rerun":
+                                self._rerun(aid)
+                            continue
                         if kind in ("alloc_apply", "alloc_drop"):
+                            before = self.svc.settings_store.get()
                             try:
                                 self.svc.resolve_allocation(aid, kind == "alloc_apply", "telegram")
-                                self.send("✅ 已应用新的目标配置" if kind == "alloc_apply" else "已放弃这个配置提案")
+                                if kind == "alloc_apply":
+                                    self._done("✅ 已应用新的目标配置", before)
+                                else:
+                                    self.send("已放弃这个配置提案")
                             except ValueError as e:
                                 self.send(f"⚠️ {e}")
                             continue

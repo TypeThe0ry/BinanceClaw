@@ -289,4 +289,37 @@ describe("Settings page", () => {
     await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
     expect(api.find("PUT", "/settings")[0].body).toMatchObject({ allocation: { mode: "ai", universe: "blacklist", blocked: ["DOGE"] } });
   });
+  it("offers a new decision round after a change the AI should adapt to", async () => {
+    const api = mockSettings({ extra: {
+      "PUT /settings": { rerun: ["风控限额"] },
+      "POST /cycles/run": { ok: true },
+    } });
+    renderPage(<Settings />);
+    await screen.findByText("风控", { selector: "h2" });
+    await userEvent.click(within(section("风控")).getByRole("button", { name: "保存" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("风控限额");
+    await userEvent.click(within(dialog).getByRole("button", { name: "立即重跑" }));
+    await waitFor(() => expect(api.find("POST", "/cycles/run")).toHaveLength(1));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("does not offer a round when nothing decision-relevant changed", async () => {
+    mockSettings({ extra: { "PUT /settings": { rerun: [] } } });
+    renderPage(<Settings />);
+    await screen.findByText("风控", { selector: "h2" });
+    await userEvent.click(within(section("风控")).getByRole("button", { name: "保存" }));
+    await screen.findByText("已保存");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("can put the new round off", async () => {
+    const api = mockSettings({ extra: { "PUT /settings": { rerun: ["投资备注"] } } });
+    renderPage(<Settings />);
+    await screen.findByText("风控", { selector: "h2" });
+    await userEvent.click(within(section("风控")).getByRole("button", { name: "保存" }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "稍后" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.find("POST", "/cycles/run")).toHaveLength(0);
+  });
 });
