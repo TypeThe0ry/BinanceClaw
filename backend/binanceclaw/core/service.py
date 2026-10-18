@@ -628,7 +628,8 @@ class Service:
             row["reason_model"] = a["reason"]
             row["invalidation"] = a["invalidation"]
             if v.decision == "execute":
-                ok, msg, oid = self.execute(v.side, v.symbol, v.approved_usd, via="auto", cycle_id=c.id)
+                ok, msg, oid = self.execute(v.side, v.symbol, v.approved_usd, via="auto", cycle_id=c.id,
+                                             source=a.get("source", "ai"))
                 row["result"] = msg
                 row["order_id"] = oid
                 if not ok:
@@ -745,7 +746,7 @@ class Service:
                     msg = f"[{label}] {sym} 止损 {old:g} → {v.stop_loss:g}"
             except OrderUnknown as e:
                 self._ftrade(op, sym, row.id if row else "", 0, 0, 0, 0, 0, via, cid, cycle_id, {"error": str(e)}, "unknown")
-                self.events.emit("alert", {"text": f"{sym} 合约下单结果未知，稍后自动对账：{e}"})
+                self.events.emit("alert", {"text": f"{sym} 合约下单结果未知，稍后自动对账：{e}", "level": "critical"})
                 return False, str(e)
             except ExchangeError as e:
                 self._ftrade(op, sym, row.id if row else "", 0, 0, 0, 0, 0, via, cid, cycle_id, {"error": str(e)}, "failed")
@@ -853,7 +854,8 @@ class Service:
         return out
 
     # ------------------------------------------------------------------ execution
-    def execute(self, side: str, symbol: str, usd: float, via: str, cycle_id: str = "") -> tuple[bool, str, str]:
+    def execute(self, side: str, symbol: str, usd: float, via: str, cycle_id: str = "",
+                source: str = "") -> tuple[bool, str, str]:
         """Last line of defence: re-run every risk check on fresh data, then trade."""
         with self._exec_lock:
             s = self.settings
@@ -884,7 +886,8 @@ class Service:
                 o = self.db.add(Order(day=self.today(), mode=s.mode, symbol=symbol, side=side, quote_usd=amount,
                                       status="unknown", via=via, client_order_id=cid, cycle_id=cycle_id,
                                       detail={"error": str(e)}))
-                self.events.emit("alert", {"text": f"{symbol} 下单结果未知，已计入今日额度，稍后自动对账：{e}"})
+                self.events.emit("alert", {"text": f"{symbol} 下单结果未知，已计入今日额度，稍后自动对账：{e}",
+                                           "level": "critical"})
                 self.events.emit("order", {"id": o.id, "status": "unknown"})
                 return False, str(e), o.id
             except ExchangeError as e:
@@ -900,7 +903,7 @@ class Service:
             label = "模拟盘" if s.mode == "paper" else "实盘"
             msg = (f"[{label}] {'买入' if side == 'BUY' else '卖出'} {fill.qty:.8g} {symbol[: -len(s.quote)]} "
                    f"@ ${fill.avg_price:,.2f}，金额 ${abs(fill.quote_spent):,.2f}")
-            self.events.emit("order", {"id": o.id, "status": o.status, "text": msg, "via": via})
+            self.events.emit("order", {"id": o.id, "status": o.status, "text": msg, "via": via, "source": source})
             return True, msg, o.id
 
     # ------------------------------------------------------------------ performance
@@ -1272,7 +1275,7 @@ class Service:
                         "current": self._flat_targets(current), "proposed": self._flat_targets(cats),
                         "model": comp.model}
             self.db.kv_set("alloc_proposal", prop_row)
-            self.events.emit("allocation", {"id": prop_row["id"], "status": "pending"})
+            self.events.emit("allocation", {"id": prop_row["id"], "status": "pending", "source": source})
             return prop_row
 
     def allocation_proposal(self) -> dict | None:
