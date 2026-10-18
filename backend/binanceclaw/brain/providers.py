@@ -92,7 +92,9 @@ class ClaudeCodeProvider(Provider):
                "--no-session-persistence", "--system-prompt", system]
         if self.model:
             cmd += ["--model", self.model]
-        env = dict(os.environ)
+        # The CLI gets no exchange, Telegram or other provider credentials, even though it runs without tools
+        hidden = {f.upper() for f in type(self.secrets).model_fields} - {"CLAUDE_CODE_OAUTH_TOKEN"}
+        env = {k: v for k, v in os.environ.items() if k not in hidden}
         if self.secrets.claude_code_oauth_token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = self.secrets.claude_code_oauth_token
         t0 = time.time()

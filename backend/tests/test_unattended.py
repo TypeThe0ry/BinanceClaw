@@ -172,3 +172,22 @@ def test_api_overview_shows_state(client):  # noqa: F811
     client.post("/api/auth/login", json={"password": "correct-horse-1"})
     ov = client.get("/api/overview").json()
     assert ov["approval_free"]["active"] is False and ov["strategy"] == "medium"
+
+
+def test_unattended_sells_have_their_own_daily_cap(svc):
+    svc.update_settings({"limits": {"allow_sell": True, "max_orders_per_day": 3}})
+    free(svc, include_sell=True)
+    use(svc, plan(("BUY", "BTCUSDT", 800)))
+    assert svc.run_cycle("manual").risk[0]["decision"] == "execute"
+    replies = [plan(("SELL", "BTCUSDT", 20)) for _ in range(4)]
+    use(svc, *replies)
+    got = [svc.run_cycle("manual").risk[0]["decision"] for _ in range(4)]
+    assert got == ["execute", "execute", "execute", "approve"]     # the 4th waits for the owner
+
+
+def test_two_sells_in_one_plan_cannot_sell_more_than_held(svc):
+    from binanceclaw.risk.engine import Portfolio, RiskState, evaluate
+    s = svc.settings_store.update({"limits": {"allow_sell": True}})
+    pf = Portfolio({"USDT": 1000, "BTC": 0.01}, {"BTC": 50_000}, s)
+    v = evaluate([{"side": "SELL", "symbol": "BTCUSDT", "quote_usd": 400}] * 2, pf, RiskState())
+    assert [x.approved_usd for x in v] == [400, 100]          # not 400 + 400 of a $500 holding

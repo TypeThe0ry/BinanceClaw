@@ -19,7 +19,8 @@ account with money you can afford to lose.
 
 ## Hard limits (enforced in code)
 
-Symbol whitelist (spot, quote = USDT) · buy-only by default (sells always need a human) · per-order cap ·
+Symbol whitelist (spot, quote = USDT) · buy-only by default (sells need a human, unless the owner's 免审批 window includes sells; those
+unattended sells have their own daily count and amount caps) · per-order cap ·
 daily order count · daily notional · daily auto-execute total (prevents splitting a large order to dodge
 approval) · stablecoin floor · category band ceiling · max 3 actions per cycle · BTC 7-day drawdown pause ·
 pause after repeated market-data anomalies · kill switch. Every limit is clamped to `HARD_BOUNDS` in
@@ -51,7 +52,8 @@ carry those powers. Withdrawals, the IP whitelist, reading and spot trading can 
 ## Network
 
 The container listens on `127.0.0.1` by default. Prefer Tailscale for remote access. The dashboard uses
-a single argon2-hashed password, a signed httpOnly `SameSite=Strict` cookie and login rate-limiting;
+a single argon2-hashed password, a signed httpOnly `SameSite=Strict` cookie, login rate-limiting, and refuses writes a browser marks as
+cross-site (`Sec-Fetch-Site`); pending approvals are voided when switching between paper and live;
 if you expose it beyond a trusted network, put it behind HTTPS.
 
 ## Reporting

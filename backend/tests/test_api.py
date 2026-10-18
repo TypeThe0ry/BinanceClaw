@@ -235,3 +235,43 @@ def test_track_record_api(client):
     client.post("/api/auth/login", json={"password": "correct-horse-1"})
     r = client.get("/api/track-record")
     assert r.status_code == 200 and r.json()["trades"] == 0 and r.json()["24h"]["win_rate"] is None
+
+
+def test_cross_site_writes_are_refused(client):
+    client.post("/api/auth/login", json={"password": "correct-horse-1"})
+    for site in ("cross-site", "same-site"):
+        assert client.post("/api/control/kill", headers={"Sec-Fetch-Site": site}).status_code == 403
+    assert not client.svc.paused()[0]
+    assert client.get("/api/overview", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
+    assert client.post("/api/control/pause", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
+
+
+def test_switching_mode_voids_pending_approvals(client):
+    svc = client.svc
+    use(svc, plan(("BUY", "BTCUSDT", 600)))
+    aid = svc.run_cycle("manual").risk[0]["approval_id"]
+    svc.live_check = lambda features=None: {"ok": True, "rows": [], "blockers": []}
+    from binanceclaw.risk.gate import CONFIRM_PHRASE
+    assert svc.set_mode("live", CONFIRM_PHRASE)[0]
+    assert svc.resolve_approval(aid, True, "web") == (False, "这笔已处理或不存在")
+    assert not svc.db.orders_for_day(svc.today()) or all(o.mode == "paper" for o in svc.db.orders_for_day(svc.today()))
+
+
+def test_claude_cli_gets_no_other_credentials(monkeypatch, tmp_path):
+    import subprocess
+
+    from binanceclaw.brain.providers import ClaudeCodeProvider
+    from binanceclaw.config import ProviderSettings
+    monkeypatch.setenv("BINANCE_API_SECRET", "s3cret")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tg")
+    monkeypatch.setenv("CLAUDE_BIN", "/bin/true")
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw["env"])
+        return subprocess.CompletedProcess(cmd, 0, '{"result": "ok"}', "")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    p = ClaudeCodeProvider(ProviderSettings(), Secrets(claude_code_oauth_token="oauth"))
+    assert p.complete("sys", [{"role": "user", "content": "hi"}]).text == "ok"
+    assert "BINANCE_API_SECRET" not in seen and "TELEGRAM_BOT_TOKEN" not in seen
+    assert seen["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth"

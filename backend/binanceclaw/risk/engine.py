@@ -75,6 +75,8 @@ class RiskState:
     today_orders: int = 0
     today_notional: float = 0.0
     today_auto_notional: float = 0.0
+    today_auto_sells: int = 0          # sells executed without a person (免审批) today
+    today_auto_sell_usd: float = 0.0
     deployed_usd: float = 0.0          # net capital the AI has put to work so far (buys - sells, at cost)
     paused: bool = False
     pause_reason: str = ""
@@ -118,6 +120,9 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
     orders_left = lim.max_orders_per_day - st.today_orders
     notional_left = lim.max_daily_notional_usd - st.today_notional
     auto_left = lim.max_auto_daily_usd - st.today_auto_notional
+    # Unattended sells get their own daily count and amount, so 免审批 cannot sell off holdings round after round
+    sells_left = lim.max_orders_per_day - st.today_auto_sells
+    sell_usd_left = lim.max_daily_notional_usd - st.today_auto_sell_usd
     budget = s.capital.budget_usd
     budget_left = (budget - st.deployed_usd) if budget is not None else float("inf")
     allowed = set(s.symbols())
@@ -170,11 +175,17 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
                 fail("持仓", f"{token} 可卖市值 ${held:,.2f} 不足")
                 continue
             v.approved_usd = float(amt)
+            tok_val[token] = held - amt          # a second sell in the same plan sees what is left
             if st.unattended and s.approval_free.include_sell:
-                v.decision = "execute"
-                v.checks.append(Check("免审批", True, "主人开启了免审批（包含卖出）"))
-                v.reason = f"卖出：{UNATTENDED}"
-                continue
+                if sells_left > 0 and amt <= sell_usd_left:
+                    sells_left -= 1
+                    sell_usd_left -= amt
+                    v.decision = "execute"
+                    v.checks.append(Check("免审批", True, "主人开启了免审批（包含卖出）"))
+                    v.reason = f"卖出：{UNATTENDED}"
+                    continue
+                v.checks.append(Check("免审批卖出额度", False,
+                                      f"今日免审批卖出已达 {lim.max_orders_per_day} 笔或 ${lim.max_daily_notional_usd:g}"))
             v.decision = "approve"
             v.checks.append(Check("卖出需人工批准", True, "卖出不会自动执行（除非免审批包含卖出）"))
             v.reason = "卖出需要你批准"
