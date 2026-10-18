@@ -20,6 +20,7 @@ interface SettingsResp {
     capital: { locked: Record<string, number>; budget_usd: number | null };
     allocation: Alloc;
     provider_fallback: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number } | null;
+    model_routing: Routing;
     stables: string[];
     futures: FuturesCfg;
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
@@ -31,7 +32,12 @@ interface SettingsResp {
   providers: Record<string, { ok: boolean; message: string; default_model: string }>;
   bounds: Record<string, [number, number]>;
   confirm_phrase: string;
+  model_tasks: Record<string, string>;
+  tier_models: Record<string, Partial<Record<"fast" | "strong", string>>>;
 }
+type Tier = "fast" | "strong" | "main";
+interface Routing { enabled: boolean; tasks: Record<string, Tier>; models: Record<string, Partial<Record<"fast" | "strong", string>>> }
+const TIER_LABEL: Record<Tier, string> = { fast: "轻量", strong: "决策", main: "主模型" };
 interface Alloc {
   mode: "targets" | "ai"; universe: "all" | "whitelist" | "blacklist"; enabled: string[]; blocked: string[];
   max_asset_weight: number; ai_candidates: number; auto_rebalance: boolean; rebalance_drift: number;
@@ -148,6 +154,9 @@ export default function Settings() {
   const al = d.allocation;
   const setLim = (k: string, v: number | boolean) => setD({ ...d, limits: { ...lim, [k]: v } });
   const sch = d.schedule;
+  const rt: Routing = d.model_routing ?? { enabled: false, tasks: {}, models: {} };
+  const setRt = (patch: Partial<Routing>) => setD({ ...d, model_routing: { ...rt, ...patch } });
+  const pname = d.provider.name;
   const setSch = (patch: Partial<typeof sch>) => setD({ ...d, schedule: { ...sch, ...patch } });
 
   return (
@@ -216,9 +225,31 @@ export default function Settings() {
             {Object.entries(data.providers).filter(([k]) => k !== d.provider.name).map(([k, p]) => <option key={k} value={k}>{PROVIDER[k] ?? k}{p.ok ? "" : "（未配置）"}</option>)}
           </select>
         </Row>
+        <Row label="按任务分配模型">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={rt.enabled} aria-label="按任务分配模型"
+            onChange={(e) => setRt({ enabled: e.target.checked })} />
+        </Row>
+        {rt.enabled && (
+          <>
+            {(["fast", "strong"] as const).map((t) => (
+              <Row key={t} label={t === "fast" ? "轻量模型（更新、总结类）" : "决策模型（投资、决策类）"}>
+                <input className="input h-9 w-56" aria-label={`${TIER_LABEL[t]}模型`} value={rt.models[pname]?.[t] ?? ""}
+                  placeholder={data.tier_models?.[pname]?.[t] || "同主模型"}
+                  onChange={(e) => setRt({ models: { ...rt.models, [pname]: { ...rt.models[pname], [t]: e.target.value } } })} />
+              </Row>
+            ))}
+            {Object.entries(data.model_tasks ?? {}).map(([k, label]) => (
+              <Row key={k} label={label}>
+                <Seg id={`route-${k}`} value={rt.tasks[k] ?? "main"}
+                  items={(["fast", "strong", "main"] as const).map((t) => ({ k: t, label: TIER_LABEL[t] }))}
+                  onChange={(t) => setRt({ tasks: { ...rt.tasks, [k]: t } })} />
+              </Row>
+            ))}
+          </>
+        )}
         {!data.providers[d.provider.name]?.ok && <Row label="状态"><span className="text-[13px] text-warn">{data.providers[d.provider.name]?.message}</span></Row>}
         <div className="flex gap-2 pt-4">
-          <button className="btn-primary" onClick={() => save({ provider: d.provider, provider_fallback: d.provider_fallback })}>保存</button>
+          <button className="btn-primary" onClick={() => save({ provider: d.provider, provider_fallback: d.provider_fallback, model_routing: rt })}>保存</button>
           <button className="btn-secondary" onClick={test} disabled={testing}>{testing ? <Spinner /> : "连通测试"}</button>
         </div>
       </section>

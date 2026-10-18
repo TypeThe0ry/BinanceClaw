@@ -22,6 +22,7 @@ function settingsResp(over: Record<string, unknown> = {}) {
       allocation: { mode: "targets", universe: "all", enabled: ["BTC", "ETH"], blocked: [], max_asset_weight: 0.4,
         ai_candidates: 30, auto_rebalance: true, rebalance_drift: 0.05 },
       provider_fallback: null,
+      model_routing: { enabled: true, tasks: { decision: "strong", allocation: "strong", chat: "strong", report: "fast" }, models: {} },
       stables: ["USDT", "USDC"],
       futures: { enabled: false, symbols: ["BTCUSDT"], max_leverage: 3, max_position_margin_usd: 200, max_total_margin_usd: 500,
         max_loss_per_trade_usd: 50, max_stop_distance: 0.05, allow_short: false, auto_open: false,
@@ -36,6 +37,8 @@ function settingsResp(over: Record<string, unknown> = {}) {
     providers: { claude_code: { ok: true, message: "", default_model: "claude" }, openai: { ok: false, message: "缺少 API key", default_model: "gpt" } },
     bounds: { stable_floor: [0.05, 0.9], max_leverage: [1, 10] },
     confirm_phrase: PHRASE,
+    model_tasks: { decision: "投资决策", allocation: "配置提案", chat: "对话", report: "日报点评" },
+    tier_models: { claude_code: { fast: "claude-haiku-5-5", strong: "claude-opus-5-5" } },
   };
 }
 
@@ -321,5 +324,28 @@ describe("Settings page", () => {
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "稍后" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(api.find("POST", "/cycles/run")).toHaveLength(0);
+  });
+  it("maps each task to a model tier and saves the routing with the provider", async () => {
+    const api = mockSettings();
+    renderPage(<Settings />);
+    await screen.findByText("AI 模型", { selector: "h2" });
+    const fast = screen.getByLabelText("轻量模型");
+    expect(fast).toHaveAttribute("placeholder", "claude-haiku-5-5");
+    expect(screen.getByLabelText("决策模型")).toHaveAttribute("placeholder", "claude-opus-5-5");
+    await userEvent.type(fast, "claude-haiku-4-5");
+    await userEvent.click(within(rowOf("对话")).getByRole("button", { name: "轻量" }));
+    await userEvent.click(within(section("AI 模型")).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
+    expect(api.find("PUT", "/settings")[0].body).toMatchObject({
+      model_routing: { enabled: true, tasks: { chat: "fast", decision: "strong" }, models: { claude_code: { fast: "claude-haiku-4-5" } } },
+    });
+  });
+
+  it("hides the per-task choices when routing is off", async () => {
+    mockSettings({ settings: { model_routing: { enabled: false, tasks: {}, models: {} } } });
+    renderPage(<Settings />);
+    await screen.findByText("AI 模型", { selector: "h2" });
+    expect(screen.queryByLabelText("轻量模型")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "按任务分配模型" })).not.toBeChecked();
   });
 });
