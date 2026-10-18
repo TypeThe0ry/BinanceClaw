@@ -54,6 +54,20 @@ describe("Assets page", () => {
     expect(screen.queryByText("合约权益")).not.toBeInTheDocument();
   });
 
+  it("hides empty assets that are not targets until asked", async () => {
+    const ov = overview();
+    ov.account_values = { ...ov.account_values!, PEPE: 0 };
+    ov.targets = { ...ov.targets!, OTHER: { tokens: { SOL: null, ADA: 0.1 }, band: [0, 0.4] } };
+    mockApi({ ...routes, "GET /overview": ov });
+    renderPage(<Assets />);
+    await screen.findByText("自选", { selector: "td" });
+    expect(screen.getByText("ADA")).toBeInTheDocument();
+    expect(screen.queryByText("PEPE")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /显示 1 个零余额资产/ }));
+    expect(screen.getByText("PEPE")).toBeInTheDocument();
+    expect(localStorage.getItem("bclaw:assets-show-empty")).toBe("1");
+  });
+
   it("folds a section and remembers it", async () => {
     mockApi(routes);
     renderPage(<Assets />);
