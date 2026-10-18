@@ -1,15 +1,18 @@
-"""Simple Earn flexible for idle stablecoins.
+"""Simple Earn flexible (redeemable at any time) for idle balances.
 
-* sweep(): stablecoins beyond ``keep_liquid_usd`` (and beyond what pending approvals may need)
-  are subscribed to the flexible product;
-* ensure_liquid(): right before a buy / futures margin transfer, the shortfall is redeemed back
-  to spot. For the risk engine and the AI, stablecoins in Earn count as available.
+* sweep(): idle spot balances are subscribed to their flexible product. With ``auto_all`` (the
+  default) that is every asset Binance offers a flexible product for; otherwise only the chosen
+  stablecoins. Stablecoins keep ``keep_liquid_usd`` (plus what pending approvals may need) in spot;
+  locked amounts are never moved;
+* ensure_liquid(): right before a buy, a sell or a futures margin transfer, the shortfall is
+  redeemed back to spot. For the risk engine and the AI, balances in Earn count as available.
 
 Paper mode keeps Earn balances in the paper ledger under ``EARN:<ASSET>`` (no interest accrues).
 """
 from __future__ import annotations
 
 import logging
+import math
 import time
 
 from sqlmodel import select
@@ -58,18 +61,28 @@ class EarnManager:
         self._pos = (time.time(), out)
         return out
 
+    def covers(self, asset: str) -> bool:
+        """Whether BinanceClaw manages this asset's Earn balance (sweeps it, redeems it, counts it)."""
+        return self.cfg.enabled and (self.cfg.auto_all or asset in self.cfg.assets)
+
     def managed_amounts(self) -> dict[str, float]:
-        """Earn balances the AI may count as its own stablecoins (only when Earn is enabled)."""
+        """Earn balances the AI may count as available (only when Earn is enabled)."""
         if not self.cfg.enabled:
             return {}
-        return {a: p["amount"] for a, p in self.positions().items() if a in self.cfg.assets and p["amount"] > 0}
+        return {a: p["amount"] for a, p in self.positions().items() if self.covers(a) and p["amount"] > 0}
+
+    def _decimals(self, asset: str) -> int:
+        return 2 if asset in self.svc.settings.stables else 8
+
+    def _fmt(self, asset: str, amount: float) -> str:
+        return f"{amount:,.2f}" if self._decimals(asset) == 2 else f"{amount:.8f}".rstrip("0").rstrip(".")
 
     def product(self, asset: str) -> dict | None:
         cached = self._products.get(asset)
         if cached and time.time() - cached[0] < 3600:
             return cached[1]
         if not self.live:
-            p = {"productId": "paper", "canPurchase": True, "canRedeem": True, "minPurchaseAmount": "0.1",
+            p = {"productId": "paper", "canPurchase": True, "canRedeem": True, "minPurchaseAmount": "0",
                  "latestAnnualPercentageRate": None}
         else:
             rows = self.svc.client.earn_products(asset)
@@ -94,7 +107,8 @@ class EarnManager:
             s.commit()
 
     def subscribe(self, asset: str, amount: float, by: str = "system") -> str:
-        amount = int(amount * 100) / 100
+        q = 10 ** self._decimals(asset)
+        amount = int(amount * q) / q
         p = self.product(asset)
         if not p or not p.get("canPurchase", True) or p.get("isSoldOut"):
             raise ExchangeError(f"{asset} 活期理财当前不可申购")
@@ -105,13 +119,14 @@ class EarnManager:
         else:
             self._paper_move(asset, amount, True)
         self._pos = None
-        msg = f"{asset} {amount:,.2f} 已申购活期理财"
+        msg = f"{asset} {self._fmt(asset, amount)} 已申购活期理财"
         self.svc.events.emit("earn", {"asset": asset, "amount": amount, "dir": "subscribe", "text": msg, "by": by})
         return msg
 
     def redeem(self, asset: str, amount: float, by: str = "system") -> str:
         have = self.positions(0).get(asset, {})
-        amount = min(int(amount * 100 + 99) / 100, have.get("amount", 0.0))
+        q = 10 ** self._decimals(asset)
+        amount = min(math.ceil(amount * q - 1e-6) / q, have.get("amount", 0.0))
         if amount <= 0:
             raise ExchangeError(f"{asset} 没有可赎回的活期理财")
         if self.live:
@@ -120,7 +135,7 @@ class EarnManager:
         else:
             self._paper_move(asset, amount, False)
         self._pos = None
-        msg = f"{asset} {amount:,.2f} 已从活期理财赎回"
+        msg = f"{asset} {self._fmt(asset, amount)} 已从活期理财赎回"
         self.svc.events.emit("earn", {"asset": asset, "amount": amount, "dir": "redeem", "text": msg, "by": by})
         return msg
 
@@ -130,14 +145,19 @@ class EarnManager:
 
     def ensure_liquid(self, asset: str, need: float) -> None:
         """Redeem enough so that spot holds ``need`` of ``asset`` (beyond locked amounts)."""
-        if not self.cfg.enabled or asset not in self.cfg.assets:
+        if not self.covers(asset):
             return
         short = need - self._spot_free(asset)
         if short <= 0:
             return
-        if self.positions(0).get(asset, {}).get("amount", 0) <= 0:
+        have = self.positions(0).get(asset, {}).get("amount", 0)
+        if have <= 0:
             return
-        self.redeem(asset, max(short * 1.002, min(self.cfg.min_move_usd, short + 1)))
+        if asset in self.svc.settings.stables:
+            amount = max(short * 1.002, min(self.cfg.min_move_usd, short + 1))
+        else:
+            amount = min(short * 1.002, have)     # non-stables: no USD-sized rounding, just the shortfall
+        self.redeem(asset, amount)
         if self.live:
             for wait in (0.5, 1, 2, 3, 4):           # flexible redemptions normally land within seconds
                 if self._spot_free(asset) >= need:
@@ -146,18 +166,35 @@ class EarnManager:
             if self._spot_free(asset) < need:
                 raise ExchangeError(f"{asset} 已提交赎回，但资金尚未到账现货，稍后重试")
 
+    def candidates(self) -> list[str]:
+        """Assets sweep() looks at: everything held in spot (auto_all), or the chosen stablecoins."""
+        if not self.cfg.auto_all:
+            return list(self.cfg.assets)
+        return sorted(a for a in self.svc.spot_balances() if a.isalnum())
+
     def sweep(self) -> list[str]:
-        """Subscribe idle stablecoins beyond the liquidity buffer and pending needs."""
+        """Subscribe idle balances (beyond the stablecoin buffer and pending needs) to flexible Earn."""
         if not self.cfg.enabled:
             return []
+        s = self.svc.settings
         pending = sum(a.quote_usd for a in self.svc.db.pending_approvals() if a.side in ("BUY", "OPEN_LONG", "OPEN_SHORT"))
+        assets = self.candidates()
+        prices = self.svc.asset_prices([a for a in assets if a not in s.stables])
         msgs = []
-        for asset in self.cfg.assets:
-            reserve = self.cfg.keep_liquid_usd + (pending if asset == self.svc.settings.quote else 0)
-            excess = self._spot_free(asset) - reserve
-            if excess >= self.cfg.min_move_usd:
-                try:
-                    msgs.append(self.subscribe(asset, excess))
-                except ExchangeError as e:
-                    log.warning("earn subscribe %s failed: %s", asset, e)
+        for asset in assets:
+            stable = asset in s.stables
+            price = 1.0 if stable else prices.get(asset)
+            if not price:
+                continue                               # no USD price: can't tell whether it is worth moving
+            reserve = (self.cfg.keep_liquid_usd + (pending if asset == s.quote else 0)) if stable else 0.0
+            excess = self._spot_free(asset) - reserve / price
+            if excess * price < self.cfg.min_move_usd:
+                continue
+            try:
+                p = self.product(asset)
+                if not stable and (not p or not p.get("canPurchase", True) or p.get("isSoldOut")):
+                    continue                           # no subscribable flexible product: leave it in spot
+                msgs.append(self.subscribe(asset, excess))
+            except ExchangeError as e:
+                log.warning("earn subscribe %s failed: %s", asset, e)
         return msgs

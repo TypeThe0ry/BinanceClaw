@@ -6,12 +6,14 @@ import datetime as dt
 import json
 import logging
 import queue
+import secrets
 import threading
 import time
 
 import httpx
 from sqlmodel import desc, select
 
+from ..config import ConfirmationRequired
 from ..db import Approval, Cycle, Order
 from . import charts
 
@@ -42,6 +44,20 @@ HELP = """BinanceClaw 指令
 其他文字：直接和当前模型对话（只读，不能下单）"""
 
 
+def fmt_setting(v) -> str:
+    if v is None:
+        return "不限"
+    if isinstance(v, bool):
+        return "开启" if v else "关闭"
+    if isinstance(v, float):
+        return f"{v:g}"
+    if isinstance(v, list):
+        return "、".join(map(str, v)) or "无"
+    if isinstance(v, dict):
+        return "，".join(f"{k} {fmt_setting(x) if not isinstance(x, dict) else '…'}" for k, x in v.items()) or "无"
+    return str(v)
+
+
 class TelegramBot:
     def __init__(self, svc, token: str, chat_id: str):
         self.svc = svc
@@ -49,6 +65,7 @@ class TelegramBot:
         self.chat_id = int(chat_id)
         self.http = httpx.Client(timeout=40)
         self._outbox: queue.Queue = queue.Queue()
+        self._confirms: dict[str, tuple] = {}   # id -> (expires, apply(token), done text)
         # events are queued so a slow Telegram API never blocks trading code
         svc.events.on(lambda k, d: self._outbox.put((k, d)))
 
@@ -395,16 +412,16 @@ class TelegramBot:
                 if not args:
                     self.send(f"当前风险预设：{svc.settings.risk_preset}")
                     return
-                svc.apply_preset(args[0].lower())
-                self.send(f"✅ 已套用风险预设：{args[0].lower()}")
+                name = args[0].lower()
+                self._guarded(lambda tok: svc.apply_preset(name, guard=True, confirm=tok), f"✅ 已套用风险预设：{name}")
             elif cmd == "/budget":
                 if not args:
                     b = svc.settings.capital.budget_usd
                     self.send(f"AI 投入预算：{'不限' if b is None else f'${b:,.0f}'}，已投入 ${svc.deployed_usd():,.0f}")
                     return
                 val = None if args[0].lower() in ("off", "none", "不限") else float(args[0].replace(",", ""))
-                svc.update_settings({"capital": {"budget_usd": val}})
-                self.send("✅ 已取消 AI 投入预算" if val is None else f"✅ AI 投入预算设为 ${val:,.0f}")
+                self._guarded(lambda tok: svc.update_settings({"capital": {"budget_usd": val}}, guard=True, confirm=tok),
+                              "✅ 已取消 AI 投入预算" if val is None else f"✅ AI 投入预算设为 ${val:,.0f}")
             elif cmd == "/lock":
                 if len(args) < 2:
                     lk = svc.settings.capital.locked
@@ -413,22 +430,58 @@ class TelegramBot:
                 asset, amt = args[0].upper(), float(args[1].replace(",", ""))
                 locked = dict(svc.settings.capital.locked)
                 locked[asset] = amt
-                svc.update_settings({"capital": {"locked": {k: v for k, v in locked.items() if v > 0}}})
-                self.send(f"✅ 已解除 {asset} 锁定" if amt == 0 else f"✅ 已锁定 {amt:g} {asset}，AI 不会看到也不会使用")
+                patch = {"capital": {"locked": {k: v for k, v in locked.items() if v > 0}}}
+                self._guarded(lambda tok: svc.update_settings(patch, guard=True, confirm=tok),
+                              f"✅ 已解除 {asset} 锁定" if amt == 0 else f"✅ 已锁定 {amt:g} {asset}，AI 不会看到也不会使用")
             elif cmd == "/assets":
                 if not args:
                     al = svc.settings.allocation
                     self.send(f"可交易：{', '.join(al.enabled)}；分配：{'AI 自主' if al.mode == 'ai' else '按目标配置'}")
                     return
                 if args[0].lower() in ("ai", "targets"):
-                    svc.update_settings({"allocation": {"mode": args[0].lower()}})
-                    self.send(f"✅ 分配方式：{'AI 自主分配' if args[0].lower() == 'ai' else '按目标配置'}")
+                    mode = args[0].lower()
+                    self._guarded(lambda tok: svc.update_settings({"allocation": {"mode": mode}}, guard=True, confirm=tok),
+                                  f"✅ 分配方式：{'AI 自主分配' if mode == 'ai' else '按目标配置'}")
                 else:
                     toks = [t for t in " ".join(args).replace("，", ",").replace(" ", ",").split(",") if t]
-                    svc.update_settings({"allocation": {"enabled": toks}})
+                    svc.update_settings({"allocation": {"enabled": toks}}, guard=True)
                     self.send(f"✅ 可交易资产：{', '.join(svc.settings.allocation.enabled)}")
         except (ValueError, TypeError) as e:
             self.send(f"⚠️ 没有生效：{e}")
+
+    def _guarded(self, apply, done: str):
+        """Run a settings change; a dangerous one is held until the owner taps 确认修改."""
+        try:
+            apply("")
+        except ConfirmationRequired as e:
+            cid = secrets.token_hex(4)
+            now = time.time()
+            self._confirms = {k: v for k, v in self._confirms.items() if v[0] > now}
+            self._confirms[cid] = (now + 600, apply, done, e.token)
+            lines = ["⚠️ 这是危险设置，确认后才会生效："]
+            lines += [f"· {c['label']}：{fmt_setting(c['old'])} → {fmt_setting(c['new'])}" for c in e.changes]
+            self.send("\n".join(lines), buttons=[[("确认修改", f"cfm:{cid}"), ("取消", f"cfm_drop:{cid}")]])
+            return
+        self.send(done)
+
+    def _resolve_confirm(self, cid: str, ok: bool):
+        item = self._confirms.pop(cid, None)
+        if not item or item[0] < time.time():
+            self.send("这个确认已失效，请重新发送指令。")
+            return
+        if not ok:
+            self.send("已取消，设置没有改动。")
+            return
+        _, apply, done, token = item
+        try:
+            apply(token)
+        except ConfirmationRequired:
+            self.send("⚠️ 设置在确认前已经变化，没有生效，请重新发送指令。")
+            return
+        except (ValueError, TypeError) as e:
+            self.send(f"⚠️ 没有生效：{e}")
+            return
+        self.send(done)
 
     def _send_proposal(self, p: dict):
         lines = ["📐 目标配置提案（应用前不会生效）", p["summary"], ""]
@@ -482,6 +535,9 @@ class TelegramBot:
                             continue
                         kind, _, aid = cq.get("data", "").partition(":")
                         self.answer(cq["id"], "处理中…")
+                        if kind in ("cfm", "cfm_drop"):
+                            self._resolve_confirm(aid, kind == "cfm")
+                            continue
                         if kind in ("alloc_apply", "alloc_drop"):
                             try:
                                 self.svc.resolve_allocation(aid, kind == "alloc_apply", "telegram")

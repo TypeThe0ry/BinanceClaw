@@ -46,6 +46,11 @@ class FakeSpot:
     def all_tickers_24h(self):
         return {s: {"price": p, "change_pct": 0.01, "quote_volume": 1e6 * (len(s))} for s, p in self.prices_map.items()}
 
+    def asset_tags(self):
+        self._chk()
+        return {"BTC": ["Payments", "pow"], "ETH": ["Layer1_Layer2", "pos"], "SOL": ["Layer1_Layer2", "Solana", "pos"],
+                "TON": ["Layer1_Layer2"], "XYZ": ["Meme"]}
+
     def all_prices(self):
         return dict(self.prices_map)
 

@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { mockApi, renderPage } from "../test/utils";
+import { mockApi, renderPage, Status } from "../test/utils";
 import Settings from "./Settings";
 
 const PHRASE = "我确认开启实盘";
@@ -25,7 +25,7 @@ function settingsResp(over: Record<string, unknown> = {}) {
       futures: { enabled: false, symbols: ["BTCUSDT"], max_leverage: 3, max_position_margin_usd: 200, max_total_margin_usd: 500,
         max_loss_per_trade_usd: 50, max_stop_distance: 0.05, allow_short: false, auto_open: false,
         auto_open_max_margin_usd: 20, max_opens_per_day: 3 },
-      earn: { enabled: false, assets: ["USDT"], keep_liquid_usd: 100, min_move_usd: 10 },
+      earn: { enabled: true, auto_all: true, assets: ["USDT"], keep_liquid_usd: 100, min_move_usd: 10 },
       ...over,
     },
     presets: {},
@@ -73,7 +73,7 @@ describe("Settings page", () => {
     expect(goLive).toBeEnabled();
 
     await userEvent.click(goLive);
-    await waitFor(() => expect(api.find("POST", "/mode")).toEqual([{ method: "POST", path: "/mode", body: { mode: "live", confirm: PHRASE } }]));
+    await waitFor(() => expect(api.find("POST", "/mode")).toMatchObject([{ method: "POST", path: "/mode", body: { mode: "live", confirm: PHRASE } }]));
     expect(await screen.findByRole("status")).toHaveTextContent("已切换到实盘");
     expect(input).toHaveValue("");
   });
@@ -170,5 +170,59 @@ describe("Settings page", () => {
     await screen.findByText("连接", { selector: "h2" });
     expect(within(rowOf("币安 API")).getByText("已配置")).toBeInTheDocument();
     expect(within(rowOf("Telegram")).getByText("未配置")).toBeInTheDocument();
+  });
+
+  it("asks for a second confirmation before a dangerous change and resends with the token", async () => {
+    const change = { field: "limits.allow_sell", label: "允许卖出", old: true, new: false };
+    const api = mockSettings({ extra: {
+      "PUT /settings": (_b: unknown, h: Record<string, string>) => h["X-Confirm-Token"] === "tok"
+        ? { ok: true } : new Status(409, { detail: { message: "需要确认", changes: [change], confirm_token: "tok" } }),
+    } });
+    renderPage(<Settings />);
+    await screen.findByText("风控", { selector: "h2" });
+    await userEvent.click(within(rowOf("允许卖出")).getByRole("checkbox"));
+    await userEvent.click(within(section("风控")).getByRole("button", { name: "保存" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("允许卖出")).toBeInTheDocument();
+    expect(within(dialog).getByText("开启")).toHaveClass("line-through");
+    expect(within(dialog).getByText("关闭")).toBeInTheDocument();
+    expect(api.find("PUT", "/settings")).toHaveLength(1);
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认修改" }));
+
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(2));
+    expect(api.find("PUT", "/settings")[1].headers["X-Confirm-Token"]).toBe("tok");
+    expect(api.find("PUT", "/settings")[1].body).toEqual(api.find("PUT", "/settings")[0].body);
+    expect(await screen.findByRole("status")).toHaveTextContent("已保存");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("does nothing when the dangerous change is cancelled", async () => {
+    const change = { field: "earn.enabled", label: "理财自动申购", old: true, new: false };
+    const api = mockSettings({ extra: {
+      "PUT /settings": new Status(409, { detail: { message: "需要确认", changes: [change], confirm_token: "tok" } }),
+    } });
+    renderPage(<Settings />);
+    await screen.findByText("理财", { selector: "h2" });
+    await userEvent.click(screen.getByRole("checkbox", { name: "闲置资产自动申购活期" }));
+    await userEvent.click(within(section("理财")).getByRole("button", { name: "保存" }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "取消" }));
+    const toast = await screen.findByRole("status");
+    expect(toast).toHaveTextContent("已取消，设置没有改动");
+    expect(api.find("PUT", "/settings")).toHaveLength(1);
+  });
+
+  it("subscribes everything by default and offers stablecoins only when that is off", async () => {
+    const api = mockSettings();
+    renderPage(<Settings />);
+    await screen.findByText("理财", { selector: "h2" });
+    expect(screen.getByRole("checkbox", { name: "闲置资产自动申购活期" })).toBeChecked();
+    const all = screen.getByRole("checkbox", { name: "申购全部可申购的产品" });
+    expect(all).toBeChecked();
+    expect(screen.queryByText("只申购这些稳定币")).not.toBeInTheDocument();
+    await userEvent.click(all);
+    expect(screen.getByText("只申购这些稳定币")).toBeInTheDocument();
+    await userEvent.click(within(section("理财")).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")[0]?.body).toMatchObject({ earn: { enabled: true, auto_all: false } }));
   });
 });

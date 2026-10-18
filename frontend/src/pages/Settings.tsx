@@ -21,7 +21,7 @@ interface SettingsResp {
     provider_fallback: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number } | null;
     stables: string[];
     futures: FuturesCfg;
-    earn: { enabled: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
+    earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
   };
   presets: Record<string, unknown>;
   candidates: string[];
@@ -314,28 +314,35 @@ export default function Settings() {
 
       <section>
         <SectionHead title="理财" doc="earn" />
-        <Row label="闲置稳定币自动申购活期">
-          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.earn.enabled}
+        <Row label={<>闲置资产自动申购活期 <span className="text-fg-3">· 随时可赎回</span></>}>
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.earn.enabled} aria-label="闲置资产自动申购活期"
             onChange={(e) => setD({ ...d, earn: { ...d.earn, enabled: e.target.checked } })} />
         </Row>
-        <Row label="稳定币">
-          <div className="flex flex-wrap gap-1.5">
-            {d.stables.map((a) => {
-              const on = d.earn.assets.includes(a);
-              return (
-                <button key={a} onClick={() => setD({ ...d, earn: { ...d.earn, assets: on ? d.earn.assets.filter((x) => x !== a) : [...d.earn.assets, a] } })}
-                  className={`rounded-md border px-2.5 py-1 text-[13px] font-medium ${on ? "border-fg bg-fg text-bg" : "border-line-strong text-fg-2 hover:text-fg"}`}>
-                  {a}{earn.data?.products?.[a]?.apr ? <span className={on ? "text-bg/70" : "text-up"}> {(parseFloat(earn.data.products[a].apr as string) * 100).toFixed(2)}%</span> : null}
-                </button>
-              );
-            })}
-          </div>
+        <Row label="申购全部可申购的产品">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.earn.auto_all} aria-label="申购全部可申购的产品"
+            onChange={(e) => setD({ ...d, earn: { ...d.earn, auto_all: e.target.checked } })} />
         </Row>
-        <Row label="现货保留"><Num unit="USD" value={d.earn.keep_liquid_usd} min={0} onChange={(x) => setD({ ...d, earn: { ...d.earn, keep_liquid_usd: x } })} /></Row>
+        {!d.earn.auto_all && (
+          <Row label="只申购这些稳定币">
+            <div className="flex flex-wrap gap-1.5">
+              {d.stables.map((a) => {
+                const on = d.earn.assets.includes(a);
+                return (
+                  <button key={a} onClick={() => setD({ ...d, earn: { ...d.earn, assets: on ? d.earn.assets.filter((x) => x !== a) : [...d.earn.assets, a] } })}
+                    className={`rounded-md border px-2.5 py-1 text-[13px] font-medium ${on ? "border-fg bg-fg text-bg" : "border-line-strong text-fg-2 hover:text-fg"}`}>
+                    {a}{earn.data?.products?.[a]?.apr ? <span className={on ? "text-bg/70" : "text-up"}> {(parseFloat(earn.data.products[a].apr as string) * 100).toFixed(2)}%</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </Row>
+        )}
+        <Row label="稳定币现货保留"><Num unit="USD" value={d.earn.keep_liquid_usd} min={0} onChange={(x) => setD({ ...d, earn: { ...d.earn, keep_liquid_usd: x } })} /></Row>
         <Row label="最小划转"><Num unit="USD" value={d.earn.min_move_usd} min={1} onChange={(x) => setD({ ...d, earn: { ...d.earn, min_move_usd: x } })} /></Row>
         {Object.entries(earn.data?.positions ?? {}).map(([a, p]) => (
-          <Row key={a} label={<>活期 <b className="text-fg">{a}</b></>}>
-            <span className="num text-[14px]">{p.amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>
+          <Row key={a} label={<>活期 <b className="text-fg">{a}</b>{earn.data?.products?.[a]?.apr
+            ? <span className="text-up"> {(parseFloat(earn.data.products[a].apr as string) * 100).toFixed(2)}%</span> : null}</>}>
+            <span className="num text-[14px]">{p.amount.toLocaleString("en-US", { maximumFractionDigits: d.stables.includes(a) ? 2 : 8 })}</span>
             <button className="btn-secondary btn-sm" onClick={async () => {
               const r = await post<{ ok: boolean; message: string }>("/earn/move", { asset: a, amount: p.amount, direction: "redeem" });
               toast(r.message, r.ok ? "ok" : "err"); earn.reload();

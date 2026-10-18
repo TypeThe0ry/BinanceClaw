@@ -14,19 +14,20 @@ from pathlib import Path
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
 from pydantic import BaseModel
 from sqlmodel import desc, select
 
 from ..brain.providers import PROVIDERS, ProviderError
-from ..config import CANDIDATE_TOKENS, HARD_BOUNDS, RISK_PRESETS, ProviderSettings
+from ..config import CANDIDATE_TOKENS, HARD_BOUNDS, RISK_PRESETS, ConfirmationRequired, ProviderSettings
 from ..db import Approval, ChatMessage, Cycle, Order, Report
 from ..exchange.binance_spot import ExchangeError
 from ..risk.gate import CONFIRM_PHRASE
 
 COOKIE = "bclaw_session"
+CONFIRM_HEADER = "X-Confirm-Token"
 SESSION_DAYS = 7
 DEVICE_COOKIE = "bclaw_device"
 DEVICE_DAYS = 180
@@ -82,6 +83,11 @@ class ModeIn(BaseModel):
 
 def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title="BinanceClaw", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.exception_handler(ConfirmationRequired)
+    async def needs_confirm(request: Request, e: ConfirmationRequired):
+        # 409 + the exact changes: the client shows them, then resends with the token in X-Confirm-Token
+        return JSONResponse({"detail": {"message": str(e), "changes": e.changes, "confirm_token": e.token}}, status_code=409)
     signer = TimestampSigner(svc.secrets.session_secret or os.urandom(32).hex())
     failures: dict[str, list[float]] = {}
     global_failures: list[float] = []
@@ -301,11 +307,15 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         return ticker_cache["data"]
 
     @app.get("/api/markets", dependencies=auth)
-    def markets(q: str = "", limit: int = 50):
+    def markets(q: str = "", limit: int = 50, tag: str = ""):
         try:
-            return svc.markets(q[:20], min(max(limit, 1), 200))
+            return svc.markets(q[:20], min(max(limit, 1), 200), tag[:40])
         except ExchangeError as e:
             raise HTTPException(502, str(e)) from e
+
+    @app.get("/api/categories", dependencies=auth)
+    def categories():
+        return svc.categories()
 
     # ------------------------------------------------------------------ futures
     @app.get("/api/futures", dependencies=auth)
@@ -346,8 +356,9 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     @app.get("/api/earn", dependencies=auth)
     def earn():
         s = svc.settings
-        out = {"enabled": s.earn.enabled, "settings": s.earn.model_dump(), "positions": svc.earn.positions(), "products": {}}
-        for a in s.earn.assets:
+        pos = svc.earn.positions()
+        out = {"enabled": s.earn.enabled, "settings": s.earn.model_dump(), "positions": pos, "products": {}}
+        for a in dict.fromkeys([*s.earn.assets, *pos]):
             try:
                 pr = svc.earn.product(a) or {}
                 out["products"][a] = {"apr": pr.get("latestAnnualPercentageRate"), "can_purchase": pr.get("canPurchase"),
@@ -360,8 +371,10 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     def earn_move(body: EarnMoveIn):
         s = svc.settings
         asset = body.asset.upper()
-        if asset not in s.stables or not (body.amount > 0) or body.direction not in ("subscribe", "redeem"):
-            raise HTTPException(400, "只支持稳定币，金额必须为正")
+        if not (asset in s.stables or svc.earn.covers(asset) or (body.direction == "redeem" and asset in svc.earn.positions())):
+            raise HTTPException(400, "这个资产不在理财范围内")
+        if not (body.amount > 0) or body.direction not in ("subscribe", "redeem"):
+            raise HTTPException(400, "金额必须为正")
         try:
             msg = (svc.earn.subscribe if body.direction == "subscribe" else svc.earn.redeem)(asset, body.amount, by="web")
         except ExchangeError as e:
@@ -371,7 +384,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     @app.post("/api/earn/sweep", dependencies=auth)
     def earn_sweep():
         msgs = svc.earn.sweep()
-        return {"ok": True, "message": "；".join(msgs) or "没有超出缓冲的闲置稳定币"}
+        return {"ok": True, "message": "；".join(msgs) or "没有可申购的闲置资产"}
 
     @app.get("/api/performance", dependencies=auth)
     def performance():
@@ -443,9 +456,9 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
                 "telegram": bool(svc.secrets.telegram_bot_token and svc.secrets.telegram_chat_id)}
 
     @app.put("/api/settings", dependencies=auth)
-    def put_settings(patch: dict):
+    def put_settings(patch: dict, request: Request):
         try:
-            return svc.update_settings(patch).model_dump()
+            return svc.update_settings(patch, guard=True, confirm=request.headers.get(CONFIRM_HEADER, "")).model_dump()
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
@@ -470,9 +483,9 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             raise HTTPException(400, str(e)) from e
 
     @app.post("/api/risk-preset", dependencies=auth)
-    def risk_preset(body: PresetIn):
+    def risk_preset(body: PresetIn, request: Request):
         try:
-            return svc.apply_preset(body.name).model_dump()
+            return svc.apply_preset(body.name, guard=True, confirm=request.headers.get(CONFIRM_HEADER, "")).model_dump()
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 

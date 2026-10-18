@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import hmac
+import json
 import logging
+import os
 import re
 import threading
 import time
@@ -15,7 +19,7 @@ from ..brain import allocation as alloc
 from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
-from ..config import DATA_DIR, Secrets, SettingsStore
+from ..config import DATA_DIR, ConfirmationRequired, Secrets, SettingsStore, dangerous_changes
 from ..db import Approval, ChatMessage, Cycle, Database, FuturesPosition, FuturesTrade, Order, PriceAlert, Report
 from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
@@ -24,6 +28,7 @@ from ..exchange.futures_broker import FuturesBroker
 from ..risk import gate
 from ..risk.engine import Portfolio, RiskState, evaluate, pause_trigger
 from ..risk.futures import OPEN_OPS, FuturesView, evaluate_futures, perp_symbol
+from . import categories as cats
 from .earn import EarnManager
 from .events import EventBus
 
@@ -43,6 +48,7 @@ class Service:
         self.client = client or BinanceSpot(self.secrets.binance_api_key, self.secrets.binance_api_secret)
         self.fclient = fclient or BinanceFutures(self.secrets.binance_api_key, self.secrets.binance_api_secret)
         self.earn = EarnManager(self)
+        self._confirm_key = ((self.secrets.session_secret or os.urandom(32).hex()) + ":confirm").encode()
         self._cycle_lock = threading.Lock()
         self._exec_lock = threading.RLock()
         self._chat_lock = threading.Lock()
@@ -86,7 +92,10 @@ class Service:
     def today(self) -> str:
         return self.now().strftime("%Y-%m-%d")
 
-    def update_settings(self, patch: dict):
+    def update_settings(self, patch: dict, *, guard: bool = False, confirm: str = ""):
+        """Merge ``patch`` into the settings. With ``guard`` (every change a person makes from the web
+        or Telegram), a change to a dangerous setting raises ConfirmationRequired unless ``confirm`` is
+        the token issued for exactly that change."""
         if "allocation" in patch and "enabled" in (patch.get("allocation") or {}):
             self._validate_tokens(patch["allocation"]["enabled"])
         fut = patch.get("futures") or {}
@@ -98,10 +107,29 @@ class Service:
                 raise ValueError("实盘下开启合约需要 Key 权限：" + "；".join(chk["blockers"]))
         if ("limits" in patch or "schedule" in patch) and "risk_preset" not in patch:
             patch = {**patch, "risk_preset": "custom"}
+        if guard:
+            changes = dangerous_changes(self.settings, self.settings_store.preview(patch))
+            if changes and not self._confirm_ok(confirm, changes):
+                raise ConfirmationRequired(changes, self._confirm_token(changes))
         s = self.settings_store.update(patch)
         self._rebuild()
         self.events.emit("settings", {"mode": s.mode})
         return s
+
+    def _confirm_sig(self, changes: list[dict], exp: int) -> str:
+        msg = json.dumps(changes, sort_keys=True, ensure_ascii=False, default=str) + f"|{exp}"
+        return hmac.new(self._confirm_key, msg.encode(), hashlib.sha256).hexdigest()
+
+    def _confirm_token(self, changes: list[dict], ttl: int = 600) -> str:
+        """Token bound to these exact changes (old and new values), valid for ``ttl`` seconds."""
+        exp = int(time.time()) + ttl
+        return f"{exp}.{self._confirm_sig(changes, exp)}"
+
+    def _confirm_ok(self, token: str, changes: list[dict]) -> bool:
+        exp, _, sig = (token or "").partition(".")
+        if not exp.isdigit() or int(exp) < time.time():
+            return False
+        return hmac.compare_digest(sig, self._confirm_sig(changes, int(exp)))
 
     def _validate_tokens(self, tokens: list[str]):
         s = self.settings
@@ -127,11 +155,11 @@ class Service:
         if bad:
             raise ValueError(f"币安没有可交易的 USDT 永续合约：{', '.join(perp_symbol(t) for t in bad)}")
 
-    def apply_preset(self, name: str):
+    def apply_preset(self, name: str, *, guard: bool = False, confirm: str = ""):
         from ..config import RISK_PRESETS
         if name not in RISK_PRESETS:
             raise ValueError(f"未知预设 {name}")
-        return self.update_settings({**RISK_PRESETS[name], "risk_preset": name})
+        return self.update_settings({**RISK_PRESETS[name], "risk_preset": name}, guard=guard, confirm=confirm)
 
     # ------------------------------------------------------------------ state
     def paused(self) -> tuple[bool, str]:
@@ -200,19 +228,57 @@ class Service:
                     anomaly = anomaly or "BTC 实时价与日线收盘价偏离过大"
         return prices, market, btc_change, anomaly
 
-    def markets(self, q: str = "", limit: int = 50) -> list[dict]:
+    def token_tags(self) -> dict[str, list[str]]:
+        """Binance's categories per asset (cached 6 h). Empty when binance.com is unreachable."""
+        cached = getattr(self, "_tags", None)
+        if cached and time.time() - cached[0] < 6 * 3600:
+            return cached[1]
+        try:
+            data = self.client.asset_tags()
+        except (ExchangeError, AttributeError) as e:
+            log.warning("binance categories unavailable: %s", e)
+            data = cached[1] if cached else {}
+            self._tags = (time.time() - 5 * 3600, data)        # retry in an hour
+            return data
+        self._tags = (time.time(), data)
+        return data
+
+    def tags_of(self, token: str) -> list[str]:
+        return cats.tags_for(token, self.token_tags(), self.settings.stables)
+
+    def categories(self) -> list[dict]:
+        """Binance categories present on spot (with a <TOKEN><quote> pair), in display order."""
+        counts: dict[str, int] = {}
+        quote = self.settings.quote
+        try:
+            bases = {m["base"] for m in self._spot_markets() if m["quote"] == quote}
+        except ExchangeError:
+            bases = set(self.token_tags())
+        for base in bases:
+            for t in self.tags_of(base):
+                counts[t] = counts.get(t, 0) + 1
+        return [{"tag": t, "label": cats.label(t), "count": n}
+                for t, n in sorted(counts.items(), key=lambda kv: (cats.rank(kv[0]), -kv[1], kv[0])) if t != cats.STABLE]
+
+    def _spot_markets(self) -> list[dict]:
+        mk = getattr(self, "_markets", None)
+        if not mk or time.time() - mk[0] > 3600:
+            mk = (time.time(), self.client.spot_markets())
+            self._markets = mk
+        return mk[1]
+
+    def markets(self, q: str = "", limit: int = 50, tag: str = "") -> list[dict]:
         """Searchable list of every asset on Binance spot, with 24h stats (cached).
 
         One row per base asset. Assets with a <TOKEN><quote> pair are selectable whatever that
         pair's status: a suspended pair (status BREAK) is shown as such and the risk engine
         refuses to trade it until Binance resumes it. Assets only quoted in other currencies
-        are listed too, marked not selectable, so nothing on Binance silently goes missing."""
+        are listed too, marked not selectable, so nothing on Binance silently goes missing.
+        ``tag`` keeps only assets in that Binance category."""
         now = time.time()
         quote = self.settings.quote
-        mk = getattr(self, "_markets", None)
-        if not mk or now - mk[0] > 3600:
-            mk = (now, self.client.spot_markets())
-            self._markets = mk
+        mk = (now, self._spot_markets())
+        tags = self.token_tags()
         tk = getattr(self, "_tickers", None)
         if not tk or now - tk[0] > 120:
             tk = (now, self.client.all_tickers_24h())
@@ -225,7 +291,7 @@ class Service:
         others: dict[str, set] = {}
         for m in mk[1]:
             base = m["base"]
-            if base in stables or (q and q not in base):
+            if base in stables or (q and q not in base) or (tag and tag not in tags.get(base, ())):
                 continue
             if m["quote"] == quote:
                 pairs[base] = m
@@ -237,13 +303,15 @@ class Service:
             status = m.get("status", "TRADING")
             rows.append({"token": base, "symbol": m["symbol"], "price": t.get("price"), "change_pct": t.get("change_pct"),
                          "quote_volume": t.get("quote_volume", 0.0), "held": base in held, "enabled": base in enabled,
-                         "status": status, "trading": status == "TRADING", "selectable": True})
+                         "status": status, "trading": status == "TRADING", "selectable": True,
+                         "tags": tags.get(base, []), "category": cats.label(cats.primary(tags.get(base, [])))})
         for base, quotes in others.items():
             if base in pairs:
                 continue
             rows.append({"token": base, "symbol": "", "price": None, "change_pct": None, "quote_volume": 0.0,
                          "held": base in held, "enabled": base in enabled, "status": "NO_PAIR", "trading": False,
-                         "selectable": False, "quotes": sorted(quotes)})
+                         "selectable": False, "quotes": sorted(quotes), "tags": tags.get(base, []),
+                         "category": cats.label(cats.primary(tags.get(base, [])))})
         rows.sort(key=lambda r: (not r["enabled"], not r["held"], r["token"] != q, not r["selectable"],
                                  not r["trading"], -(r["quote_volume"] or 0)))
         return rows[:limit]
@@ -262,8 +330,8 @@ class Service:
 
     def spot_balances(self) -> dict[str, float]:
         """Spot balances without Binance's LD<asset> Earn mirrors (Earn is counted from its own endpoint)."""
-        st = set(self.settings.stables)
-        return {a: v for a, v in self.broker.balances().items() if not (a.startswith("LD") and a[2:] in st)}
+        mirrored = set(self.settings.stables) | (set(self.earn.positions()) if self.settings.mode == "live" else set())
+        return {a: v for a, v in self.broker.balances().items() if not (a.startswith("LD") and a[2:] in mirrored)}
 
     def futures_equity(self, marks: dict | None = None) -> float:
         if not self.fbroker.open_rows():
@@ -436,7 +504,7 @@ class Service:
             context["futures"]["note"] = "合约数据暂不可用，本轮不要提出合约动作"
         if s.earn.enabled:
             context["earn"] = {"enabled": True, "in_earn": {a: round(v, 2) for a, v in self.earn.managed_amounts().items()},
-                               "note": "活期理财里的稳定币已计入 portfolio 余额，买入时系统自动赎回；不需要你操作理财"}
+                               "note": "活期理财里的资产已计入 portfolio 余额，买入或卖出时系统自动赎回；不需要你操作理财"}
         try:
             context["account_total_usd"] = round(self.account_portfolio(prices).total(), 2)
         except ExchangeError:
@@ -698,6 +766,7 @@ class Service:
                 else:
                     token = symbol[: -len(s.quote)]
                     qty = amount / prices[token]
+                    self.earn.ensure_liquid(token, qty)
                     fill = self.broker.sell(symbol, qty, cid)
             except OrderUnknown as e:
                 # may exist on the exchange: counts toward today's limits until the reconciler resolves it
@@ -983,6 +1052,11 @@ class Service:
                 out.update(account_balances=acct.balances, account_values=acct.values(), account_total=acct.total())
             except ExchangeError:
                 pass
+        shown = {*out.get("account_values", {}), *out.get("values", {}), *(t for g in out["targets"].values() for t in g["tokens"])}
+        out["binance_categories"] = {}
+        for t in sorted(shown - {FUTURES_ASSET}):
+            tags = self.tags_of(t)
+            out["binance_categories"][t] = {"primary": cats.label(cats.primary(tags)), "tags": [cats.label(x) for x in tags]}
         return out
 
     def equity_series(self, limit: int = 500) -> list[dict]:

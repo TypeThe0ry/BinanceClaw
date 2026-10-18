@@ -13,6 +13,9 @@ from dataclasses import dataclass
 import httpx
 
 BASE_URL = "https://api.binance.com"
+# binance.com's own market pages read coin categories ("tags") from this public endpoint;
+# the REST API (api.binance.com) does not expose them.
+TAGS_URL = "https://www.binance.com/bapi/asset/v2/public/asset-service/product/get-products"
 
 
 class ExchangeError(RuntimeError):
@@ -98,6 +101,21 @@ class BinanceSpot:
         info = self._request("GET", "/api/v3/exchangeInfo", {"permissions": "SPOT"})
         return [{"symbol": s["symbol"], "base": s["baseAsset"], "quote": s["quoteAsset"], "status": s["status"]}
                 for s in info["symbols"] if s.get("isSpotTradingAllowed", True)]
+
+    def asset_tags(self) -> dict[str, list[str]]:
+        """Binance's categories per base asset, e.g. {"SOL": ["Layer1_Layer2", "Solana", "pos"]}."""
+        try:
+            r = self._http.get(TAGS_URL, params={"includeEtf": "true"}, timeout=8)
+            r.raise_for_status()
+            rows = r.json().get("data") or []
+        except (httpx.HTTPError, ValueError) as e:
+            raise ExchangeError(f"读取币安币种分类失败：{e}") from e
+        out: dict[str, set] = {}
+        for row in rows:
+            base = row.get("b")
+            if base:
+                out.setdefault(base, set()).update(t for t in (row.get("tags") or []) if t)
+        return {b: sorted(t) for b, t in out.items()}
 
     def all_tickers_24h(self) -> dict[str, dict]:
         rows = self._request("GET", "/api/v3/ticker/24hr")
