@@ -5,7 +5,7 @@ import json
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 class Action(BaseModel):
@@ -38,6 +38,26 @@ class FuturesAction(BaseModel):
     invalidation: str = Field(min_length=1, max_length=800)
 
 
+class QuestionOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(min_length=1, max_length=40, description="按钮上的文字，简短")
+    detail: str = Field(default="", max_length=300, description="选这个之后你会怎么做")
+
+
+class Question(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    topic: str = Field(min_length=1, max_length=40, description="这件事的简短标识（如 TRX 或 接管 TON），用来避免重复提问")
+    text: str = Field(min_length=1, max_length=800, description="问题本身：现状、你的判断、为什么需要主人决定")
+    options: list[QuestionOption] = Field(min_length=2, max_length=4)
+    recommended: int = Field(ge=0, le=3, description="你推荐的选项序号（从 0 开始）")
+
+    @model_validator(mode="after")
+    def _recommended_in_range(self):
+        if self.recommended >= len(self.options):
+            raise ValueError("recommended 超出 options 范围")
+        return self
+
+
 class TradePlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=3000)
@@ -45,6 +65,8 @@ class TradePlan(BaseModel):
     actions: list[Action] = Field(default_factory=list, max_length=10)
     futures: list[FuturesAction] = Field(default_factory=list, max_length=5)
     alerts: list[AlertSpec] = Field(default_factory=list, max_length=3)
+    questions: list[Question] = Field(default_factory=list, max_length=3,
+                                      description="需要主人决定的事；主人回答后会立即唤醒你按回答决策")
     confidence: float = Field(ge=0, le=1)
     # Timing, used when schedule.decision_mode is "auto". The system clamps both to the owner's limits.
     next_check_minutes: int | None = Field(default=None, ge=1, le=1440, description="多少分钟后再看一次（没有事件也会按时醒来）")

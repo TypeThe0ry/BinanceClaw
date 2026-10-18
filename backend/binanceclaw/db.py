@@ -73,6 +73,24 @@ class Approval(SQLModel, table=True):
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))   # futures: the full action
 
 
+class AiQuestion(SQLModel, table=True):
+    """A question the AI put to the owner. The answer (or the timeout outcome) is handed to the next round."""
+    id: str = Field(default_factory=_id, primary_key=True)
+    created: float = Field(default_factory=time.time, index=True)
+    expires: float
+    cycle_id: str = ""
+    topic: str = ""
+    text: str
+    options: list = Field(default_factory=list, sa_column=Column(JSON))   # [{label, detail}]
+    recommended: int = 0
+    status: str = Field(default="pending", index=True)   # pending | answered | expired | cancelled
+    answer: Optional[int] = None              # chosen option; on timeout with on_timeout=auto, the recommended one
+    resolved_by: str = ""                     # web | telegram | timeout | system
+    resolved_at: Optional[float] = None
+    fed_cycle: str = ""                       # the round the outcome was handed to
+    tg_message_id: Optional[int] = None
+
+
 class PriceAlert(SQLModel, table=True):
     id: str = Field(default_factory=_id, primary_key=True)
     created: float = Field(default_factory=time.time)
@@ -131,6 +149,15 @@ class FuturesTrade(SQLModel, table=True):
     client_order_id: str = ""
     cycle_id: str = ""
     detail: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+
+class EquitySnapshot(SQLModel, table=True):
+    """Account total over time, for the home page's 1D / 7D / 30D / 90D / 1Y valuation chart."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ts: float = Field(default_factory=time.time, index=True)
+    mode: str = Field(index=True)
+    total: float                              # USD value of the whole account (incl. locked / unselected assets)
+    source: str = "recorder"                  # recorder (periodic) | cycle (imported decision rounds) | binance (daily account snapshot)
 
 
 class PaperBalance(SQLModel, table=True):
@@ -244,6 +271,21 @@ class Database:
             s.commit()
             s.refresh(a)
             return a
+
+    def pending_questions(self) -> list[AiQuestion]:
+        return self.all(select(AiQuestion).where(AiQuestion.status == "pending").order_by(AiQuestion.created))
+
+    def claim_question(self, qid: str, new_status: str, by: str, answer: Optional[int]) -> Optional[AiQuestion]:
+        """Atomically pending -> answered / expired. Returns the row only for the single winner."""
+        with self.write_lock, self.session() as s:
+            q = s.get(AiQuestion, qid)
+            if not q or q.status != "pending":
+                return None
+            q.status, q.resolved_by, q.answer, q.resolved_at = new_status, by, answer, time.time()
+            s.add(q)
+            s.commit()
+            s.refresh(q)
+            return q
 
     def update(self, _table, _key, /, **fields):
         with self.write_lock, self.session() as s:

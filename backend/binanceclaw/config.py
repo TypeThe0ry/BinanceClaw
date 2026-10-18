@@ -37,6 +37,7 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "max_calls_per_day": (1, 500),
     "move_trigger_pct": (0.003, 0.2),
     "approval_timeout_minutes": (5, 720),
+    "question_timeout_minutes": (5, 1440),
     "max_asset_weight": (0.05, 1.0),
     "ai_candidates": (5, 30),
     "rebalance_drift": (0.01, 0.5),
@@ -242,6 +243,16 @@ class Earn(BaseModel):
         return sorted({a.upper().strip() for a in v if a.strip()})
 
 
+class Questions(BaseModel):
+    """The AI may ask the owner before a high-risk or preference-dependent decision (2–4 options, buttons on
+    the web dashboard and Telegram). An answer wakes a decision round at once; the chosen action still goes
+    through the risk engine and approvals."""
+    enabled: bool = True
+    question_timeout_minutes: int = 120
+    # skip: no answer in time = nothing is done about that item; auto: the AI's recommended option is taken
+    on_timeout: Literal["skip", "auto"] = "skip"
+
+
 # Telegram message types: key -> (label, can be muted). Event kinds map onto these in notify/policy.py.
 # Approval requests, the AI's questions and critical risk alerts can never be muted or delayed.
 NOTIFY_TYPES: dict[str, tuple[str, bool]] = {
@@ -399,6 +410,7 @@ class Settings(BaseModel):
     paper: PaperSettings = Field(default_factory=PaperSettings)
     futures: Futures = Field(default_factory=Futures)
     earn: Earn = Field(default_factory=Earn)
+    questions: Questions = Field(default_factory=Questions)
     notify: Notify = Field(default_factory=Notify)
     approval_free: ApprovalFree = Field(default_factory=ApprovalFree)
     strategy: Strategy = Field(default_factory=Strategy)
@@ -425,7 +437,7 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _clamp(self):
-        for sect in (self.limits, self.schedule, self.allocation, self.futures, self.earn, self.notify):
+        for sect in (self.limits, self.schedule, self.allocation, self.futures, self.earn, self.notify, self.questions):
             for k, (lo, hi) in HARD_BOUNDS.items():
                 if hasattr(sect, k):
                     val = getattr(sect, k)
@@ -555,6 +567,7 @@ DANGEROUS: dict[str, str] = {
     "earn.auto_all": "申购全部可申购的活期产品",
     "earn.assets": "理财稳定币",
     "earn.keep_liquid_usd": "现货保留",
+    "questions.on_timeout": "AI 提问超时后的处理",
     "quote": "计价币",
     "stables": "稳定币列表",
     "live_gate_allow": "保留的 Key 权限",
@@ -594,6 +607,7 @@ DECISION_FIELDS: dict[str, str] = {
     "approval_free": "免审批",
     "strategy": "交易风格",
     "outlook": "个人观点",
+    "questions": "AI 提问",
 }
 
 
