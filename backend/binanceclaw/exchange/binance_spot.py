@@ -90,12 +90,14 @@ class BinanceSpot:
         data = self._request("GET", "/api/v3/ticker/price", {"symbols": json.dumps(symbols, separators=(",", ":"))})
         return {d["symbol"]: float(d["price"]) for d in data}
 
-    def spot_markets(self, quote: str = "USDT") -> list[dict]:
-        """Every TRADING spot pair quoted in ``quote`` (one exchangeInfo call, ~MBs: cache it)."""
+    def spot_markets(self) -> list[dict]:
+        """Every listed spot pair, any quote and any status (one exchangeInfo call, ~MBs: cache it).
+
+        Status is kept rather than filtered: Binance marks a pair BREAK while trading is suspended
+        (TON was, for example), and such assets must still be findable and selectable."""
         info = self._request("GET", "/api/v3/exchangeInfo", {"permissions": "SPOT"})
-        return [{"symbol": s["symbol"], "base": s["baseAsset"], "quote": s["quoteAsset"]}
-                for s in info["symbols"] if s["quoteAsset"] == quote and s["status"] == "TRADING"
-                and s.get("isSpotTradingAllowed", True)]
+        return [{"symbol": s["symbol"], "base": s["baseAsset"], "quote": s["quoteAsset"], "status": s["status"]}
+                for s in info["symbols"] if s.get("isSpotTradingAllowed", True)]
 
     def all_tickers_24h(self) -> dict[str, dict]:
         rows = self._request("GET", "/api/v3/ticker/24hr")

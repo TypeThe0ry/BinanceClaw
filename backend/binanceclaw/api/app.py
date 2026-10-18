@@ -49,6 +49,15 @@ class PresetIn(BaseModel):
     name: str
 
 
+class AllocProposeIn(BaseModel):
+    instruction: str = ""
+
+
+class AllocResolveIn(BaseModel):
+    id: str
+    apply: bool
+
+
 class AlertIn(BaseModel):
     symbol: str
     op: str
@@ -437,6 +446,26 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     def put_settings(patch: dict):
         try:
             return svc.update_settings(patch).model_dump()
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.get("/api/allocation/proposal", dependencies=auth)
+    def allocation_proposal():
+        return svc.allocation_proposal()
+
+    @app.post("/api/allocation/propose", dependencies=auth)
+    def allocation_propose(body: AllocProposeIn):
+        try:
+            return svc.propose_allocation(body.instruction, "web")
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except ExchangeError as e:
+            raise HTTPException(502, str(e)) from e
+
+    @app.post("/api/allocation/resolve", dependencies=auth)
+    def allocation_resolve(body: AllocResolveIn):
+        try:
+            return svc.resolve_allocation(body.id, body.apply, "web")
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 

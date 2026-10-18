@@ -7,7 +7,8 @@ from binanceclaw.brain.providers import Completion, Provider, ProviderError
 from binanceclaw.config import Secrets
 from binanceclaw.exchange.binance_spot import SymbolRules
 
-PRICES = {"BTCUSDT": 80000.0, "ETHUSDT": 2500.0, "QQQBUSDT": 700.0, "NVDABUSDT": 200.0, "SOLUSDT": 150.0}
+PRICES = {"BTCUSDT": 80000.0, "ETHUSDT": 2500.0, "QQQBUSDT": 700.0, "NVDABUSDT": 200.0, "SOLUSDT": 150.0, "TONUSDT": 1.6}
+HALTED = {"TONUSDT": "BREAK"}          # listed but suspended, like TON on Binance in October 2026
 
 SAFE_RESTRICTIONS = {
     "ipRestrict": True, "enableReading": True, "enableSpotAndMarginTrading": True,
@@ -38,8 +39,9 @@ class FakeSpot:
         self._chk()
         return {s: self.prices_map[s] for s in symbols if s in self.prices_map}
 
-    def spot_markets(self, quote="USDT"):
-        return [{"symbol": s, "base": s[:-4], "quote": "USDT"} for s in PRICES]
+    def spot_markets(self):
+        return ([{"symbol": s, "base": s[:-4], "quote": "USDT", "status": HALTED.get(s, "TRADING")} for s in PRICES]
+                + [{"symbol": "XYZBTC", "base": "XYZ", "quote": "BTC", "status": "TRADING"}])
 
     def all_tickers_24h(self):
         return {s: {"price": p, "change_pct": 0.01, "quote_volume": 1e6 * (len(s))} for s, p in self.prices_map.items()}
@@ -68,7 +70,7 @@ class FakeSpot:
             if s not in PRICES:
                 continue                      # unknown pair, like Binance's exchangeInfo would omit it
             base = s[:-4]
-            out[s] = SymbolRules(s, base, "USDT", "TRADING", 1e-5 if base == "BTC" else 1e-3, 1e-5, 5.0, 0.01, 8)
+            out[s] = SymbolRules(s, base, "USDT", HALTED.get(s, "TRADING"), 1e-5 if base == "BTC" else 1e-3, 1e-5, 5.0, 0.01, 8)
         return out
 
     def api_restrictions(self):

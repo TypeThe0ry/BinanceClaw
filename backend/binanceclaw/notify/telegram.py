@@ -35,6 +35,7 @@ HELP = """BinanceClaw 指令
 /budget  AI 投入预算：/budget 3000，/budget off
 /lock    锁定资产：/lock BTC 0.5，/lock BTC 0 解除
 /assets  可交易资产：/assets BTC,ETH；/assets ai 或 /assets targets 切换分配方式
+/alloc   让 AI 调整目标配置：/alloc 加 10% TON，从 BTC 里减；只发 /alloc 则让 AI 生成一份
 /positions 合约持仓
 /flat yes 平掉 BinanceClaw 的全部合约仓位
 /new     开始新的对话
@@ -374,6 +375,11 @@ class TelegramBot:
             self.send("\n".join(lines))
         elif cmd in ("/preset", "/budget", "/lock", "/assets"):
             self._intervene(cmd, text.split()[1:])
+        elif cmd == "/alloc":
+            instruction = text.partition(" ")[2].strip()
+            self.send("🧠 正在让 AI " + ("按你的指令调整目标配置…" if instruction else "生成目标配置…"))
+            threading.Thread(target=self._safe, args=(lambda: self._send_proposal(svc.propose_allocation(instruction, "telegram")),),
+                             daemon=True).start()
         elif cmd == "/new":
             svc.db.kv_set("chat_cut_ts", time.time())
             self.send("已开始新的对话。")
@@ -424,6 +430,16 @@ class TelegramBot:
         except (ValueError, TypeError) as e:
             self.send(f"⚠️ 没有生效：{e}")
 
+    def _send_proposal(self, p: dict):
+        lines = ["📐 目标配置提案（应用前不会生效）", p["summary"], ""]
+        for tok in dict.fromkeys([*p["proposed"], *p["current"]]):
+            a, b = p["current"].get(tok, 0.0), p["proposed"].get(tok, 0.0)
+            mark = "" if abs(a - b) < 1e-6 else f"（原 {a:.1%}）"
+            lines.append(f"· {tok} {b:.1%}{mark}")
+        lines += [f"⚠️ {n}" for n in p["notes"]]
+        lines.append("\n应用后切换为「按目标配置」，之后的买入照常经过风控和审批。")
+        self.send("\n".join(lines), buttons=[[("✅ 应用", f"alloc_apply:{p['id']}"), ("放弃", f"alloc_drop:{p['id']}")]])
+
     def _safe(self, fn):
         try:
             fn()
@@ -466,6 +482,13 @@ class TelegramBot:
                             continue
                         kind, _, aid = cq.get("data", "").partition(":")
                         self.answer(cq["id"], "处理中…")
+                        if kind in ("alloc_apply", "alloc_drop"):
+                            try:
+                                self.svc.resolve_allocation(aid, kind == "alloc_apply", "telegram")
+                                self.send("✅ 已应用新的目标配置" if kind == "alloc_apply" else "已放弃这个配置提案")
+                            except ValueError as e:
+                                self.send(f"⚠️ {e}")
+                            continue
                         ok, msg = self.svc.resolve_approval(aid, kind == "ap", "telegram")
                         if not ok:
                             self.answer(cq["id"], msg)
