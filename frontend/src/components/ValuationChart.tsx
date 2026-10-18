@@ -86,7 +86,7 @@ export function ValuationChart({ current }: { current: number | null | undefined
         ) : <span className="text-fg-3">数据不足</span>}
       </div>
 
-      <div className="mt-2 h-44">
+      <div className="mt-2 h-44 lg:h-56">
         {!data ? <Skeleton className="h-full w-full" /> : pts.length > 1 ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={pts} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
