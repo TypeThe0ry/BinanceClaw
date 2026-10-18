@@ -196,4 +196,25 @@ describe("Config page (配置)", () => {
     await waitFor(() => expect(api.find("PUT", "/settings")[0]?.body).toEqual({
       strategy: { style: "long" }, outlook: { market: -1, assets: { ETH: 2 }, note: "等回调" } }));
   });
+
+  it("edits the AI memory", async () => {
+    const api = mockSettings();
+    renderPage(<Config />);
+    const sec = (await screen.findByText("AI 记忆", { selector: "h2" })).closest("section") as HTMLElement;
+    expect(within(sec).getByText("Meme 币合计不超过 5%")).toBeInTheDocument();
+    await userEvent.click(within(sec).getByRole("button", { name: "移除" }));
+    await userEvent.type(within(sec).getByPlaceholderText("例如：Meme 币合计不超过 5%"), "不碰美股代币");
+    await userEvent.click(within(sec).getByRole("button", { name: "添加" }));
+    await userEvent.click(within(sec).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")[0]?.body).toEqual({ memory: ["不碰美股代币"] }));
+  });
+
+  it("has no per-round asset count or single-asset cap in AI allocation", async () => {
+    mockSettings();
+    renderPage(<Config />);
+    await screen.findByText("资产与分配", { selector: "h2" });
+    await userEvent.click(screen.getByRole("button", { name: "AI 自主分配" }));
+    expect(screen.queryByText("每轮交给 AI 的资产数")).not.toBeInTheDocument();
+    expect(screen.queryByText("单币占比上限")).not.toBeInTheDocument();
+  });
 });

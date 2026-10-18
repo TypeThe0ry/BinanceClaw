@@ -17,6 +17,7 @@ export interface SettingsResp {
       max_calls_per_day?: number; move_trigger_pct?: number; approval_timeout_minutes: number; daily_report_time: string; timezone: string };
     provider: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number };
     investor_notes: string;
+    memory: string[];
     live_gate_allow: string[];
     risk_preset: string;
     capital: { locked: Record<string, number>; budget_usd: number | null };
@@ -57,7 +58,7 @@ export type Style = "short" | "medium" | "long";
 export interface Outlook { market: number; assets: Record<string, number>; note: string }
 export interface Alloc {
   mode: "targets" | "ai"; universe: "all" | "whitelist" | "blacklist"; enabled: string[]; blocked: string[];
-  max_asset_weight: number; ai_candidates: number; auto_rebalance: boolean; rebalance_drift: number;
+  auto_rebalance: boolean; rebalance_drift: number;
 }
 
 export interface FuturesCfg {

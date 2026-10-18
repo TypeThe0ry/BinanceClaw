@@ -89,7 +89,7 @@ export interface Overview {
   account_values?: Record<string, number>;
   account_balances?: Record<string, number>;
   allocation?: { mode: "targets" | "ai"; universe: "all" | "whitelist" | "blacklist"; enabled: string[]; blocked: string[];
-    max_asset_weight: number; auto_rebalance: boolean; rebalance_drift: number };
+    auto_rebalance: boolean; rebalance_drift: number };
   capital?: { locked: Record<string, number>; budget_usd: number | null; deployed_usd: number };
   risk_preset?: string;
   futures?: { enabled: boolean; open: number; symbols?: string[] };

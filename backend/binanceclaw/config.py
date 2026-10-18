@@ -20,6 +20,11 @@ from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_valid
 
 DATA_DIR = Path(os.environ.get("BINANCECLAW_DATA", "./data")).resolve()
 
+MAX_MEMORY = 50
+
+# USD stablecoins on Binance spot, recognised even when the owner's list omits them.
+KNOWN_STABLES = ("USDT", "USDC", "FDUSD", "USD1", "TUSD", "USDP", "DAI", "PYUSD", "USDE", "RLUSD", "USDS", "BFUSD", "XUSD")
+
 # (min, max) for every risk number. Settings outside these are clamped on load/save.
 HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "max_order_usd": (5, 5000),
@@ -38,8 +43,6 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "move_trigger_pct": (0.003, 0.2),
     "approval_timeout_minutes": (5, 720),
     "question_timeout_minutes": (5, 1440),
-    "max_asset_weight": (0.05, 1.0),
-    "ai_candidates": (5, 30),
     "rebalance_drift": (0.01, 0.5),
     # futures
     "max_leverage": (1, 20),
@@ -66,15 +69,15 @@ RISK_PRESETS: dict[str, dict] = {
     "conservative": {"limits": {"max_order_usd": 300, "auto_execute_max_usd": 100, "max_auto_daily_usd": 200,
                                 "max_orders_per_day": 2, "max_daily_notional_usd": 600, "stable_floor": 0.30,
                                 "btc_7d_drop_pause": 0.15, "allow_sell": False},
-                     "schedule": {"cycle_minutes": 120}, "allocation": {"max_asset_weight": 0.5}},
+                     "schedule": {"cycle_minutes": 120}},
     "balanced": {"limits": {"max_order_usd": 800, "auto_execute_max_usd": 200, "max_auto_daily_usd": 400,
                             "max_orders_per_day": 3, "max_daily_notional_usd": 2400, "stable_floor": 0.15,
                             "btc_7d_drop_pause": 0.25, "allow_sell": False},
-                 "schedule": {"cycle_minutes": 60}, "allocation": {"max_asset_weight": 0.7}},
+                 "schedule": {"cycle_minutes": 60}},
     "aggressive": {"limits": {"max_order_usd": 2000, "auto_execute_max_usd": 500, "max_auto_daily_usd": 1000,
                               "max_orders_per_day": 6, "max_daily_notional_usd": 6000, "stable_floor": 0.08,
                               "btc_7d_drop_pause": 0.35, "allow_sell": False},
-                   "schedule": {"cycle_minutes": 30}, "allocation": {"max_asset_weight": 0.85}},
+                   "schedule": {"cycle_minutes": 30}},
 }
 
 
@@ -218,9 +221,6 @@ class Allocation(BaseModel):
     # Whitelist in "ai" mode; in "targets" mode only tokens that also have a target are tradable.
     enabled: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "QQQB", "NVDAB"])
     blocked: list[str] = Field(default_factory=list)   # blacklist: never traded in "ai" mode
-    max_asset_weight: float = 0.7        # "ai" mode: ceiling per asset (share of managed value)
-    # "all" / "blacklist": assets with full market data each round (holdings first, then by 24h volume)
-    ai_candidates: int = 30
     auto_rebalance: bool = True          # "targets" mode: trade back to target when an asset drifts too far
     rebalance_drift: float = 0.05        # ... by more than this (absolute weight, 0.05 = 5 percentage points)
 
@@ -437,7 +437,7 @@ class PaperSettings(BaseModel):
 class Settings(BaseModel):
     mode: Literal["paper", "live"] = "paper"
     quote: str = "USDT"
-    stables: list[str] = ["USDT", "USDC", "FDUSD"]
+    stables: list[str] = Field(default_factory=lambda: ["USDT", "USDC", "FDUSD"], validate_default=True)
     categories: dict[str, Category] = Field(default_factory=lambda: {
         "BTC": Category(tokens={"BTC": 0.60}, band=(0.50, 0.70)),
         "ETH": Category(tokens={"ETH": 0.05}, band=(0.03, 0.08)),
@@ -461,8 +461,11 @@ class Settings(BaseModel):
     strategy: Strategy = Field(default_factory=Strategy)
     outlook: Outlook = Field(default_factory=Outlook)
     investor_notes: str = "长期投资，BTC 为主。只做现货，不承诺收益。"
+    # AI 记忆: lasting rules and preferences the owner taught the AI (in chat or on the 配置 page)
+    memory: list[str] = Field(default_factory=list)
     # Resolved by the service for "ai" mode over all assets / a blacklist (needs exchange data)
     _universe: list[str] | None = PrivateAttr(default=None)
+    _uncovered: list[str] = PrivateAttr(default_factory=list)   # owner-relevant assets that did not fit this round
     # Key permissions the owner knowingly keeps enabled; validated against risk.gate.WAIVABLE
     live_gate_allow: list[str] = Field(default_factory=list)
 
@@ -483,10 +486,19 @@ class Settings(BaseModel):
             raise ValueError(f"these key permissions can never be waived: {sorted(bad)}")
         return sorted(set(v))
 
+    @field_validator("memory")
+    @classmethod
+    def _memory(cls, v):
+        out = list(dict.fromkeys(m.strip()[:300] for m in v if m.strip()))
+        if len(out) > MAX_MEMORY:
+            raise ValueError(f"AI 记忆最多 {MAX_MEMORY} 条")
+        return out
+
     @field_validator("stables")
     @classmethod
     def _upper(cls, v):
-        return [s.upper() for s in v]
+        # Known USD stablecoins are always recognised, so e.g. USD1 is never allocated like a normal coin
+        return list(dict.fromkeys([*(s.upper() for s in v), *KNOWN_STABLES]))
 
     @model_validator(mode="after")
     def _clamp(self):
@@ -535,13 +547,13 @@ class Settings(BaseModel):
 
     def group_ceiling(self, group: str) -> float:
         if self.allocation.mode == "ai":
-            return 1.0 if group == "STABLE" else self.allocation.max_asset_weight
+            return 1.0                    # AI 自主分配: the AI decides concentration; other limits still apply
         return self.categories[group].band[1] if group in self.categories else 0.0
 
     def group_targets(self) -> dict[str, dict]:
         """Display/prompt view of targets for the current mode: {group: {tokens, band}}."""
         if self.allocation.mode == "ai":
-            out = {t: {"tokens": {t: None}, "band": [0.0, self.allocation.max_asset_weight]} for t in self.tradable_tokens()}
+            out = {t: {"tokens": {t: None}, "band": [0.0, 1.0]} for t in self.tradable_tokens()}
             out["STABLE"] = {"tokens": {self.quote: None}, "band": [self.limits.stable_floor, 1.0]}
             return out
         out = {}
@@ -559,6 +571,14 @@ class Settings(BaseModel):
             if token in c.tokens:
                 return name
         return "STABLE" if token in self.stables else "OTHER"
+
+
+def owner_picks(s: "Settings") -> list[str]:
+    """Assets the owner chose: their own list plus target-allocation assets (minus stables and the blacklist).
+    In AI 自主分配 over all assets these are always in the round, whatever their trading volume."""
+    targets = [t for name, c in s.categories.items() if name != "STABLE" for t in c.tokens]
+    skip = set(s.stables) | {s.quote} | set(s.allocation.blocked)
+    return [t for t in dict.fromkeys([*s.allocation.enabled, *targets]) if t not in skip]
 
 
 class Secrets(BaseModel):
@@ -605,7 +625,6 @@ DANGEROUS: dict[str, str] = {
     "allocation.blocked": "黑名单",
     "allocation.auto_rebalance": "自动再平衡",
     "allocation.rebalance_drift": "再平衡偏离阈值",
-    "allocation.max_asset_weight": "单币占比上限",
     "futures.enabled": "合约交易",
     "futures.max_leverage": "最大杠杆",
     "futures.max_position_margin_usd": "单仓保证金上限",
@@ -650,6 +669,7 @@ def dangerous_changes(old: Settings, new: Settings) -> list[dict]:
 DECISION_FIELDS: dict[str, str] = {
     "categories": "目标配置",
     "investor_notes": "投资备注",
+    "memory": "AI 记忆",
     "allocation": "资产分配",
     "capital": "资金与预算",
     "limits": "风控限额",

@@ -17,20 +17,38 @@ TRADING = {"BTC", "ETH", "QQQB", "NVDAB", "SOL"}         # TON is listed but sus
 def test_ai_mode_defaults_to_every_spot_asset(svc):
     assert svc.settings.allocation.universe == "all"
     svc.update_settings({"allocation": {"mode": "ai"}})
-    assert set(svc.settings.tradable_tokens()) == TRADING          # not limited to ``enabled``
-    use(svc, plan(("BUY", "SOLUSDT", 150)))
+    # the round starts with the owner's picks and target assets; nothing else is fetched yet
+    assert set(svc.settings.tradable_tokens()) == {"BTC", "ETH", "QQQB", "NVDAB"}
+    use(svc, plan(("BUY", "SOLUSDT", 150), focus=["sol", "USDC", "NOTACOIN"]), plan(("BUY", "SOLUSDT", 150)))
     c = svc.run_cycle("manual")
-    assert c.risk[0]["decision"] == "execute"
     assert c.context["allocation"]["scope"].startswith("主人允许交易币安全部现货资产")
+    assert "SOL" in c.context["allocation"]["market_scan"] and "BTC" not in c.context["allocation"]["market_scan"]
+    assert c.risk[0]["decision"] == "reject"                       # not chosen yet
+    assert svc.ai_focus() == ["SOL"]                               # stables and unknown pairs dropped
+    assert "SOL" in svc.settings.tradable_tokens()
+    c2 = svc.run_cycle("manual")
+    assert c2.risk[0]["decision"] == "execute"
+    assert c2.context["allocation"]["focus"] == ["SOL"]
 
 
-def test_holdings_come_first_and_the_round_is_capped(svc, monkeypatch):
+def test_holdings_and_owner_picks_always_in_the_round(svc, monkeypatch):
     monkeypatch.setattr(type(svc.broker), "balances", lambda self: {"USDT": 5000.0, "TON": 1000.0, "SOL": 0.001})
-    svc.update_settings({"allocation": {"mode": "ai", "ai_candidates": 5}})
+    svc.update_settings({"allocation": {"mode": "ai", "enabled": ["QQQB"]}})
     toks = svc.settings.tradable_tokens()
     assert toks[0] == "TON"                         # held (even while suspended) so the AI can manage it
-    assert len(toks) == 5                           # SOL dust (< $1) does not take a slot of its own
-    assert svc.settings.allocation.ai_candidates == 5
+    assert "SOL" not in toks                        # dust (< $1) is not a holding to manage
+    assert "QQQB" in toks                           # the owner's pick, whatever its trading volume
+
+
+def test_owner_assets_that_do_not_fit_are_raised(svc, monkeypatch):
+    monkeypatch.setattr(type(svc), "MAX_ROUND_ASSETS", 2)
+    svc.update_settings({"allocation": {"mode": "ai", "enabled": ["BTC", "ETH", "SOL"]}})
+    assert svc.settings.tradable_tokens() == ["BTC", "ETH"]
+    use(svc, plan())
+    alloc = svc.run_cycle("manual").context["allocation"]
+    assert alloc["not_covered"]["tokens"] == ["SOL", "QQQB", "NVDAB"]
+    assert "questions" in alloc["not_covered"]["note"]
+    assert alloc["owner_picks"]["tokens"] == ["BTC", "ETH"]
 
 
 def test_blacklist_excludes_assets(svc):
@@ -138,3 +156,20 @@ def test_cycle_rebalances_to_targets_before_the_models_plan(svc):
     c2 = svc.run_cycle("manual")
     assert [r for r in c2.risk if r["source"] == "rebalance"] == []
     assert len(svc.db.all(Approval.__table__.select())) == 2
+
+
+# ---------------------------------------------------------------- stablecoins & AI memory
+def test_known_stablecoins_are_recognised():
+    s = Settings.model_validate({"stables": ["USDT"], "allocation": {"mode": "ai", "universe": "whitelist", "enabled": ["USD1", "BTC"]}})
+    assert "USD1" in s.stables and s.tradable_tokens() == ["BTC"]
+    assert s.group_of("USD1") == "STABLE"
+
+
+def test_chat_teaches_memory_and_decisions_read_it(svc):
+    use(svc, "好的。\n记住：Meme 币合计不超过 5%", plan())
+    reply = svc.chat("以后 meme 币别超过 5%")
+    assert reply == "好的。\n🧠 已记住：Meme 币合计不超过 5%"
+    assert svc.settings.memory == ["Meme 币合计不超过 5%"]
+    c = svc.run_cycle("manual")
+    assert c.context["memory"]["rules"] == ["Meme 币合计不超过 5%"]
+
