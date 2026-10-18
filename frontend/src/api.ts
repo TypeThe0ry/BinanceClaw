@@ -14,6 +14,14 @@ export function setConfirmer(fn: Confirmer | null) {
   confirmer = fn;
 }
 
+type RerunOfferer = (changed: string[]) => void;
+let rerunOfferer: RerunOfferer | null = null;
+
+/** Registered by <ConfirmProvider>; called when a save reports changes the AI should adapt to (`rerun`). */
+export function setRerunOfferer(fn: RerunOfferer | null) {
+  rerunOfferer = fn;
+}
+
 export async function api<T = unknown>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
   const res = await fetch(`/api${path}`, {
@@ -41,7 +49,10 @@ export async function api<T = unknown>(path: string, init?: RequestInit & { json
     }
     throw new ApiError(res.status, typeof d === "string" ? d : JSON.stringify(d));
   }
-  return res.json() as Promise<T>;
+  const data = await res.json();
+  const rerun = (data as { rerun?: unknown } | null)?.rerun;
+  if (Array.isArray(rerun) && rerun.length) rerunOfferer?.(rerun as string[]);
+  return data as T;
 }
 
 export const post = <T = unknown>(path: string, json: unknown = {}) => api<T>(path, { method: "POST", json });
