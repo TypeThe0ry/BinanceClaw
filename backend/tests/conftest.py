@@ -76,6 +76,13 @@ class FakeSpot:
         return [{"t": now - (limit - i - 1) * 86400, "o": p, "h": p * 1.01, "l": p * 0.99, "c": p, "v": 1, "close_t": now}
                 for i in range(limit)]
 
+    snapshots = ()                  # Binance daily account snapshots: (updateTime seconds, totalAssetOfBtc)
+
+    def account_snapshot(self, start, end, kind="SPOT"):
+        self._chk()
+        return [{"type": "spot", "updateTime": int(t * 1000), "data": {"totalAssetOfBtc": str(btc), "balances": []}}
+                for t, btc in self.snapshots if start <= t <= end]
+
     def symbol_rules(self, symbols):
         out = {}
         for s in symbols:
