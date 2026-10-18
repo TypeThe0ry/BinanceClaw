@@ -119,7 +119,14 @@ export default function Assets() {
           <div><dt className="text-fg-3">今日笔数</dt><dd className="num mt-1 text-[14px]">{o ? `${o.today.orders} / ${o.today.max_orders}` : "—"}</dd></div>
           <div><dt className="text-fg-3">今日金额</dt><dd className="num mt-1 text-[14px]">{o ? `${usd(o.today.notional, 0)} / ${usd(o.today.max_notional, 0)}` : "—"}</dd></div>
           <div><dt className="text-fg-3">BTC 7 日</dt><dd className="mt-1 text-[14px]"><Change v={o?.btc_change_7d} digits={1} /></dd></div>
-          <div><dt className="text-fg-3">下一轮</dt><dd className="mt-1 text-[14px]">{o ? <NextIn at={o.next_cycle_at} /> : "—"}</dd></div>
+          {o?.autopilot?.decision_mode === "auto" ? (
+            <div title={`今日模型调用 ${o.autopilot.calls_today ?? 0} / ${o.autopilot.max_calls_per_day ?? "—"} · 波动 ${((o.autopilot.wake_move_pct ?? 0) * 100).toFixed(1)}% 提前唤醒${o.autopilot.streaming ? " · 实时行情已连接" : ""}`}>
+              <dt className="text-fg-3">AI 自主 · 最晚复查</dt>
+              <dd className="mt-1 text-[14px]"><NextIn at={o.next_cycle_at} /></dd>
+            </div>
+          ) : (
+            <div><dt className="text-fg-3">下一轮</dt><dd className="mt-1 text-[14px]">{o ? <NextIn at={o.next_cycle_at} /> : "—"}</dd></div>
+          )}
         </dl>
         {o?.paused && <p className="w-full text-[13px] text-warn">已暂停 · {o.pause_reason}</p>}
       </section>

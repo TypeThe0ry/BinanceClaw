@@ -114,6 +114,33 @@ describe("Settings page", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("已保存");
   });
 
+  it("defaults to autonomous decisions and saves their bounds, or a fixed interval", async () => {
+    const api = mockSettings();
+    renderPage(<Settings />);
+    await screen.findByText("节奏", { selector: "h2" });
+    const pace = section("节奏");
+    expect(within(pace).queryByText("决策间隔")).not.toBeInTheDocument();
+    const calls = within(rowOf("每日模型调用上限")).getByRole("spinbutton");
+    expect(calls).toHaveValue(48);
+    await userEvent.clear(calls);
+    await userEvent.type(calls, "20");
+    const move = within(rowOf("默认波动唤醒阈值")).getByRole("spinbutton");
+    await userEvent.clear(move);
+    await userEvent.type(move, "1.5");
+    await userEvent.click(within(pace).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
+    const { schedule } = api.find("PUT", "/settings")[0].body as { schedule: Record<string, unknown> };
+    expect(schedule).toMatchObject({ max_calls_per_day: 20, cycle_minutes: 60 });
+    expect(schedule.move_trigger_pct as number).toBeCloseTo(0.015);
+
+    await userEvent.click(within(pace).getByRole("button", { name: "固定间隔" }));
+    expect(within(pace).getByText("决策间隔")).toBeInTheDocument();
+    expect(within(pace).queryByText("每日模型调用上限")).not.toBeInTheDocument();
+    await userEvent.click(within(pace).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(2));
+    expect((api.find("PUT", "/settings")[1].body as { schedule: Record<string, unknown> }).schedule.decision_mode).toBe("fixed");
+  });
+
   it("saves futures settings", async () => {
     const api = mockSettings();
     renderPage(<Settings />);

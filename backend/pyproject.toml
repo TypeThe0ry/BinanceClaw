@@ -13,6 +13,7 @@ dependencies = [
   "argon2-cffi>=23.1",
   "itsdangerous>=2.2",
   "matplotlib>=3.8",
+  "websockets>=13",          # real-time prices (also pulled in by uvicorn[standard])
 ]
 
 [project.optional-dependencies]

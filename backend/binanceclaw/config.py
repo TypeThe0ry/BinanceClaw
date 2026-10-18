@@ -31,6 +31,10 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "anomaly_failures_to_pause": (1, 10),
     "price_deviation_anomaly": (0.01, 0.2),
     "cycle_minutes": (5, 1440),
+    "min_gap_minutes": (1, 240),
+    "max_gap_minutes": (15, 1440),
+    "max_calls_per_day": (1, 500),
+    "move_trigger_pct": (0.003, 0.2),
     "approval_timeout_minutes": (5, 720),
     "max_asset_weight": (0.05, 1.0),
     # futures
@@ -95,7 +99,15 @@ class Limits(BaseModel):
 
 
 class Schedule(BaseModel):
-    cycle_minutes: int = 60
+    # auto: the AI decides when to look again (next_check_minutes in its plan) and real-time events
+    # (price moves, its own price levels, futures stops, fills, balance changes) wake it early;
+    # fixed: one round every cycle_minutes, as before. Either way every action still goes through the risk engine.
+    decision_mode: Literal["auto", "fixed"] = "auto"
+    cycle_minutes: int = 60            # fixed mode interval; auto mode's default check-in when the AI names none
+    min_gap_minutes: int = 5           # auto: never two rounds closer than this (manual rounds excepted)
+    max_gap_minutes: int = 240         # auto: never longer than this without a round
+    max_calls_per_day: int = 48        # auto: model-call budget per day (manual rounds not counted)
+    move_trigger_pct: float = 0.02     # auto: wake on a move this large since the last round (the AI may tighten/loosen it)
     approval_timeout_minutes: int = 30
     daily_report_time: str = "08:00"
     timezone: str = "UTC"
@@ -250,6 +262,8 @@ class Settings(BaseModel):
                     val = getattr(sect, k)
                     clamped = min(max(val, lo), hi)
                     setattr(sect, k, type(val)(clamped))
+        sch = self.schedule
+        sch.max_gap_minutes = max(sch.max_gap_minutes, sch.min_gap_minutes)
         f = self.futures
         f.max_position_margin_usd = min(f.max_position_margin_usd, f.max_total_margin_usd)
         f.auto_open_max_margin_usd = min(f.auto_open_max_margin_usd, f.max_position_margin_usd)

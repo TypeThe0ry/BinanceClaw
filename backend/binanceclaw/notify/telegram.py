@@ -14,6 +14,7 @@ import httpx
 from sqlmodel import desc, select
 
 from ..config import ConfirmationRequired
+from ..core.autopilot import TRIGGER_LABELS
 from ..db import Approval, Cycle, Order
 from . import charts
 
@@ -205,8 +206,10 @@ class TelegramBot:
             self._send_report(d.get("text", ""))
         elif kind == "cycle" and d.get("status") == "done":
             c = self.svc.db.get(Cycle, d["id"])
-            if c and not c.risk:
-                self.send(f"🧠 本轮决策：不操作\n{c.summary[:600]}")
+            # auto mode: the AI's own routine check-ins that change nothing stay quiet; event-woken rounds report
+            if c and not c.risk and c.trigger != "ai_scheduled":
+                why = TRIGGER_LABELS.get(c.trigger)
+                self.send(f"🧠 本轮决策{f'（{why}）' if why and c.trigger not in ('schedule', 'manual') else ''}：不操作\n{c.summary[:600]}")
 
     @staticmethod
     def _ap_title(a) -> str:
@@ -276,7 +279,11 @@ class TelegramBot:
         t = ov["today"]
         lines.append(f"今日 {t['orders']}/{t['max_orders']} 笔，${t['notional']:,.0f}/${t['max_notional']:,.0f}")
         lines.append("状态：" + (f"⏸ 暂停（{ov['pause_reason']}）" if ov["paused"] else "▶️ 运行中"))
-        if ov.get("next_cycle_at"):
+        ap = ov.get("autopilot") or {}
+        if ap.get("decision_mode") == "auto":
+            nxt = f"，最晚 {dt.datetime.fromtimestamp(ov['next_cycle_at'], self.svc.tz()):%H:%M} 复查" if ov.get("next_cycle_at") else ""
+            lines.append(f"决策：AI 自主实时{nxt}，今日调用 {ap.get('calls_today', 0)}/{ap.get('max_calls_per_day')}")
+        elif ov.get("next_cycle_at"):
             lines.append(f"下一轮：{dt.datetime.fromtimestamp(ov['next_cycle_at'], self.svc.tz()):%H:%M}")
         al, cap = ov.get("allocation", {}), ov.get("capital", {})
         lines.append(f"资产：{', '.join(al.get('enabled', []))} · {'AI 自主分配' if al.get('mode') == 'ai' else '按目标配置'}"
