@@ -68,6 +68,14 @@ describe("Assets page", () => {
     expect(localStorage.getItem("bclaw:assets-show-empty")).toBe("1");
   });
 
+  it("measures today's PnL from the current mode's rounds only", async () => {
+    const now = Date.now() / 1000;
+    mockApi({ ...routes, "GET /overview": { ...overview(), mode: "live", account_total: 950 },
+      "GET /equity": [{ t: now - 60, total: 10000, mode: "paper" }, { t: now - 30, total: 900, mode: "live" }] });
+    renderPage(<Assets />);
+    expect(await screen.findByText("+50.00")).toBeInTheDocument();
+  });
+
   it("folds a section and remembers it", async () => {
     mockApi(routes);
     renderPage(<Assets />);

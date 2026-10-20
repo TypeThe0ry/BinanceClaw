@@ -1454,7 +1454,9 @@ class Service:
         return out
 
     def equity_series(self, limit: int = 500) -> list[dict]:
-        rows = self.db.all(select(Cycle).order_by(desc(Cycle.ts)).limit(limit))
+        # current mode only: paper and live are different accounts, so a mixed series would turn
+        # switching modes into a fake gain or loss (e.g. 今日盈亏 measured from a paper total)
+        rows = self.db.all(select(Cycle).where(Cycle.mode == self.settings.mode).order_by(desc(Cycle.ts)).limit(limit))
         # account total (incl. locked / unselected assets) so changing what the AI manages
         # does not show up as profit or loss; older rows fall back to the managed total
         pts = [{"t": r.ts, "total": (r.context or {}).get("account_total_usd", (r.context or {}).get("portfolio", {}).get("total_usd")),

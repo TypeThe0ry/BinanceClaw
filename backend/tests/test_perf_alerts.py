@@ -97,3 +97,19 @@ def test_locking_does_not_create_fake_pnl_in_equity(svc):
     svc.run_cycle("manual")
     pts = svc.equity_series()
     assert abs(pts[-1]["total"] - pts[0]["total"]) < 1
+
+
+def test_equity_series_only_current_mode(svc):
+    from binanceclaw.db import Cycle
+
+    from .conftest import plan, use
+    use(svc, plan())
+    svc.run_cycle("manual")
+    paper = svc.equity_series()
+    assert paper and all(p["mode"] == "paper" for p in paper)
+    # a live round on a much smaller real account must not be the base of paper's day change, and vice versa
+    svc.db.add(Cycle(mode="live", status="done", context={"portfolio": {"total_usd": 50}, "account_total_usd": 50}))
+    assert svc.equity_series() == paper
+    svc.settings_store.update({"mode": "live"}, allow_mode_change=True)
+    live = svc.equity_series()
+    assert [p["total"] for p in live] == [50] and live[0]["mode"] == "live"
