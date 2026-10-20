@@ -123,7 +123,7 @@ function FuturesAssets({ o, bcat, collapsed, fold }:
 
 export default function Assets() {
   const ov = useApi<Overview>("/overview", { poll: 30000 });
-  const eq = useApi<{ t: number; total: number }[]>("/equity", { kinds: ["cycle"] });
+  const eq = useApi<{ t: number; total: number; mode?: string }[]>("/equity", { kinds: ["cycle", "mode"] });
   const cycles = useApi<CycleRow[]>("/cycles?limit=6", { kinds: ["cycle", "cycle_started", "approval"] });
   const pending = useApi<Approval[]>("/approvals?status=pending", { kinds: ["approval", "approval_created"] });
   const perf = useApi<Performance>("/performance", { kinds: ["order", "cycle"], poll: 60000 });
@@ -135,7 +135,7 @@ export default function Assets() {
   });
   const o = ov.data;
 
-  const series = (eq.data ?? []).filter((p) => p.total != null);
+  const series = (eq.data ?? []).filter((p) => p.total != null && (!p.mode || p.mode === o?.mode));
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const dayBase = series.find((p) => p.t * 1000 >= startOfDay.getTime())?.total;
   const shown = o?.account_total ?? o?.total;
