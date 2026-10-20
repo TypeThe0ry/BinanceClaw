@@ -202,3 +202,16 @@ def test_chat_teaches_memory_and_decisions_read_it(svc):
     c = svc.run_cycle("manual")
     assert c.context["memory"]["rules"] == ["Meme 币合计不超过 5%"]
 
+
+
+def test_assets_held_in_earn_are_managed_too(svc, monkeypatch):
+    """A coin that sits in Simple Earn is held: it is not in the spot balances at all (live shows only an LD mirror)."""
+    monkeypatch.setattr(type(svc.broker), "balances", lambda self: {"USDT": 5000.0})
+    svc.update_settings({"allocation": {"mode": "ai", "universe": "whitelist", "enabled": ["BTC"]},
+                         "earn": {"enabled": True, "auto_all": True}})
+    svc.earn._pos = (1e18, {"SOL": {"amount": 12.0, "apr": 0.01, "product_id": "SOL001"}})
+    assert svc.held_balances()["SOL"] == 12.0
+    assert svc.held_outside(svc.settings) == ["SOL"]
+    toks = svc.settings.tradable_tokens()
+    assert "SOL" in toks and "SOL" in svc.settings.sell_only()      # managed by the AI, sell or keep only
+    assert "SOL" in svc.settings.group_targets()                    # so the assets page shows it as managed

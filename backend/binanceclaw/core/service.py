@@ -134,7 +134,7 @@ class Service:
         if cached and cached[1] == key and time.time() - cached[0] < self.HELD_TTL:
             return cached[2]
         try:
-            held = self.broker.balances()
+            held = self.held_balances()
             pairs = {m["base"] for m in self._spot_markets() if m["quote"] == s.quote}
             tickers = self._tickers_24h()
         except ExchangeError as e:
@@ -175,7 +175,7 @@ class Service:
         try:
             pairs = {m["base"]: m.get("status", "TRADING") for m in self._spot_markets() if m["quote"] == s.quote}
             tickers = self._tickers_24h()
-            held = self.broker.balances()
+            held = self.held_balances()
         except ExchangeError as e:
             log.warning("AI universe unavailable: %s", e)
             return (cached[2], cached[3]) if cached and cached[1] == key else (None, [])
@@ -534,8 +534,18 @@ class Service:
 
     def spot_balances(self) -> dict[str, float]:
         """Spot balances without Binance's LD<asset> Earn mirrors (Earn is counted from its own endpoint)."""
-        mirrored = set(self.settings.stables) | (set(self.earn.positions()) if self.settings.mode == "live" else set())
+        raw = self.settings_store.get()          # unresolved settings: this runs while the full settings are being built
+        mirrored = set(raw.stables) | (set(self.earn.positions()) if raw.mode == "live" else set())
         return {a: v for a, v in self.broker.balances().items() if not (a.startswith("LD") and a[2:] in mirrored)}
+
+    def held_balances(self) -> dict[str, float]:
+        """Everything the owner holds that the AI manages: spot plus what sits in Simple Earn.
+        Earn positions show up in the spot account only as LD<asset> mirrors, so on their own they
+        would look like assets the owner does not hold."""
+        out = dict(self.spot_balances())
+        for a, amt in self.earn.managed_amounts().items():
+            out[a] = out.get(a, 0.0) + amt
+        return out
 
     def futures_equity(self, marks: dict | None = None) -> float:
         if not self.fbroker.open_rows():

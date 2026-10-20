@@ -33,11 +33,11 @@ class EarnManager:
 
     @property
     def cfg(self):
-        return self.svc.settings.earn
+        return self.svc.settings_store.get().earn
 
     @property
     def live(self) -> bool:
-        return self.svc.settings.mode == "live"
+        return self.svc.settings_store.get().mode == "live"
 
     # ---------------------------------------------------------------- reading
     def positions(self, max_age: float = 60) -> dict[str, dict]:
@@ -72,7 +72,7 @@ class EarnManager:
         return {a: p["amount"] for a, p in self.positions().items() if self.covers(a) and p["amount"] > 0}
 
     def _decimals(self, asset: str) -> int:
-        return 2 if asset in self.svc.settings.stables else 8
+        return 2 if asset in self.svc.settings_store.get().stables else 8
 
     def _fmt(self, asset: str, amount: float) -> str:
         return f"{amount:,.2f}" if self._decimals(asset) == 2 else f"{amount:.8f}".rstrip("0").rstrip(".")
@@ -141,7 +141,7 @@ class EarnManager:
 
     def _spot_free(self, asset: str) -> float:
         raw = self.svc.broker.balances().get(asset, 0.0)
-        return raw - self.svc.settings.capital.locked.get(asset, 0.0)
+        return raw - self.svc.settings_store.get().capital.locked.get(asset, 0.0)
 
     def ensure_liquid(self, asset: str, need: float) -> None:
         """Redeem enough so that spot holds ``need`` of ``asset`` (beyond locked amounts)."""
@@ -153,7 +153,7 @@ class EarnManager:
         have = self.positions(0).get(asset, {}).get("amount", 0)
         if have <= 0:
             return
-        if asset in self.svc.settings.stables:
+        if asset in self.svc.settings_store.get().stables:
             amount = max(short * 1.002, min(self.cfg.min_move_usd, short + 1))
         else:
             amount = min(short * 1.002, have)     # non-stables: no USD-sized rounding, just the shortfall
@@ -176,7 +176,7 @@ class EarnManager:
         """Subscribe idle balances (beyond the stablecoin buffer and pending needs) to flexible Earn."""
         if not self.cfg.enabled:
             return []
-        s = self.svc.settings
+        s = self.svc.settings_store.get()
         pending = sum(a.quote_usd for a in self.svc.db.pending_approvals() if a.side in ("BUY", "OPEN_LONG", "OPEN_SHORT"))
         assets = self.candidates()
         prices = self.svc.asset_prices([a for a in assets if a not in s.stables])
