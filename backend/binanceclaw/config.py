@@ -466,6 +466,9 @@ class Settings(BaseModel):
     # Resolved by the service for "ai" mode over all assets / a blacklist (needs exchange data)
     _universe: list[str] | None = PrivateAttr(default=None)
     _uncovered: list[str] = PrivateAttr(default_factory=list)   # owner-relevant assets that did not fit this round
+    # AI 自主分配: assets the owner holds outside the allowed range (not whitelisted / blacklisted).
+    # The AI manages them anyway, but may only sell or keep them.
+    _held: list[str] = PrivateAttr(default_factory=list)
     # Key permissions the owner knowingly keeps enabled; validated against risk.gate.WAIVABLE
     live_gate_allow: list[str] = Field(default_factory=list)
 
@@ -531,11 +534,17 @@ class Settings(BaseModel):
         enabled = [t for t in al.enabled if t not in self.stables and t != self.quote]
         if al.mode == "ai":
             if al.universe != "whitelist" and self._universe is not None:
-                return [t for t in self._universe if t not in al.blocked and t not in self.stables and t != self.quote]
-            # whitelist, or the market list is not available: the explicit list (minus the blacklist)
-            return [t for t in enabled if al.universe == "whitelist" or t not in al.blocked]
+                base = [t for t in self._universe if t not in al.blocked and t not in self.stables and t != self.quote]
+            else:
+                # whitelist, or the market list is not available: the explicit list (minus the blacklist)
+                base = [t for t in enabled if al.universe == "whitelist" or t not in al.blocked]
+            return [*base, *(t for t in self._held if t not in base)]
         with_target = [t for name, c in self.categories.items() if name != "STABLE" for t in c.tokens]
         return [t for t in with_target if t in enabled]
+
+    def sell_only(self) -> set[str]:
+        """Held assets outside the allowed range: managed by the AI, but it may only sell or keep them."""
+        return set(self._held) if self.allocation.mode == "ai" else set()
 
     def group_of(self, token: str) -> str:
         """Risk grouping: category in "targets" mode, the token itself in "ai" mode."""

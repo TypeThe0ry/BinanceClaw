@@ -113,9 +113,40 @@ class Service:
     @property
     def settings(self):
         s = self.settings_store.get()
-        if s.allocation.mode == "ai" and s.allocation.universe != "whitelist":
-            s._universe, s._uncovered = self.ai_universe(s)
+        if s.allocation.mode == "ai":
+            if s.allocation.universe != "whitelist":
+                s._universe, s._uncovered = self.ai_universe(s)
+            held = self.held_outside(s)
+            room = max(self.MAX_ROUND_ASSETS - len(s.tradable_tokens()), 0)
+            s._held, s._uncovered = held[:room], [*s._uncovered, *held[room:]]
         return s
+
+    HELD_TTL = 60
+
+    def held_outside(self, s) -> list[str]:
+        """AI 自主分配: assets the owner holds that the allowed range leaves out (not on the whitelist,
+        or blacklisted), biggest first. Whatever they are worth, the AI manages them too: it may sell
+        them or keep them, not buy more. Amounts the owner locked are not the AI's. Cached 60 s."""
+        al = s.allocation
+        key = (s.mode, s.quote, al.universe, tuple(al.enabled), tuple(al.blocked), tuple(s.stables),
+               tuple(sorted(s.capital.locked.items())))
+        cached = getattr(self, "_held_cache", None)
+        if cached and cached[1] == key and time.time() - cached[0] < self.HELD_TTL:
+            return cached[2]
+        try:
+            held = self.broker.balances()
+            pairs = {m["base"] for m in self._spot_markets() if m["quote"] == s.quote}
+            tickers = self._tickers_24h()
+        except ExchangeError as e:
+            log.warning("holdings outside the AI range unavailable: %s", e)
+            return cached[2] if cached and cached[1] == key else []
+        allowed = (lambda b: b in al.enabled) if al.universe == "whitelist" else (lambda b: b not in al.blocked)
+        free = {b: amt - s.capital.locked.get(b, 0.0) for b, amt in held.items()}
+        px = {b: (tickers.get(f"{b}{s.quote}") or {}).get("price") or 0.0 for b in free}
+        out = sorted((b for b, amt in free.items() if amt > 1e-12 and b in pairs and not allowed(b)
+                      and b not in s.stables and b != s.quote), key=lambda b: (-free[b] * px[b], b))
+        self._held_cache = (time.time(), key, out)
+        return out
 
     UNIVERSE_TTL = 600
 
@@ -152,8 +183,8 @@ class Service:
             self._universe_busy = False
         skip = set(s.stables) | {s.quote} | set(al.blocked)
         px = {b: (tickers.get(f"{b}{s.quote}") or {}).get("price") or 0.0 for b in pairs}
-        mine = sorted((b for b, amt in held.items() if b in pairs and b not in skip and amt * px.get(b, 0.0) >= 1),
-                      key=lambda b: -held[b] * px[b])
+        mine = sorted((b for b, amt in held.items() if b in pairs and b not in skip and amt > 1e-12),
+                      key=lambda b: (-held[b] * px[b], b))
         pending = [a.symbol[: -len(s.quote)] for a in self.db.pending_approvals()
                    if a.kind == "spot" and a.symbol.endswith(s.quote)]
         cared = [b for b in dict.fromkeys([*mine, *pending, *picks]) if b in pairs and b not in skip]
@@ -1426,6 +1457,7 @@ class Service:
             "targets": s.group_targets(),
             "allocation": s.allocation.model_dump(),
             "ai_focus": self.ai_focus(),
+            "sell_only": sorted(s.sell_only()),
             "capital": {"locked": s.capital.locked, "budget_usd": s.capital.budget_usd,
                         "deployed_usd": round(self.deployed_usd(), 2)},
             "risk_preset": s.risk_preset,

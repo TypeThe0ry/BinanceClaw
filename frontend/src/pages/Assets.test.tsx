@@ -54,6 +54,14 @@ describe("Assets page", () => {
     expect(screen.queryByText("合约权益")).not.toBeInTheDocument();
   });
 
+  it("marks holdings the AI may only sell", async () => {
+    mockApi({ ...routes, "GET /overview": { ...overview(), sell_only: ["SOL"] } });
+    renderPage(<Assets />);
+    const row = (await screen.findByText("SOL", { selector: "b" })).closest("tr")!;
+    expect(within(row).getByText("只卖不买")).toBeInTheDocument();
+    expect(within(screen.getByText("BTC", { selector: "b" }).closest("tr")!).queryByText("只卖不买")).not.toBeInTheDocument();
+  });
+
   it("hides empty assets that are not targets until asked", async () => {
     const ov = overview();
     ov.account_values = { ...ov.account_values!, PEPE: 0 };

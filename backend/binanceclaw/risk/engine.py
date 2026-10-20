@@ -192,6 +192,9 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
             continue
 
         # ---- BUY ----
+        if token in s.sell_only():
+            fail("只卖不买", f"{token} 不在可交易范围，只能卖出或继续持有")
+            continue
         if orders_left <= 0:
             fail("每日笔数", f"今日已达 {lim.max_orders_per_day} 笔上限")
             continue
