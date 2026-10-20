@@ -36,7 +36,7 @@ def test_holdings_and_owner_picks_always_in_the_round(svc, monkeypatch):
     svc.update_settings({"allocation": {"mode": "ai", "enabled": ["QQQB"]}})
     toks = svc.settings.tradable_tokens()
     assert toks[0] == "TON"                         # held (even while suspended) so the AI can manage it
-    assert "SOL" not in toks                        # dust (< $1) is not a holding to manage
+    assert "SOL" in toks                            # held, however little it is worth
     assert "QQQB" in toks                           # the owner's pick, whatever its trading volume
 
 
@@ -62,6 +62,35 @@ def test_blacklist_excludes_assets(svc):
 def test_whitelist_only_trades_the_list(svc):
     svc.update_settings({"allocation": {"mode": "ai", "universe": "whitelist", "enabled": ["BTC"], "blocked": ["BTC"]}})
     assert svc.settings.tradable_tokens() == ["BTC"]               # the blacklist only applies to its own mode
+
+
+def test_held_assets_outside_the_whitelist_are_managed_sell_only(svc, monkeypatch):
+    monkeypatch.setattr(type(svc.broker), "balances", lambda self: {"USDT": 5000.0, "ETH": 1.0, "SOL": 0.001})
+    svc.update_settings({"allocation": {"mode": "ai", "universe": "whitelist", "enabled": ["BTC"]},
+                         "limits": {"allow_sell": True}})
+    s = svc.settings
+    assert s.tradable_tokens() == ["BTC", "ETH", "SOL"]             # biggest holding first, dust too
+    assert s.sell_only() == {"ETH", "SOL"}
+    assert svc.overview()["sell_only"] == ["ETH", "SOL"]
+    use(svc, plan(("BUY", "ETHUSDT", 50), ("SELL", "ETHUSDT", 500)))
+    c = svc.run_cycle("manual")
+    held = c.context["allocation"]["held_outside"]
+    assert held["tokens"] == ["ETH", "SOL"] and "questions" in held["note"] and "recommended" in held["note"]
+    assert [r["decision"] for r in c.risk] == ["reject", "approve"]          # may sell or keep, never add
+    assert c.risk[0]["checks"][-1]["name"] == "只卖不买"
+
+
+def test_blacklisted_holdings_stay_managed(svc, monkeypatch):
+    monkeypatch.setattr(type(svc.broker), "balances", lambda self: {"USDT": 5000.0, "ETH": 1.0})
+    svc.update_settings({"allocation": {"mode": "ai", "universe": "blacklist", "blocked": ["ETH"]}})
+    assert "ETH" in svc.settings.tradable_tokens() and svc.settings.sell_only() == {"ETH"}
+    svc.update_settings({"capital": {"locked": {"ETH": 1.0}}})
+    assert "ETH" not in svc.settings.tradable_tokens()               # locked by the owner: not the AI's
+
+
+def test_held_assets_outside_the_range_are_not_sell_only_in_targets_mode(svc, monkeypatch):
+    monkeypatch.setattr(type(svc.broker), "balances", lambda self: {"USDT": 5000.0, "SOL": 3.0})
+    assert "SOL" not in svc.settings.tradable_tokens() and svc.settings.sell_only() == set()
 
 
 def test_market_list_unavailable_falls_back_to_the_explicit_list(svc, monkeypatch):

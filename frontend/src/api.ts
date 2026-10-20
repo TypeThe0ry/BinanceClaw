@@ -91,6 +91,7 @@ export interface Overview {
   allocation?: { mode: "targets" | "ai"; universe: "all" | "whitelist" | "blacklist"; enabled: string[]; blocked: string[];
     auto_rebalance: boolean; rebalance_drift: number };
   capital?: { locked: Record<string, number>; budget_usd: number | null; deployed_usd: number };
+  sell_only?: string[];
   risk_preset?: string;
   futures?: { enabled: boolean; open: number; symbols?: string[] };
   earn?: { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }> };

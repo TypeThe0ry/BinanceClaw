@@ -111,9 +111,9 @@ def _owner_view(settings: Settings) -> dict:
 
 
 UNIVERSE_NOTE = {
-    "all": "主人允许交易币安全部现货资产；universe 是本轮带完整行情、可以交易的部分：持仓、主人自选和目标配置里的资产，加上你用 focus 选定的资产",
-    "blacklist": "主人允许交易除黑名单外的全部币安现货资产；universe 是本轮带完整行情、可以交易的部分：持仓、主人自选和目标配置里的资产，加上你用 focus 选定的资产",
-    "whitelist": "主人只允许交易白名单里的资产，universe 就是白名单",
+    "all": "主人允许交易币安全部现货资产；universe 是本轮带完整行情、可以交易的部分：持仓（含 held_outside）、主人自选和目标配置里的资产，加上你用 focus 选定的资产",
+    "blacklist": "主人允许交易除黑名单外的全部币安现货资产；universe 是本轮带完整行情、可以交易的部分：持仓（含 held_outside）、主人自选和目标配置里的资产，加上你用 focus 选定的资产",
+    "whitelist": "主人只允许交易白名单里的资产，universe 是白名单，加上 held_outside 里主人持有的白名单外资产",
 }
 
 
@@ -124,6 +124,12 @@ def _allocation(settings: Settings, pf) -> dict:
         out = {"mode": "ai", "universe": universe, "scope": UNIVERSE_NOTE[al.universe],
                "stable_floor": settings.limits.stable_floor,
                "rule": "没有固定目标：由你自主决定配置哪些资产、各占多少（没有单币占比上限，集中度由你判断），并说明你的配置思路"}
+        held = [t for t in universe if t in settings.sell_only()]
+        if held:
+            out["held_outside"] = {"tokens": held, "note": (
+                "主人持有、但不在可交易范围（白名单外或在黑名单里）的资产，同样归你管理：只能卖出或继续持有，不能加仓。"
+                "判断不值得继续持有时可以随时卖出，也可以继续持有等待更好的时机；拿不准怎么处置时用 questions 问主人，"
+                "列出卖出、继续持有等选项并把你认为最优的设为 recommended。市值不足 $10 的无法下单卖出")}
         if al.universe != "whitelist":
             out["focus_rule"] = ("想配置 universe 以外的资产时，从 market_scan（按成交额排序的币安现货概览）或任何币安现货里选，"
                                  "写进 focus；下一轮起它们带完整行情、可以交易。不再关注的从 focus 里去掉")

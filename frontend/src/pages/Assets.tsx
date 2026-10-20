@@ -296,7 +296,8 @@ export default function Assets() {
                       <b className="font-semibold">{r.t}</b>
                       {sec.key === PICKED && <span className="text-[12px] text-fg-3" title={o?.binance_categories?.[r.t]?.tags.join(" · ")}>{bcat(r.t)}</span>}
                       {!!o?.earn?.positions?.[r.t]?.amount && <span className="tag bg-hover text-fg-2" title="活期理财">理财 {o.earn.positions[r.t].amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>}
-                      {r.locked > 0 && <span className="tag bg-hover text-fg-3" title={`锁定 ${r.locked}`}>锁定 {r.locked}</span>}</span></td>
+                      {r.locked > 0 && <span className="tag bg-hover text-fg-3" title={`锁定 ${r.locked}`}>锁定 {r.locked}</span>}
+                      {o?.sell_only?.includes(r.t) && <span className="tag bg-hover text-fg-3">只卖不买</span>}</span></td>
                     <td className="td num text-right text-fg-2">{r.qty ? r.qty.toLocaleString("en-US", { maximumFractionDigits: 8 }) : "0"}</td>
                     <td className="td text-right"><FlashNum value={r.price}>{r.price ? fmtPrice(r.price) : "—"}</FlashNum></td>
                     <td className="td num text-right">{r.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
