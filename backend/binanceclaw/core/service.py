@@ -45,6 +45,7 @@ from . import categories as cats
 from .analytics import Analytics
 from .arena import Arena
 from .autopilot import Autopilot
+from .backtest import BacktestLab
 from .earn import EarnManager
 from .events import EventBus
 from .track import TrackRecord
@@ -54,6 +55,23 @@ MAX_PENDING_QUESTIONS = 5
 FUTURES_ASSET = "FUTURES"          # pseudo-asset: equity of BinanceClaw's futures positions, in USD
 
 log = logging.getLogger("binanceclaw")
+
+
+def asset_snapshot(price: float, daily: list[dict], h4: list[dict]) -> dict:
+    """What the model sees about one asset: price, recent change and range, indicators. Shared by the live
+    loop and the backtest lab, so a replayed round reads exactly what a live one would."""
+    closes = [c["c"] for c in daily]
+    m30 = daily[-31:]
+    info = {"price": price}
+    if len(closes) >= 8:
+        info["change_7d"] = round(price / closes[-8] - 1, 4)
+    if len(closes) >= 31:
+        info["change_30d"] = round(price / closes[-31] - 1, 4)
+    info["high_30d"] = max(c["h"] for c in m30) if m30 else None
+    info["low_30d"] = min(c["l"] for c in m30) if m30 else None
+    info["daily_closes_14d"] = [round(c, 4) for c in closes[-14:]]
+    info.update(ta.summarize(price, daily, h4))
+    return info
 
 
 class Service:
@@ -73,6 +91,7 @@ class Service:
         self.valuation = Valuation(self)
         self.analytics = Analytics(self)
         self.arena = Arena(self)
+        self.backtests = BacktestLab(self)
         self.events.on(self.autopilot.on_event)
         self._confirm_key = ((self.secrets.session_secret or os.urandom(32).hex()) + ":confirm").encode()
         self._cycle_lock = threading.Lock()
@@ -417,19 +436,8 @@ class Service:
         series = self._klines_many([(f"{t}{s.quote}", iv, 60) for t in have for iv in ("1d", "4h")])
         for tok in have:
             k = series[(f"{tok}{s.quote}", "1d", 60)]
-            h4 = series[(f"{tok}{s.quote}", "4h", 60)]
             closes = [c["c"] for c in k]
-            m30 = k[-31:]
-            info = {"price": prices[tok]}
-            if len(closes) >= 8:
-                info["change_7d"] = round(prices[tok] / closes[-8] - 1, 4)
-            if len(closes) >= 31:
-                info["change_30d"] = round(prices[tok] / closes[-31] - 1, 4)
-            info["high_30d"] = max(c["h"] for c in m30) if m30 else None
-            info["low_30d"] = min(c["l"] for c in m30) if m30 else None
-            info["daily_closes_14d"] = [round(c, 4) for c in closes[-14:]]
-            info.update(ta.summarize(prices[tok], k, h4))
-            market[tok] = info
+            info = market[tok] = asset_snapshot(prices[tok], k, series[(f"{tok}{s.quote}", "4h", 60)])
             if tok == "BTC":
                 btc_change = info.get("change_7d")
                 if k and time.time() - k[-1]["t"] > 2 * 86400:

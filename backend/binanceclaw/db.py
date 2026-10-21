@@ -210,6 +210,20 @@ class ArenaEquity(SQLModel, table=True):
     equity: float
 
 
+class Backtest(SQLModel, table=True):
+    """One backtest-lab run: historical candles replayed through the decision prompt and the risk engine."""
+    id: str = Field(default_factory=_id, primary_key=True)
+    ts: float = Field(default_factory=time.time, index=True)
+    status: str = "running"                   # running | done | error | cancelled
+    params: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    progress: int = 0                         # decision rounds replayed so far
+    total: int = 0                            # decision rounds in the window
+    summary: dict = Field(default_factory=dict, sa_column=Column(JSON))   # headline numbers for the list
+    result: dict = Field(default_factory=dict, sa_column=Column(JSON))    # curves, trades, decision trail
+    error: str = ""
+    finished: Optional[float] = None
+
+
 class PaperBalance(SQLModel, table=True):
     asset: str = Field(primary_key=True)
     free: float = 0
