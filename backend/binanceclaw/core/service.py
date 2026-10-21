@@ -42,6 +42,7 @@ from ..risk.engine import Check, Portfolio, RiskState, Verdict, evaluate, normal
 from ..risk.futures import OPEN_OPS, FuturesView, evaluate_futures, perp_symbol
 from ..risk.rebalance import rebalance_actions
 from . import categories as cats
+from .analytics import Analytics
 from .autopilot import Autopilot
 from .earn import EarnManager
 from .events import EventBus
@@ -69,6 +70,7 @@ class Service:
         self.autopilot = Autopilot(self)
         self.track = TrackRecord(self)
         self.valuation = Valuation(self)
+        self.analytics = Analytics(self)
         self.events.on(self.autopilot.on_event)
         self._confirm_key = ((self.secrets.session_secret or os.urandom(32).hex()) + ":confirm").encode()
         self._cycle_lock = threading.Lock()
@@ -770,6 +772,12 @@ class Service:
                 context["track_record"] = tr
         except Exception:
             log.exception("track record unavailable")
+        try:
+            perf = self.analytics.for_prompt()
+            if perf:
+                context["performance_30d"] = perf
+        except Exception:
+            log.exception("performance analytics unavailable")
         if self.autopilot.auto:
             context["autonomy"] = self.autopilot.context(trigger, why)
         if st.unattended:

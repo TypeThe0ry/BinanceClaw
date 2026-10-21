@@ -11,6 +11,7 @@ import { Spinner } from "./components/ui";
 import { LiveProvider, TickerProvider, ToastProvider } from "./lib";
 import { initTheme } from "./theme";
 import { AIDetail, AIList } from "./pages/AI";
+import Analytics from "./pages/Analytics";
 import Approvals from "./pages/Approvals";
 import Assets from "./pages/Assets";
 import Chat from "./pages/Chat";
@@ -71,6 +72,7 @@ function App() {
               <Route path="approvals" element={<Approvals />} />
               <Route path="chat" element={<Chat />} />
               <Route path="reports" element={<Reports />} />
+              <Route path="analytics" element={<Analytics />} />
               <Route path="settings" element={<Settings />} />
               <Route path="config" element={<Config />} />
               <Route path="docs" element={<Docs />} />
