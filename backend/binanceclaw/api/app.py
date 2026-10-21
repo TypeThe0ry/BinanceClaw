@@ -572,10 +572,13 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         # Every distinct model the task routing uses, so a mistyped fast/strong model shows up here too.
         t0 = time.time()
         seen, models = set(), []
-        for task in MODEL_TASKS:
-            p = svc.routed(task)
-            if p.model not in seen:
-                seen.add(p.model)
+        ps = [svc.routed(task) for task in MODEL_TASKS]
+        db = svc.settings.debate
+        if db.enabled:   # the seats may sit on other providers and models
+            ps += [svc.seat_provider(getattr(db, k), "decision" if k == "judge" else "debate") for k in ("bull", "bear", "risk", "judge")]
+        for p in ps:
+            if (p.name, p.model) not in seen:
+                seen.add((p.name, p.model))
                 models.append(p)
         replied = []
         for p in models:

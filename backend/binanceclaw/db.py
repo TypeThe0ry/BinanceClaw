@@ -35,6 +35,7 @@ class Cycle(SQLModel, table=True):
     duration_ms: int = 0
     usage: dict = Field(default_factory=dict, sa_column=Column(JSON))
     timing: dict = Field(default_factory=dict, sa_column=Column(JSON))   # ms per stage: market, account, model, execute
+    debate: dict = Field(default_factory=dict, sa_column=Column(JSON))   # 多空辩论 turns before the decision (if on)
 
 
 class Order(SQLModel, table=True):

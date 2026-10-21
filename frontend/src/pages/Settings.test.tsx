@@ -189,4 +189,25 @@ describe("Settings page (设置)", () => {
     expect(api.find("PUT", "/settings")[0].body).toEqual({ notify: { ...notify, mode: "digest",
       types: { approval: true, trade: false, earn: true }, quiet: { enabled: true, start: "23:00", end: "08:00" } } });
   });
+
+  it("turns the debate on and gives each seat its own provider and model", async () => {
+    const api = mockSettings();
+    renderPage(<Settings />);
+    const sec = await waitFor(() => section("多空辩论"));
+    expect(within(sec).queryByLabelText("多头角色模型")).toBeNull();
+    await userEvent.click(within(sec).getByRole("checkbox", { name: "开启多空辩论" }));
+    await userEvent.click(within(sec).getByRole("button", { name: "2 轮" }));
+    await userEvent.selectOptions(within(sec).getByLabelText("空头角色提供方"), "openai");
+    await userEvent.type(within(sec).getByLabelText("空头角色模型"), "gpt-x");
+    await userEvent.type(within(sec).getByLabelText("决策角色模型"), "claude-opus-5-5");
+    await userEvent.click(within(sec).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
+    expect(api.find("PUT", "/settings")[0].body).toEqual({ debate: {
+      enabled: true, rounds: 2,
+      bull: { provider: "", model: "", base_url: "" },
+      bear: { provider: "openai", model: "gpt-x", base_url: "" },
+      risk: { provider: "", model: "", base_url: "" },
+      judge: { provider: "", model: "claude-opus-5-5", base_url: "" },
+    } });
+  });
 });

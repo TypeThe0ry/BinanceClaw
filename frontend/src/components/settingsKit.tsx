@@ -25,6 +25,7 @@ export interface SettingsResp {
     allocation: Alloc;
     provider_fallback: { name: string; model: string; base_url: string; timeout_seconds: number; temperature: number } | null;
     model_routing?: Routing;
+    debate?: DebateCfg;
     stables: string[];
     futures: FuturesCfg;
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
@@ -47,6 +48,11 @@ export interface SettingsResp {
   notify_types?: Record<string, { label: string; always: boolean }>;
 }
 export type Tier = "fast" | "strong" | "main";
+export type Seat = "bull" | "bear" | "risk" | "judge";
+export interface SeatModel { provider: string; model: string; base_url: string }
+export interface DebateCfg { enabled: boolean; rounds: number; bull: SeatModel; bear: SeatModel; risk: SeatModel; judge: SeatModel }
+const SEAT0: SeatModel = { provider: "", model: "", base_url: "" };
+export const DEBATE_DEFAULT: DebateCfg = { enabled: false, rounds: 1, bull: SEAT0, bear: SEAT0, risk: SEAT0, judge: SEAT0 };
 export interface Routing { enabled: boolean; tasks: Record<string, Tier>; models: Record<string, Partial<Record<"fast" | "strong", string>>> }
 export interface Questions { enabled: boolean; question_timeout_minutes: number; on_timeout: "skip" | "auto" }
 export const QUESTIONS_DEFAULT: Questions = { enabled: true, question_timeout_minutes: 120, on_timeout: "skip" };

@@ -4,7 +4,7 @@ import { post } from "../api";
 import { Page, Seg, SectionHead, Skeleton, Spinner } from "../components/ui";
 import { useApi } from "../lib";
 import { setPref, useThemePref } from "../theme";
-import { type NotifyCfg, Num, type Routing, Row, SettingsNav, type Tier, useSettingsDraft } from "../components/settingsKit";
+import { DEBATE_DEFAULT, type DebateCfg, type NotifyCfg, Num, type Routing, Row, type Seat, SettingsNav, type Tier, useSettingsDraft } from "../components/settingsKit";
 
 interface EarnResp { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }>;
   products: Record<string, { apr?: string | null; error?: string }> }
@@ -21,6 +21,7 @@ function deviceName(ua: string) {
 
 const TIER_LABEL: Record<Tier, string> = { fast: "轻量", strong: "决策", main: "主模型" };
 const PROVIDER: Record<string, string> = { claude_code: "Claude 订阅", openai: "OpenAI", openai_compat: "OpenAI 兼容", anthropic_api: "Anthropic API" };
+const SEATS: [Seat, string][] = [["bull", "多头"], ["bear", "空头"], ["risk", "风控"], ["judge", "决策"]];
 
 /** 设置: system-level settings. Investment/AI decision config lives on the 配置 page (Config.tsx). */
 export default function Settings() {
@@ -50,6 +51,8 @@ export default function Settings() {
   const rt: Routing = d.model_routing ?? { enabled: false, tasks: {}, models: {} };
   const setRt = (patch: Partial<Routing>) => setD({ ...d, model_routing: { ...rt, ...patch } });
   const pname = d.provider.name;
+  const db: DebateCfg = { ...DEBATE_DEFAULT, ...d.debate };
+  const setDb = (patch: Partial<DebateCfg>) => setD({ ...d, debate: { ...db, ...patch } });
   const setSch = (patch: Partial<typeof sch>) => setD({ ...d, schedule: { ...sch, ...patch } });
 
   return (
@@ -145,6 +148,44 @@ export default function Settings() {
           <button className="btn-primary" onClick={() => save({ provider: d.provider, provider_fallback: d.provider_fallback, model_routing: rt })}>保存</button>
           <button className="btn-secondary" onClick={test} disabled={testing}>{testing ? <Spinner /> : "连通测试"}</button>
         </div>
+      </section>
+
+      <section>
+        <SectionHead title="多空辩论" doc="debate" />
+        <Row label="开启">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={db.enabled} aria-label="开启多空辩论"
+            onChange={(e) => setDb({ enabled: e.target.checked })} />
+        </Row>
+        {db.enabled && (
+          <>
+            <Row label="轮数">
+              <Seg id="debate-rounds" value={String(db.rounds)} onChange={(k) => setDb({ rounds: Number(k) })}
+                items={["1", "2", "3"].map((k) => ({ k, label: `${k} 轮` }))} />
+            </Row>
+            {SEATS.map(([k, label]) => {
+              const seat = db[k];
+              const prov = seat.provider || pname;
+              const set = (patch: Partial<typeof seat>) => setDb({ [k]: { ...seat, ...patch } });
+              return (
+                <Row key={k} label={label}>
+                  <select className="input h-9 w-40" aria-label={`${label}角色提供方`} value={seat.provider}
+                    onChange={(e) => set({ provider: e.target.value, model: "", base_url: "" })}>
+                    <option value="">同主模型</option>
+                    {Object.entries(data.providers).map(([p, x]) => <option key={p} value={p}>{PROVIDER[p] ?? p}{x.ok ? "" : "（未配置）"}</option>)}
+                  </select>
+                  <input className="input h-9 w-48" aria-label={`${label}角色模型`} value={seat.model}
+                    placeholder={(seat.provider && data.providers[prov]?.default_model) || "默认"}
+                    onChange={(e) => set({ model: e.target.value })} />
+                  {seat.provider === "openai_compat" && seat.provider !== pname && (
+                    <input className="input h-9 w-56" aria-label={`${label}角色 Base URL`} value={seat.base_url} placeholder="https://api.deepseek.com/v1"
+                      onChange={(e) => set({ base_url: e.target.value })} />
+                  )}
+                </Row>
+              );
+            })}
+          </>
+        )}
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ debate: db })}>保存</button></div>
       </section>
 
       <section>

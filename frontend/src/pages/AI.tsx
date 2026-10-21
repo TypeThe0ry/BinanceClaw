@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { CycleFull, CycleRow, TrackRecord, WinStat } from "../api";
+import type { CycleFull, CycleRow, DebateLog, DebateTurn, TrackRecord, WinStat } from "../api";
 import { Decision, DocLink, Empty, Page, RiskChecks, SectionHead, Side, Skeleton, Tabs } from "../components/ui";
 import { clock, pct, token, usd, useApi, fmtPrice } from "../lib";
 
@@ -79,7 +79,66 @@ export function AIList() {
   );
 }
 
-const STAGES = [["market_ms", "行情"], ["account_ms", "账户"], ["model_ms", "模型"], ["execute_ms", "执行"]] as const;
+const STAGES = [["market_ms", "行情"], ["account_ms", "账户"], ["debate_ms", "辩论"], ["model_ms", "模型"], ["execute_ms", "执行"]] as const;
+
+const ROLE = { bull: "多头", bear: "空头", risk: "风控" } as const;
+const STANCE = { bullish: ["看多", "text-up"], bearish: ["看空", "text-down"], neutral: ["中性", "text-fg-2"] } as const;
+const PSIDE: Record<string, [string, string]> = { BUY: ["买", "text-up"], SELL: ["卖", "text-down"], HOLD: ["持有", "text-fg-2"], AVOID: ["回避", "text-warn"] };
+
+function Turn({ t }: { t: DebateTurn }) {
+  const [label, cls] = STANCE[t.stance ?? "neutral"];
+  return (
+    <div className="rounded-lg bg-raise p-4" data-testid={`turn-${t.round}-${t.role}`}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <b className="text-[14px]">{ROLE[t.role]}</b>
+        {t.error ? <span className="text-[13px] text-down">失败</span>
+          : <span className={`num text-[13px] ${cls}`}>{label} · {pct(t.conviction ?? 0, 0)}</span>}
+        <span className="ml-auto truncate text-[12px] text-fg-3">{t.model}{t.ms != null ? ` · ${(t.ms / 1000).toFixed(1)}s` : ""}</span>
+      </div>
+      {t.error ? <p className="mt-2 text-[13px] text-fg-2">{t.error}</p> : (
+        <div className="mt-2 text-[14px] leading-relaxed">
+          {t.rebuttal && <p className="mb-2 border-l-2 border-line-strong pl-3 text-fg-2">{t.rebuttal}</p>}
+          <p>{t.thesis}</p>
+          {!!t.points?.length && <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[13.5px] text-fg-2">{t.points.map((x, i) => <li key={i}>{x}</li>)}</ul>}
+          {!!t.proposals?.length && (
+            <ul className="mt-2 space-y-0.5 text-[13px]">
+              {t.proposals.map((p, i) => (
+                <li key={i}><span className={PSIDE[p.side]?.[1]}>{PSIDE[p.side]?.[0] ?? p.side}</span> <b>{token(p.symbol)}</b>
+                  {p.note && <span className="text-fg-2"> · {p.note}</span>}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Debate({ d }: { d: DebateLog }) {
+  const rounds = [...new Set(d.turns.map((t) => t.round))];
+  const c = d.consensus ?? {};
+  return (
+    <section>
+      <SectionHead title="多空辩论" doc="debate" />
+      {c.lean && (
+        <dl className="flex flex-wrap gap-x-8 gap-y-2 pt-3 text-[14px]">
+          <div><dt className="text-[12px] text-fg-3">共识</dt>
+            <dd className={`num mt-0.5 ${STANCE[c.lean][1]}`}>{STANCE[c.lean][0]} {(c.score ?? 0) > 0 ? "+" : ""}{(c.score ?? 0).toFixed(2)}</dd></div>
+          {Object.entries(c.votes ?? {}).map(([sym, v]) => (
+            <div key={sym}><dt className="text-[12px] text-fg-3">{token(sym)}</dt>
+              <dd className="mt-0.5 text-[13px]">{Object.entries(v).map(([side, n]) => `${PSIDE[side]?.[0] ?? side} ${n}`).join(" · ")}</dd></div>
+          ))}
+        </dl>
+      )}
+      {rounds.map((r) => (
+        <div key={r} className="pt-4">
+          {rounds.length > 1 && <h3 className="mb-2 text-[13px] text-fg-3">第 {r} 轮</h3>}
+          <div className="grid gap-3 md:grid-cols-3">{d.turns.filter((t) => t.round === r).map((t) => <Turn key={t.role} t={t} />)}</div>
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function timing(c: CycleFull) {
   const parts = STAGES.filter(([k]) => c.timing?.[k] != null).map(([k, label]) => `${label} ${((c.timing?.[k] ?? 0) / 1000).toFixed(1)}s`);
@@ -120,6 +179,8 @@ export function AIDetail() {
         </dl>
         <Raw text={JSON.stringify(c.context, null, 2)} />
       </section>
+
+      {!!c.debate?.turns?.length && <Debate d={c.debate as DebateLog} />}
 
       <section>
         <SectionHead title="判断" />
