@@ -70,6 +70,15 @@ class BinanceFutures(BinanceSpot):
         return [{"t": r[0] / 1000, "o": float(r[1]), "h": float(r[2]), "l": float(r[3]),
                  "c": float(r[4]), "v": float(r[5]), "close_t": r[6] / 1000} for r in rows]
 
+    def open_interest_hist(self, symbol: str, period: str = "1h", limit: int = 25) -> list[dict]:
+        rows = self._request("GET", "/futures/data/openInterestHist", {"symbol": symbol, "period": period, "limit": limit})
+        return [{"t": r["timestamp"] / 1000, "oi": float(r["sumOpenInterest"]), "oi_usd": float(r["sumOpenInterestValue"])}
+                for r in rows]
+
+    def funding_history(self, symbol: str, limit: int = 9) -> list[dict]:
+        rows = self._request("GET", "/fapi/v1/fundingRate", {"symbol": symbol, "limit": limit})
+        return [{"t": r["fundingTime"] / 1000, "rate": float(r["fundingRate"])} for r in rows]
+
     # ---------------------------------------------------------------- signed, read
     def account(self) -> dict:
         return self._request("GET", "/fapi/v3/account", signed=True)

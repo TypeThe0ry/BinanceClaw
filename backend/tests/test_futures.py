@@ -248,3 +248,24 @@ def test_db_migration_adds_columns(tmp_path):
     from binanceclaw.db import Approval
     a = db.get(Approval, "a1")
     assert a.kind == "spot" and a.payload == {}
+
+
+def test_context_carries_open_interest_and_funding_history(svc):
+    on(svc)
+    c = run(svc)
+    m = c.context["futures"]["markets"]["BTCUSDT"]
+    assert m["funding_rate_8h"] == 0.0001 and m["funding_avg_3"] == 0.0001 and m["funding_positive_streak"] == 9
+    assert m["oi_change_24h"] == round(1024 / 1000 - 1, 4) and m["oi_change_4h"] == round(1024 / 1020 - 1, 4)
+    calls = svc.fbroker.client.oi_calls
+    run(svc)                                    # hourly data: cached between rounds
+    assert svc.fbroker.client.oi_calls == calls
+
+
+def test_context_survives_missing_open_interest(svc):
+    on(svc)
+
+    def boom(*a, **k):
+        raise ExchangeError("no data")
+    svc.fbroker.client.open_interest_hist = boom
+    m = run(svc).context["futures"]["markets"]["BTCUSDT"]
+    assert m["funding_rate_8h"] == 0.0001 and "oi_change_24h" not in m

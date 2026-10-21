@@ -26,11 +26,46 @@ def test_ema_and_sma():
     assert abs(ta.ema([10.0] * 30, 12) - 10.0) < 1e-9
 
 
+def test_macd_cross_and_sign():
+    flat_then_up = [100.0] * 40 + [100.0 + 2 * i for i in range(1, 6)]
+    m = ta.macd(flat_then_up)
+    assert len(m) == len(flat_then_up) - 33 and m[-1][0] > 0 and m[-1][2] > 0
+    assert ta.macd([1.0] * 30) == []
+    down = [200.0 - i for i in range(60)]
+    assert ta.summarize(down[-1], _k(down), _k(down))["macd_4h"]["state"] == "bear"
+    # long slide, then a sharp bounce on the last bar flips the histogram positive
+    turn = [200.0 - i for i in range(50)] + [150.0, 149.0, 170.0]
+    assert ta._macd_read(turn, turn[-1])["state"] == "bull_cross"
+
+
+def test_bollinger_and_volume_ratio():
+    mid, up, lo = ta.bollinger([10.0, 12.0] * 10)
+    assert mid == 11.0 and abs(up - 13.0) < 1e-9 and abs(lo - 9.0) < 1e-9
+    assert ta.bollinger([1.0] * 5) is None
+    k = [{"t": i, "c": 1, "v": 10, "close_t": i} for i in range(25)]
+    k[-1]["v"] = 30
+    assert ta.volume_ratio(k) == 3.0
+    k.append({"t": 99, "c": 1, "v": 1, "close_t": time.time() + 3600})     # still-forming candle is ignored
+    assert ta.volume_ratio(k) == 3.0
+    assert ta.volume_ratio(k[:5]) is None
+    s = ta.summarize(10.0, [dict(x, h=1, l=1, o=1) for x in k], [])
+    assert s["vol_ratio_1d"] == 3.0
+
+
+def test_derivatives_reads_open_interest_and_funding():
+    oi = [{"t": i, "oi": 100.0 + i, "oi_usd": 1.0} for i in range(25)][::-1]       # order-independent
+    d = ta.derivatives(oi, [{"t": 1, "rate": -0.0001}, {"t": 2, "rate": 0.0003}, {"t": 3, "rate": 0.0003}])
+    assert d["oi_change_4h"] == round(124 / 120 - 1, 4) and d["oi_change_24h"] == 0.24
+    assert d["funding_avg_3"] == round(0.0005 / 3, 6) and d["funding_positive_streak"] == 2
+    assert ta.derivatives([], []) == {}
+
+
 def test_summarize_reads_regimes():
     up = [100 + i for i in range(60)]
     s = ta.summarize(up[-1] + 1, _k(up), _k(up))
     assert s["trend_1d"] == "up" and s["trend_4h"] == "up" and s["regime"] == "uptrend"
     assert s["rsi14_1d"] > 70 and s["atr14_pct"] > 0 and s["vs_sma20"] > 0
+    assert s["macd_1d"]["state"] == "bull" and s["bb_1d"]["pct_b"] > 0.9 and s["vol_ratio_1d"] == 1.0
     down = [200 - i for i in range(60)]
     assert ta.summarize(down[-1] - 1, _k(down), _k(down))["regime"] == "downtrend"
     # daily uptrend, 4h dipping below its averages: a pullback inside the trend

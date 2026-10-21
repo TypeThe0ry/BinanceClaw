@@ -53,6 +53,7 @@ class FuturesBroker:
         self._rules: tuple[float, dict] | None = None
         self._prem: tuple[float, dict] | None = None
         self._dual: tuple[float, bool] | None = None
+        self._deriv: dict[str, tuple[float, tuple]] = {}
 
     # ---------------------------------------------------------------- market data
     def rules(self) -> dict:
@@ -67,6 +68,14 @@ class FuturesBroker:
 
     def marks(self, max_age: float = 5) -> dict[str, float]:
         return {k: v["mark"] for k, v in self.premium(max_age).items()}
+
+    def derivatives(self, symbol: str, max_age: float = 300) -> tuple[list[dict], list[dict]]:
+        """(hourly open-interest history, recent funding settlements) for one perp; slow data, cached."""
+        hit = self._deriv.get(symbol)
+        if not hit or time.time() - hit[0] > max_age:
+            hit = (time.time(), (self.client.open_interest_hist(symbol), self.client.funding_history(symbol)))
+            self._deriv[symbol] = hit
+        return hit[1]
 
     def hedge(self) -> bool:
         if not self._dual or time.time() - self._dual[0] > 60:
