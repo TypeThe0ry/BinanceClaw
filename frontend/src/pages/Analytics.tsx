@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Analytics as AnalyticsResp, AnalyticsRange } from "../api";
+import { AnalyticsNav } from "../components/AnalyticsNav";
 import { DrawdownChart, EquityGrid, TradeGrid } from "../components/Metrics";
 import { Empty, Page, SectionHead, Seg, Skeleton } from "../components/ui";
 import { useApi } from "../lib";
@@ -23,7 +24,7 @@ export default function Analytics() {
   return (
     <Page className="flex flex-col gap-10">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
-        <h1 className="text-[20px] font-semibold">绩效</h1>
+        <AnalyticsNav />
         <Seg id="analytics-range" value={rng} onChange={pick} items={RANGES} />
       </div>
       {error && !d ? <Empty text={`读取失败：${error}`} /> : !d ? <Skeleton className="h-64" /> : (

@@ -299,3 +299,30 @@ export interface ArenaEntry {
 }
 export interface ArenaBatch { batch: string; ts: number; entries: ArenaEntry[] }
 export type ArenaCurves = Record<string, [number, number][]>;
+
+export type BacktestStep = "4h" | "12h" | "1d";
+export interface BacktestParams {
+  tokens: string[]; start: string; end: string; step: BacktestStep; capital: number; fee: number; slippage: number;
+  approvals: "execute" | "skip"; model: string; allow_sell: boolean | null;
+}
+export interface BacktestSummary {
+  total_return: number | null; btc_return: number | null; basket_return: number | null; excess_btc: number | null;
+  max_drawdown: number | null; sharpe: number | null; win_rate: number | null; trades: number; end_value: number;
+}
+export interface BacktestRow {
+  id: string; ts: number; status: "running" | "done" | "error" | "cancelled"; params: BacktestParams; progress: number; total: number;
+  summary: Partial<BacktestSummary>; error: string; finished: number | null;
+}
+export interface BacktestAction {
+  side: string; symbol: string; requested_usd: number; approved_usd: number; decision: string; reason: string; reason_model: string;
+  fill?: { qty: number; price: number; quote_usd: number; fee: number };
+}
+export interface BacktestRound { i: number; t: number; status: "done" | "skipped" | "error"; summary: string; confidence: number | null; actions: BacktestAction[] }
+export interface BacktestTrade { ts: number; round: number; token: string; side: "BUY" | "SELL"; qty: number; price: number; quote_usd: number; fee: number }
+export interface BacktestResult {
+  equity: { t: number; v: number; btc: number; basket: number }[]; drawdown: { t: number; dd: number }[];
+  stats: EquityStats; btc: EquityStats; basket: EquityStats; trades: TradeStats; log: BacktestTrade[]; rounds: BacktestRound[];
+  usage: { calls: number; input_tokens: number; output_tokens: number; model_ms: number }; model: string;
+  decisions: { proposed: number; execute: number; skipped: number; reject: number }; holdings: Record<string, number>;
+}
+export interface BacktestFull extends BacktestRow { result: Partial<BacktestResult> }

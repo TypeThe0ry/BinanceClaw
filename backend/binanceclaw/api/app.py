@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlmodel import desc, select
 
 from ..brain.providers import PROVIDERS, ProviderError
@@ -31,7 +31,8 @@ from ..config import (
     ConfirmationRequired,
     ProviderSettings,
 )
-from ..db import AiQuestion, Approval, ChatMessage, Cycle, Order, Report
+from ..core.backtest import Busy
+from ..db import AiQuestion, Approval, Backtest, ChatMessage, Cycle, Order, Report
 from ..exchange.binance_spot import ExchangeError
 from ..risk.gate import CONFIRM_PHRASE
 
@@ -461,6 +462,40 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             return svc.analytics.report(range)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+
+    @app.get("/api/backtests", dependencies=auth)
+    def backtests(limit: int = 30):
+        return svc.backtests.list(min(max(limit, 1), 100))
+
+    @app.post("/api/backtests", dependencies=auth)
+    def start_backtest(body: dict):
+        try:
+            return svc.backtests.start(body)
+        except ValidationError as e:
+            raise HTTPException(400, "；".join(str(x["msg"]).removeprefix("Value error, ") for x in e.errors()[:3])) from None
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        except Busy as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.get("/api/backtests/{bid}", dependencies=auth)
+    def backtest(bid: str):
+        row = svc.db.get(Backtest, bid)
+        if not row:
+            raise HTTPException(404, "回测不存在")
+        return row
+
+    @app.post("/api/backtests/{bid}/cancel", dependencies=auth)
+    def cancel_backtest(bid: str):
+        if not svc.backtests.cancel(bid):
+            raise HTTPException(409, "回测不在运行")
+        return {"ok": True}
+
+    @app.delete("/api/backtests/{bid}", dependencies=auth)
+    def delete_backtest(bid: str):
+        if not svc.backtests.delete(bid):
+            raise HTTPException(409, "回测不存在或仍在运行")
+        return {"ok": True}
 
     @app.get("/api/alerts", dependencies=auth)
     def alerts(status: str = "active", limit: int = 100):
