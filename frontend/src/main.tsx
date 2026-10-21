@@ -14,6 +14,7 @@ import { AIDetail, AIList } from "./pages/AI";
 import Analytics from "./pages/Analytics";
 import Approvals from "./pages/Approvals";
 import Arena from "./pages/Arena";
+import Backtest from "./pages/Backtest";
 import Assets from "./pages/Assets";
 import Chat from "./pages/Chat";
 import Config from "./pages/Config";
@@ -75,6 +76,7 @@ function App() {
               <Route path="reports" element={<Reports />} />
               <Route path="analytics" element={<Analytics />} />
               <Route path="arena" element={<Arena />} />
+              <Route path="analytics/backtest" element={<Backtest />} />
               <Route path="settings" element={<Settings />} />
               <Route path="config" element={<Config />} />
               <Route path="docs" element={<Docs />} />
