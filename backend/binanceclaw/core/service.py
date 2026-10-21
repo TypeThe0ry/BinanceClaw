@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from sqlmodel import desc, select
 
 from ..brain import allocation as alloc
+from ..brain import debate as deb
 from ..brain import indicators as ta
 from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
@@ -25,6 +26,8 @@ from ..config import (
     DATA_DIR,
     MODEL_TASKS,
     ConfirmationRequired,
+    ProviderSettings,
+    RoleModel,
     Secrets,
     SettingsStore,
     dangerous_changes,
@@ -809,8 +812,16 @@ class Service:
             self.autopilot.count_call()
         for qid in fresh:
             self.db.update(AiQuestion, qid, fed_cycle=c.id)
+        system = SYSTEM
+        if s.debate.enabled:
+            turns = self.debate(prompt, s.debate)
+            t2 = lap("debate_ms", t2)
+            self.db.update(Cycle, c.id, debate={"rounds": s.debate.rounds, "turns": turns, "consensus": deb.consensus(turns)})
+            if any(not t.get("error") for t in turns):
+                system, prompt = SYSTEM + deb.JUDGE_ADDENDUM, deb.judge_prompt(prompt, turns)
+                self.db.update(Cycle, c.id, prompt=prompt)
         try:
-            comp = self.complete(SYSTEM, [{"role": "user", "content": prompt}], json_mode=True, task="decision")
+            comp = self.judge(system, prompt, s.debate)
         except ProviderError as e:
             lap("model_ms", t2)
             self.events.emit("alert", {"text": f"模型调用失败，本轮不交易：{e}"})
@@ -854,6 +865,66 @@ class Service:
         out["questions"] = self.create_questions(plan.questions, c.id)
         lap("execute_ms", t3)
         return finish(status="done", plan=out, risk=risk, summary=plan.summary)
+
+    # ------------------------------------------------------------------ 多空辩论
+    def seat_provider(self, rm: RoleModel, task: str):
+        """The provider one debate seat calls: its own provider/model if set, else the main one routed for ``task``."""
+        s = self.settings_store.get()
+        if rm.provider and rm.provider != s.provider.name:
+            fb = s.provider_fallback
+            base = fb if fb and fb.name == rm.provider else ProviderSettings(name=rm.provider)
+            cfg = base.model_copy(update={"model": rm.model, "base_url": rm.base_url or base.base_url,
+                                          "timeout_seconds": s.provider.timeout_seconds})
+            p = make_provider(cfg, self.secrets)
+            return p if rm.model else self.routed(task, p)
+        p = self.routed(task)
+        return p.with_model(rm.model) if rm.model else p
+
+    def debate(self, data_prompt: str, cfg) -> list[dict]:
+        """Bull, bear and risk argue for ``cfg.rounds`` rounds; the seats of a round speak in parallel.
+        A seat that fails is recorded with its error and the others carry on."""
+        turns: list[dict] = []
+
+        def argue(role: str, rnd: int, prev: list[dict]) -> dict:
+            t0 = time.time()
+            turn = {"round": rnd, "role": role, "model": ""}
+            try:
+                p = self.seat_provider(getattr(cfg, role), "debate")
+                turn["model"] = p.model
+                comp = p.complete(deb.role_system(role), [{"role": "user", "content": deb.role_prompt(data_prompt, role, rnd, prev)}],
+                                  json_mode=True)
+                turn["model"] = comp.model or p.model
+                turn.update(deb.parse_argument(comp.text))
+            except (ProviderError, PlanError) as e:
+                turn["error"] = str(e)[:300]
+            except Exception as e:   # one seat must never take the decision round down
+                log.exception("debate seat %s failed", role)
+                turn["error"] = str(e)[:300]
+            turn["ms"] = int((time.time() - t0) * 1000)
+            return turn
+
+        with ThreadPoolExecutor(max_workers=len(deb.ROLES)) as ex:
+            for rnd in range(1, cfg.rounds + 1):
+                prev = list(turns)
+                turns.extend(ex.map(lambda r, n=rnd, pv=prev: argue(r, n, pv), deb.ROLES))
+                if not any(not t.get("error") for t in turns):
+                    break    # nobody could speak: further rounds would fail the same way
+        return turns
+
+    def judge(self, system: str, prompt: str, cfg):
+        """The decision call. A judge model set on the debate page is used when the debate is on;
+        if it fails, the usual decision model (and its fallback) decides instead."""
+        msgs = [{"role": "user", "content": prompt}]
+        rm = cfg.judge
+        if cfg.enabled and (rm.provider or rm.model):
+            try:
+                return self.seat_provider(rm, "decision").complete(system, msgs, json_mode=True)
+            except ProviderError as e:
+                log.warning("debate judge failed, using the decision model: %s", e)
+                comp = self.complete(system, msgs, json_mode=True, task="decision")
+                comp.usage = {**(comp.usage or {}), "judge_error": str(e)[:300]}
+                return comp
+        return self.complete(system, msgs, json_mode=True, task="decision")
 
     def _with_rebalance(self, actions: list[dict], pf: Portfolio) -> tuple[list[dict], list[dict]]:
         """手动分配: put the rebalancing trades first; the model's own actions on those assets are

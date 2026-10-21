@@ -165,7 +165,19 @@ export interface CycleFull extends CycleRow {
   prompt: string;
   raw_output: string;
   usage: Record<string, unknown>;
-  timing?: { market_ms?: number; account_ms?: number; model_ms?: number; execute_ms?: number };
+  timing?: { market_ms?: number; account_ms?: number; debate_ms?: number; model_ms?: number; execute_ms?: number };
+  debate?: Partial<DebateLog>;
+}
+
+export type DebateRole = "bull" | "bear" | "risk";
+export interface DebateTurn {
+  round: number; role: DebateRole; model: string; ms?: number; error?: string;
+  stance?: "bullish" | "bearish" | "neutral"; conviction?: number; thesis?: string; points?: string[];
+  proposals?: { symbol: string; side: "BUY" | "SELL" | "HOLD" | "AVOID"; note: string }[]; rebuttal?: string;
+}
+export interface DebateLog {
+  rounds: number; turns: DebateTurn[];
+  consensus: { score?: number; lean?: "bullish" | "bearish" | "neutral"; votes?: Record<string, Record<string, number>> };
 }
 
 export interface WinStat { evaluated: number; wins: number; win_rate: number | null; avg_return: number | null }

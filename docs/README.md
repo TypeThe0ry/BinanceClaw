@@ -5,6 +5,7 @@
 | [快速开始](getting-started.md) | 安装、设置向导、自检、访问 |
 | [界面指南](dashboard.md) | 每个页面看什么、能做什么 |
 | [AI 决策与风控](decisions-and-risk.md) | 一轮决策怎么跑、每条硬限制的含义 |
+| [多空辩论](debate.md) | 多头、空头、风控辩论后由决策模型定夺，每个角色可用不同模型 |
 | [资金管理与资产分配](capital-and-allocation.md) | 锁定资产、投入预算、选择资产、AI 自主分配 |
 | [风险预设](risk-presets.md) | 保守 / 均衡 / 积极 |
 | [合约](futures.md) | USDⓈ-M 永续：动作、硬限制、止损保障、资金划转 |

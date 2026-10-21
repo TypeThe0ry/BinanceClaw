@@ -136,9 +136,11 @@ MODEL_TASKS: dict[str, str] = {
     "allocation": "配置提案",
     "chat": "对话",
     "report": "日报点评",
+    "debate": "多空辩论",
 }
 MODEL_TIERS = ("fast", "strong", "main")          # main = the provider's own model setting
-DEFAULT_TASK_TIERS: dict[str, str] = {"decision": "strong", "allocation": "strong", "chat": "strong", "report": "fast"}
+DEFAULT_TASK_TIERS: dict[str, str] = {"decision": "strong", "allocation": "strong", "chat": "strong", "report": "fast",
+                                      "debate": "strong"}
 # Built-in tier models per provider; providers without an entry use their main model for every tier.
 TIER_MODELS: dict[str, dict[str, str]] = {
     "claude_code": {"fast": "claude-haiku-5-5", "strong": "claude-opus-5-5"},
@@ -172,6 +174,32 @@ class ModelRouting(BaseModel):
         if tier == "main":
             return main
         return self.models.get(provider, {}).get(tier) or TIER_MODELS.get(provider, {}).get(tier) or main
+
+
+ProviderName = Literal["", "claude_code", "openai", "openai_compat", "anthropic_api"]
+
+
+class RoleModel(BaseModel):
+    """The model one debate seat calls. Empty provider = the main provider; empty model = the routed model."""
+    provider: ProviderName = ""
+    model: str = ""
+    base_url: str = ""                 # only for openai_compat when it is not the main provider
+
+    @field_validator("model", "base_url")
+    @classmethod
+    def _strip(cls, v):
+        return v.strip()
+
+
+class Debate(BaseModel):
+    """多空辩论: bull, bear and risk seats argue before the decision model (judge) writes the plan.
+    The plan still goes through the risk engine like any other."""
+    enabled: bool = False
+    rounds: int = Field(default=1, ge=1, le=3)
+    bull: RoleModel = Field(default_factory=RoleModel)
+    bear: RoleModel = Field(default_factory=RoleModel)
+    risk: RoleModel = Field(default_factory=RoleModel)
+    judge: RoleModel = Field(default_factory=RoleModel)
 
 
 class Capital(BaseModel):
@@ -452,6 +480,7 @@ class Settings(BaseModel):
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     provider_fallback: ProviderSettings | None = None     # used when the primary model fails
     model_routing: ModelRouting = Field(default_factory=ModelRouting)
+    debate: Debate = Field(default_factory=Debate)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     futures: Futures = Field(default_factory=Futures)
     earn: Earn = Field(default_factory=Earn)
@@ -687,6 +716,7 @@ DECISION_FIELDS: dict[str, str] = {
     "stables": "稳定币列表",
     "provider": "AI 模型",
     "model_routing": "模型分配",
+    "debate": "多空辩论",
     "approval_free": "免审批",
     "strategy": "交易风格",
     "outlook": "个人观点",
