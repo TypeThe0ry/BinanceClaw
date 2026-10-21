@@ -215,3 +215,19 @@ def test_assets_held_in_earn_are_managed_too(svc, monkeypatch):
     toks = svc.settings.tradable_tokens()
     assert "SOL" in toks and "SOL" in svc.settings.sell_only()      # managed by the AI, sell or keep only
     assert "SOL" in svc.settings.group_targets()                    # so the assets page shows it as managed
+
+
+def test_new_holding_joins_the_round_without_waiting_for_the_universe_cache(svc, monkeypatch):
+    """The candidate pool is cached for minutes, but a coin that just arrived (spot or Earn) must not wait for it."""
+    bal = {"USDT": 5000.0}
+    monkeypatch.setattr(type(svc.broker), "balances", lambda self: dict(bal))
+    svc.update_settings({"allocation": {"mode": "ai", "enabled": ["BTC"]}})
+    assert "SOL" not in svc.settings.tradable_tokens()
+    assert svc._universe is not None                       # pool resolved and cached
+    bal["SOL"] = 3.0                                       # a deposit arrives
+    svc._held_snap = None                                  # (stands in for the 60 s snapshot expiring)
+    toks = svc.settings.tradable_tokens()
+    assert "SOL" in toks and "SOL" in svc.settings.group_targets()
+    bal.pop("SOL")                                         # and when it leaves, it leaves the round again
+    svc._held_snap = None
+    assert "SOL" not in svc.settings.group_targets()

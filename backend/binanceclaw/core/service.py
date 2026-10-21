@@ -123,6 +123,22 @@ class Service:
 
     HELD_TTL = 60
 
+    def held_snapshot(self) -> dict[str, float]:
+        """held_balances() cached for HELD_TTL. The settings property is read constantly, so the
+        exchange must not be asked every time; a new deposit or Earn move shows up within a minute."""
+        raw = self.settings_store.get()
+        key = (raw.mode, raw.earn.enabled, raw.earn.auto_all, tuple(raw.earn.assets), tuple(sorted(raw.capital.locked.items())))
+        cached = getattr(self, "_held_snap", None)
+        if cached and cached[1] == key and time.time() - cached[0] < self.HELD_TTL:
+            return cached[2]
+        try:
+            snap = self.held_balances()
+        except ExchangeError as e:
+            log.warning("holdings unavailable: %s", e)
+            return cached[2] if cached and cached[1] == key else {}
+        self._held_snap = (time.time(), key, snap)
+        return snap
+
     def held_outside(self, s) -> list[str]:
         """AI 自主分配: assets the owner holds that the allowed range leaves out (not on the whitelist,
         or blacklisted), biggest first. Whatever they are worth, the AI manages them too: it may sell
@@ -134,7 +150,7 @@ class Service:
         if cached and cached[1] == key and time.time() - cached[0] < self.HELD_TTL:
             return cached[2]
         try:
-            held = self.held_balances()
+            held = self.held_snapshot()
             pairs = {m["base"] for m in self._spot_markets() if m["quote"] == s.quote}
             tickers = self._tickers_24h()
         except ExchangeError as e:
@@ -165,7 +181,8 @@ class Service:
         al = s.allocation
         picks = owner_picks(s)
         focus = self.ai_focus()
-        key = (s.mode, s.quote, al.universe, tuple(al.blocked), tuple(s.stables), tuple(picks), tuple(focus))
+        holdings = tuple(sorted(a for a, amt in self.held_snapshot().items() if amt > 1e-12))
+        key = (s.mode, s.quote, al.universe, tuple(al.blocked), tuple(s.stables), tuple(picks), tuple(focus), holdings)
         cached = getattr(self, "_universe", None)
         if cached and cached[1] == key and time.time() - cached[0] < self.UNIVERSE_TTL:
             return cached[2], cached[3]
@@ -175,7 +192,7 @@ class Service:
         try:
             pairs = {m["base"]: m.get("status", "TRADING") for m in self._spot_markets() if m["quote"] == s.quote}
             tickers = self._tickers_24h()
-            held = self.held_balances()
+            held = self.held_snapshot()
         except ExchangeError as e:
             log.warning("AI universe unavailable: %s", e)
             return (cached[2], cached[3]) if cached and cached[1] == key else (None, [])
