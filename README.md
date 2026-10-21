@@ -15,8 +15,10 @@ AI 出决策 · 代码守底线 · 大额你来批
 [![React](https://img.shields.io/badge/React_18-20232A?logo=react&logoColor=61DAFB)](frontend)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 [![Telegram](https://img.shields.io/badge/Telegram-bot-26A5E4?logo=telegram&logoColor=white)](docs/telegram.md)
+[![Release](https://img.shields.io/github/v/release/TypeThe0ry/BinanceClaw?color=F0B90B)](https://github.com/TypeThe0ry/BinanceClaw/releases)
+[![Docs](https://img.shields.io/badge/docs-online-000000?logo=materialformkdocs&logoColor=white)](https://typethe0ry.github.io/BinanceClaw/)
 
-[快速开始](#-快速开始) · [功能](#-功能) · [工作原理](#-工作原理) · [文档](docs/README.md) · [安全](SECURITY.md) · [English](#english)
+[快速开始](#-快速开始) · [功能](#-功能) · [工作原理](#-工作原理) · [文档](https://typethe0ry.github.io/BinanceClaw/) · [更新日志](CHANGELOG.md) · [安全](SECURITY.md) · [English](#english)
 
 </div>
 
@@ -24,6 +26,20 @@ AI 出决策 · 代码守底线 · 大额你来批
 > 这是自托管的个人工具，**不是投资建议**。加密资产波动剧烈，AI 会犯错。先用模拟盘跑足够久，再决定是否开启实盘，并且只投入你能承受损失的资金。
 
 ---
+
+## 📸 界面
+
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="资产首页：估值曲线、资产与目标区间、AI 动态" width="100%" />
+  <br/><sub><b>资产</b> · 估值曲线（1日 / 7日 / 30天 / 90天 / 一年）、每个币的成本与目标区间、AI 动态</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/spot.png" alt="现货：K 线上标出 AI 成交和价格提醒" width="100%" />
+  <br/><sub><b>现货</b> · K 线上标出 AI 的每笔成交和 AI 设置的价格提醒</sub>
+</p>
+
+> 截图来自作者的实盘账户，余额与持仓数量已遮挡。
 
 ## ✨ 亮点
 
@@ -201,12 +217,14 @@ BINANCECLAW_DATA=../data .venv/bin/binanceclaw serve      # --host / --port 可�
 
 ## 📚 文档
 
+在线阅读：**<https://typethe0ry.github.io/BinanceClaw/>**（也可以在网页右上角的 📖 里看，或直接浏览 [docs/](docs/README.md)）。
+
 | 入门 | 进阶 | 参考 |
 |---|---|---|
 | [快速开始](docs/getting-started.md) | [AI 决策与风控](docs/decisions-and-risk.md) | [模型](docs/models.md) |
 | [界面指南](docs/dashboard.md) | [资金管理与资产分配](docs/capital-and-allocation.md) | [Telegram](docs/telegram.md) |
 | [模拟盘与实盘](docs/live-mode.md) | [风险预设](docs/risk-presets.md) | [常见问题](docs/faq.md) |
-| [审批](docs/approvals.md) | [合约](docs/futures.md) · [理财](docs/earn.md) | [安全](SECURITY.md) |
+| [审批](docs/approvals.md) | [合约](docs/futures.md) · [理财](docs/earn.md) | [安全](SECURITY.md) · [更新日志](CHANGELOG.md) |
 
 ## 🏗️ 项目结构
 
@@ -220,7 +238,7 @@ backend/binanceclaw/
   api/        app.py（FastAPI，登录、REST、SSE）
   cli.py      serve · setup · doctor · password
 frontend/     Vite + React + TypeScript + Tailwind + Framer Motion
-docs/         使用文档
+docs/         使用文档（同时发布为 GitHub Pages 文档站，见 mkdocs.yml）
 ```
 
 ## 🛠️ 开发
@@ -261,7 +279,7 @@ npm run typecheck && npm test
 - **Paper first**: real market data with virtual funds, same pipeline as live; live mode is gated on API-key permission checks (withdrawals must be off).
 - **Fully audited**: inputs, prompts, raw outputs, every risk check and every fill are recorded.
 
-Quick start: see [Docker](#docker推荐) above. Docs are in Chinese under [docs/](docs/README.md).
+Quick start: see [Docker](#docker推荐) above. Docs (Chinese) are online at <https://typethe0ry.github.io/BinanceClaw/> and under [docs/](docs/README.md).
 
 **Not financial advice.** Run in paper mode first and use at your own risk — see [SECURITY.md](SECURITY.md).
 

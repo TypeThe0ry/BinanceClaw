@@ -5,14 +5,17 @@ import { Empty, Page } from "../components/ui";
 
 const files = import.meta.glob("../../../docs/*.md", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 const security = import.meta.glob("../../../SECURITY.md", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+const changelog = import.meta.glob("../../../CHANGELOG.md", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
 const DOCS: Record<string, string> = {};
 for (const [path, text] of Object.entries(files)) DOCS[path.split("/").pop()!.replace(/\.md$/, "")] = text;
 for (const text of Object.values(security)) DOCS.security = text;
+for (const text of Object.values(changelog)) DOCS.changelog = text;
 
 const ORDER: [string, string][] = [
   ["", "目录"], ["getting-started", "快速开始"], ["dashboard", "界面指南"], ["decisions-and-risk", "AI 决策与风控"], ["capital-and-allocation", "资金与分配"], ["risk-presets", "风险预设"],
-  ["approvals", "审批"], ["live-mode", "模拟盘与实盘"], ["models", "模型"], ["telegram", "Telegram"], ["faq", "常见问题"], ["security", "安全"],
+  ["futures", "合约"], ["earn", "理财"], ["approvals", "审批"], ["live-mode", "模拟盘与实盘"], ["models", "模型"], ["telegram", "Telegram"], ["faq", "常见问题"],
+  ["security", "安全"], ["changelog", "更新日志"],
 ];
 
 export default function Docs() {
