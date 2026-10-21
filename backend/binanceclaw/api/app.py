@@ -432,6 +432,13 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         except ExchangeError as e:
             raise HTTPException(502, str(e)) from e
 
+    @app.get("/api/analytics", dependencies=auth)
+    def analytics(range: str = "30d"):
+        try:
+            return svc.analytics.report(range)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
     @app.get("/api/alerts", dependencies=auth)
     def alerts(status: str = "active", limit: int = 100):
         from ..db import PriceAlert

@@ -237,6 +237,14 @@ def test_track_record_api(client):
     assert r.status_code == 200 and r.json()["trades"] == 0 and r.json()["24h"]["win_rate"] is None
 
 
+def test_analytics_api(client):
+    assert client.get("/api/analytics").status_code == 401
+    client.post("/api/auth/login", json={"password": "correct-horse-1"})
+    r = client.get("/api/analytics?range=90d")
+    assert r.status_code == 200 and r.json()["range"] == "90d" and r.json()["trades"]["trades"] == 0
+    assert client.get("/api/analytics?range=2w").status_code == 400
+
+
 def test_cross_site_writes_are_refused(client):
     client.post("/api/auth/login", json={"password": "correct-horse-1"})
     for site in ("cross-site", "same-site"):

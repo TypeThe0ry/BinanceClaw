@@ -241,3 +241,21 @@ export interface Order {
 export interface ChatMsg { id: number; ts: number; channel: string; role: "user" | "assistant"; text: string }
 export interface Report { day: string; ts: number; text: string }
 export interface Kline { t: number; o: number; h: number; l: number; c: number; v: number }
+
+export interface EquityStats {
+  points: number; start: number | null; end: number | null; span_days?: number; total_return: number | null; cagr: number | null;
+  volatility: number | null; sharpe: number | null; sortino: number | null; max_drawdown: number | null;
+  max_drawdown_days: number | null; calmar: number | null; best_period: number | null; worst_period: number | null; period: "1d" | "1h" | null;
+}
+export interface TradeStats {
+  trades: number; wins: number; losses: number; win_rate: number | null; profit_factor: number | null; expectancy: number | null;
+  avg_win: number | null; avg_loss: number | null; payoff: number | null; best: number | null; worst: number | null;
+  max_win_streak: number; max_loss_streak: number; net: number; avg_return: number | null;
+}
+export type AnalyticsRange = "7d" | "30d" | "90d" | "1y" | "all";
+export interface Analytics {
+  range: AnalyticsRange; mode: string; equity: EquityStats; drawdown: { t: number; dd: number }[];
+  trades: TradeStats; spot: TradeStats; futures: TradeStats;
+  by_symbol: { symbol: string; trades: number; wins: number; pnl: number }[];
+  benchmark: { name: string; return: number | null; excess: number | null };
+}

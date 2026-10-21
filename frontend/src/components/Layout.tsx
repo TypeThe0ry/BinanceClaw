@@ -1,5 +1,5 @@
 import {
-  BookOpen, ChartLineUp, ChatCircle, DotsThreeOutline, GearSix, Lightning, Newspaper, Sliders, Sparkle, Stamp, Stop, Wallet,
+  BookOpen, ChartBar, ChartLineUp, ChatCircle, DotsThreeOutline, GearSix, Lightning, Newspaper, Sliders, Sparkle, Stamp, Stop, Wallet,
 } from "@phosphor-icons/react";
 import { motion } from "framer-motion";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -15,6 +15,7 @@ const MAIN = [
   { to: "/approvals", label: "审批", icon: Stamp },
   { to: "/chat", label: "对话", icon: ChatCircle },
   { to: "/reports", label: "日报", icon: Newspaper },
+  { to: "/analytics", label: "绩效", icon: ChartBar },
 ];
 const MOBILE = [
   { to: "/", label: "资产", icon: Wallet },
@@ -108,7 +109,7 @@ export function Layout() {
 
       <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-bg pb-[max(env(safe-area-inset-bottom),6px)] pt-1.5 md:hidden">
         {MOBILE.map((n) => {
-          const on = n.to === "/more" ? ["/more", "/ai", "/chat", "/reports", "/config", "/settings", "/docs"].some((p) => loc.pathname.startsWith(p)) : active(n.to);
+          const on = n.to === "/more" ? ["/more", "/ai", "/chat", "/reports", "/analytics", "/config", "/settings", "/docs"].some((p) => loc.pathname.startsWith(p)) : active(n.to);
           return (
             <NavLink key={n.to} to={n.to} end={n.to === "/"} className={`relative flex flex-1 flex-col items-center gap-0.5 py-1 text-[11px] ${on ? "text-fg" : "text-fg-3"}`}>
               <n.icon size={22} weight={on ? "fill" : "regular"} />
@@ -127,6 +128,7 @@ export function More() {
     { to: "/ai", label: "AI 决策", icon: Sparkle },
     { to: "/chat", label: "对话", icon: ChatCircle },
     { to: "/reports", label: "日报", icon: Newspaper },
+    { to: "/analytics", label: "绩效", icon: ChartBar },
     { to: "/config", label: "配置", icon: Sliders },
     { to: "/settings", label: "设置", icon: GearSix },
     { to: "/docs", label: "文档", icon: BookOpen },
