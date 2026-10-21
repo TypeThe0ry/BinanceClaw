@@ -681,6 +681,11 @@ class Service:
         out["whitelist"] = [f"{t}USDT" for t in f.symbols]
         out["markets"] = {sym: {"mark": round(prem[sym]["mark"], 6), "funding_rate_8h": prem[sym]["funding_rate"]}
                           for sym in out["whitelist"] if sym in prem}
+        for sym, m in out["markets"].items():
+            try:
+                m.update(ta.derivatives(*self.fbroker.derivatives(sym)))
+            except (ExchangeError, KeyError, TypeError, ValueError) as e:
+                log.warning("open interest / funding history unavailable for %s: %s", sym, e)
         out["positions"] = [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in p.items()
                              if k in ("symbol", "side", "qty", "entry", "mark", "margin", "leverage", "stop",
                                       "take_profit", "upnl", "liq_est")} for p in self.fbroker.snapshot(fv.marks)]

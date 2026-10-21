@@ -176,6 +176,18 @@ class FakeFutures:
         now = time.time()
         return [{"t": now - (limit - i) * 3600, "o": p, "h": p, "l": p, "c": p, "v": 1, "close_t": now} for i in range(limit)]
 
+    oi_calls = 0
+
+    def open_interest_hist(self, symbol, period="1h", limit=25):
+        self.oi_calls += 1
+        now = time.time()
+        return [{"t": now - (limit - i) * 3600, "oi": 1000.0 + i, "oi_usd": (1000.0 + i) * self.marks_map[symbol]}
+                for i in range(limit)]
+
+    def funding_history(self, symbol, limit=9):
+        now = time.time()
+        return [{"t": now - (limit - i) * 28800, "rate": 0.0001} for i in range(limit)]
+
     def account(self):
         return {"availableBalance": str(self.available)}
 
