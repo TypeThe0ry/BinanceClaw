@@ -1,0 +1,67 @@
+site_name: BinanceClaw 文档
+site_url: https://typethe0ry.github.io/BinanceClaw/
+repo_url: https://github.com/TypeThe0ry/BinanceClaw
+repo_name: TypeThe0ry/BinanceClaw
+edit_uri: edit/main/docs/
+docs_dir: docs
+copyright: MIT © TypeThe0ry
+
+theme:
+  name: material
+  language: zh
+  logo: assets/favicon.svg
+  favicon: assets/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: amber
+      toggle: { icon: material/weather-night, name: 深色 }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: amber
+      toggle: { icon: material/weather-sunny, name: 浅色 }
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+plugins:
+  - search:
+      separator: '[\s​\-_,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify { kwds: { case: lower } }
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - { name: mermaid, class: mermaid, format: !!python/name:pymdownx.superfences.fence_code_format }
+
+nav:
+  - 首页: README.md
+  - 入门:
+      - 快速开始: getting-started.md
+      - 界面指南: dashboard.md
+      - 模拟盘与实盘: live-mode.md
+      - 审批: approvals.md
+  - 进阶:
+      - AI 决策与风控: decisions-and-risk.md
+      - 资金管理与资产分配: capital-and-allocation.md
+      - 风险预设: risk-presets.md
+      - 合约: futures.md
+      - 理财: earn.md
+  - 参考:
+      - 模型: models.md
+      - Telegram: telegram.md
+      - 常见问题: faq.md
+      - 安全: security.md
+      - 更新日志: changelog.md

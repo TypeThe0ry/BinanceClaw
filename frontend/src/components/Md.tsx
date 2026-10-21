@@ -19,7 +19,7 @@ export function Md({ text, compact = false, trusted = false }: { text: string; c
             }
             const m = /^(?:\.\.\/)?([\w-]+)\.md(#.*)?$/.exec(href);
             if (m) {
-              const slug = m[1] === "SECURITY" ? "security" : m[1] === "README" ? "" : m[1];
+              const slug = m[1] === "SECURITY" ? "security" : m[1] === "CHANGELOG" ? "changelog" : m[1] === "README" ? "" : m[1];
               return <Link to={`/docs/${slug}${m[2] ?? ""}`}>{children}</Link>;
             }
             return /^https:\/\//.test(href) ? <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> : <span>{children}</span>;

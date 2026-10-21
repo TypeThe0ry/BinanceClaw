@@ -14,4 +14,5 @@
 | [模型](models.md) | Claude 订阅、OpenAI、兼容接口、Anthropic API |
 | [Telegram](telegram.md) | 推送、图表、指令、对话 |
 | [常见问题](faq.md) | 暂停、恢复、重置、排障 |
+| [更新日志](../CHANGELOG.md) | 每个版本的变化 |
 | [安全](../SECURITY.md) | 威胁模型与密钥处理 |
