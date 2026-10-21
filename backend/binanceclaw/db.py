@@ -160,6 +160,56 @@ class EquitySnapshot(SQLModel, table=True):
     source: str = "recorder"                  # recorder (periodic) | cycle (imported decision rounds) | binance (daily account snapshot)
 
 
+class ArenaContestant(SQLModel, table=True):
+    """模型竞技场: one model with its own virtual account. Never linked to the real exchange account."""
+    id: str = Field(default_factory=_id, primary_key=True)
+    name: str
+    provider: str                             # brain.providers.PROVIDERS key
+    model: str = ""
+    base_url: str = ""                        # openai_compat only
+    enabled: bool = True
+    created: float = Field(default_factory=time.time)
+    started: float = Field(default_factory=time.time)   # start of the current season (joined or reset)
+    initial_usd: float = 10000
+    btc_start: float = 0                      # BTC price when the season started for this contestant (its benchmark)
+    balances: dict = Field(default_factory=dict, sa_column=Column(JSON))   # asset -> amount (USDT = cash)
+    cost: dict = Field(default_factory=dict, sa_column=Column(JSON))       # token -> average cost (USDT)
+    realized: float = 0                       # realised P&L of sells, after fees
+    fees: float = 0
+    trades: int = 0
+    wins: int = 0                             # sells closed above average cost
+    losses: int = 0
+    rounds: int = 0
+    errors: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0                       # what the model calls cost, where the provider reports it
+
+
+class ArenaRound(SQLModel, table=True):
+    id: str = Field(default_factory=_id, primary_key=True)
+    ts: float = Field(default_factory=time.time, index=True)
+    batch: str = Field(default="", index=True)    # all contestants of one round share a batch id
+    contestant_id: str = Field(index=True)
+    status: str = "done"                      # done | error
+    model: str = ""
+    summary: str = ""
+    confidence: Optional[float] = None
+    actions: list = Field(default_factory=list, sa_column=Column(JSON))   # [{side, symbol, quote_usd, reason, result, ...}]
+    raw_output: str = ""
+    error: str = ""
+    equity: float = 0
+    duration_ms: int = 0
+    usage: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+
+class ArenaEquity(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ts: float = Field(default_factory=time.time, index=True)
+    contestant_id: str = Field(index=True)    # "btc_hold" = the buy-and-hold BTC benchmark
+    equity: float
+
+
 class PaperBalance(SQLModel, table=True):
     asset: str = Field(primary_key=True)
     free: float = 0

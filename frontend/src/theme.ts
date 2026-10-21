@@ -52,10 +52,12 @@ export const PALETTE = {
   dark: {
     bg: "#000000", raise: "#0D0D0D", grid: "#111111", line: "#1F1F1F", lineStrong: "#2E2E2E",
     fg: "#FFFFFF", fg2: "#8C8C8C", fg3: "#5C5C5C", up: "#20B26C", down: "#EF454A", warn: "#F0A23B",
+    series: ["#4C8DFF", "#F0A23B", "#20B26C", "#C77DFF", "#EF454A", "#2EC4C4", "#FF7AB6", "#B5B5B5"],
   },
   light: {
     bg: "#FFFFFF", raise: "#FFFFFF", grid: "#F2F2F2", line: "#E6E6E6", lineStrong: "#DDDDDD",
     fg: "#0A0A0A", fg2: "#5C5C5C", fg3: "#8A8A8A", up: "#0E9F5C", down: "#E0383E", warn: "#C77D12",
+    series: ["#2563EB", "#C77D12", "#0E9F5C", "#8B3FD9", "#E0383E", "#0E8F8F", "#D63F86", "#6B6B6B"],
   },
 } as const;
 

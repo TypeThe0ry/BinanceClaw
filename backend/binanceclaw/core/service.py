@@ -43,6 +43,7 @@ from ..risk.futures import OPEN_OPS, FuturesView, evaluate_futures, perp_symbol
 from ..risk.rebalance import rebalance_actions
 from . import categories as cats
 from .analytics import Analytics
+from .arena import Arena
 from .autopilot import Autopilot
 from .earn import EarnManager
 from .events import EventBus
@@ -71,6 +72,7 @@ class Service:
         self.track = TrackRecord(self)
         self.valuation = Valuation(self)
         self.analytics = Analytics(self)
+        self.arena = Arena(self)
         self.events.on(self.autopilot.on_event)
         self._confirm_key = ((self.secrets.session_secret or os.urandom(32).hex()) + ":confirm").encode()
         self._cycle_lock = threading.Lock()
@@ -1800,6 +1802,8 @@ class Service:
                 self._every("equity", 900, self.valuation.record)
                 self._every("equity_backfill", 600, self.valuation.backfill)
                 self._every("stream", 60, self._watch_stream)
+                self._every("arena", 30, self.arena.tick)
+                self._every("arena_mark", 900, self.arena.mark)
                 due = self.question_due() or self.autopilot.due()
                 if due:
                     if due[0] == "schedule":

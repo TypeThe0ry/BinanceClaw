@@ -259,3 +259,31 @@ export interface Analytics {
   by_symbol: { symbol: string; trades: number; wins: number; pnl: number }[];
   benchmark: { name: string; return: number | null; excess: number | null };
 }
+// ---------------------------------------------------------------- model arena
+export interface ArenaConfig {
+  enabled: boolean; interval_minutes: number; max_rounds_per_day: number; initial_usd: number; tokens: string[]; max_position_pct: number;
+}
+export interface ArenaPosition { qty: number; value_usd: number; weight: number; avg_cost: number | null; unrealized_pct: number | null }
+export interface ArenaContestant {
+  id: string; name: string; provider: string; model: string; base_url: string; enabled: boolean; available: boolean;
+  unavailable_reason: string; started: number; initial_usd: number; equity: number; return: number; vs_btc: number | null;
+  max_drawdown: number; sharpe: number | null; win_rate: number | null; closed_trades: number; trades: number; rounds: number; errors: number;
+  realized: number; fees: number; tokens_in: number; tokens_out: number; cost_usd: number; cash: number;
+  positions: Record<string, ArenaPosition>; rank: number;
+}
+export interface ArenaBoard {
+  config: ArenaConfig; contestants: ArenaContestant[];
+  benchmark: { return: number; equity: number; since: number; max_drawdown: number; sharpe: number | null } | null;
+  running: boolean; last_round: number | null; next_round: number | null; rounds_today: number; season_start: number | null;
+  providers: string[]; max_contestants: number;
+}
+export interface ArenaAction {
+  side: "BUY" | "SELL"; symbol: string; quote_usd: number; reason: string; result: "filled" | "rejected"; note?: string;
+  qty?: number; price?: number; usd?: number; fee?: number; pnl?: number;
+}
+export interface ArenaEntry {
+  id: string; ts: number; batch: string; contestant_id: string; name: string; status: "done" | "error"; model: string;
+  summary: string; confidence: number | null; actions: ArenaAction[]; error: string; equity: number; duration_ms: number;
+}
+export interface ArenaBatch { batch: string; ts: number; entries: ArenaEntry[] }
+export type ArenaCurves = Record<string, [number, number][]>;
