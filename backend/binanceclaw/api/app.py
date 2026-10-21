@@ -89,9 +89,32 @@ class EarnMoveIn(BaseModel):
     direction: str          # subscribe | redeem
 
 
+class ArenaContestantIn(BaseModel):
+    name: str
+    provider: str
+    model: str = ""
+    base_url: str = ""
+
+
+class ArenaContestantPatch(BaseModel):
+    name: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    enabled: bool | None = None
+
+
 class ModeIn(BaseModel):
     mode: str
     confirm: str = ""
+
+
+def _first_error(e: ValueError) -> str:
+    """The message of a pydantic ValidationError without its boilerplate, or the error itself."""
+    errs = getattr(e, "errors", None)
+    if callable(errs):
+        x = errs()[0]
+        return str(x.get("ctx", {}).get("error") or x.get("msg", e)).removeprefix("Value error, ")
+    return str(e)
 
 
 def create_app(svc, static_dir: Path | None = None) -> FastAPI:
@@ -591,6 +614,64 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             raise HTTPException(400, "只能在模拟盘重置")
         svc.reset_paper()
         svc.events.emit("paper_reset", {})
+        return {"ok": True}
+
+    # ------------------------------------------------------------------ model arena (virtual accounts only)
+    @app.get("/api/arena", dependencies=auth)
+    def arena():
+        return svc.arena.leaderboard()
+
+    @app.put("/api/arena/config", dependencies=auth)
+    def arena_config(patch: dict):
+        try:
+            return svc.arena.update_config(patch).model_dump()
+        except ValueError as e:
+            raise HTTPException(400, _first_error(e)) from None
+
+    @app.post("/api/arena/contestants", dependencies=auth)
+    def arena_add(body: ArenaContestantIn):
+        try:
+            return svc.arena.add(body.name, body.provider, body.model, body.base_url).model_dump()
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.patch("/api/arena/contestants/{cid}", dependencies=auth)
+    def arena_edit(cid: str, body: ArenaContestantPatch):
+        try:
+            return svc.arena.edit(cid, **body.model_dump()).model_dump()
+        except KeyError:
+            raise HTTPException(404) from None
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.delete("/api/arena/contestants/{cid}", dependencies=auth)
+    def arena_remove(cid: str):
+        if not svc.arena.remove(cid):
+            raise HTTPException(404)
+        return {"ok": True}
+
+    @app.get("/api/arena/curves", dependencies=auth)
+    def arena_curves():
+        return svc.arena.curves()
+
+    @app.get("/api/arena/rounds", dependencies=auth)
+    def arena_rounds(contestant: str | None = None, limit: int = 20):
+        return svc.arena.rounds(contestant, min(max(limit, 1), 100))
+
+    @app.post("/api/arena/run", dependencies=auth)
+    def arena_run():
+        if svc.arena.running:
+            raise HTTPException(409, "本轮比赛还在进行")
+        if not svc.arena.contestants(enabled_only=True):
+            raise HTTPException(400, "没有参赛模型")
+        threading.Thread(target=svc.arena.run_round, args=("manual",), daemon=True).start()
+        return {"ok": True}
+
+    @app.post("/api/arena/reset", dependencies=auth)
+    def arena_reset():
+        if svc.arena.running:
+            raise HTTPException(409, "本轮比赛还在进行")
+        svc.arena.reset()
         return {"ok": True}
 
     # ------------------------------------------------------------------ reports

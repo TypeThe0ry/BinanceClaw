@@ -14,7 +14,7 @@ for (const text of Object.values(changelog)) DOCS.changelog = text;
 
 const ORDER: [string, string][] = [
   ["", "目录"], ["getting-started", "快速开始"], ["dashboard", "界面指南"], ["decisions-and-risk", "AI 决策与风控"], ["capital-and-allocation", "资金与分配"], ["risk-presets", "风险预设"],
-  ["futures", "合约"], ["earn", "理财"], ["approvals", "审批"], ["live-mode", "模拟盘与实盘"], ["models", "模型"], ["telegram", "Telegram"], ["faq", "常见问题"],
+  ["futures", "合约"], ["earn", "理财"], ["arena", "模型竞技场"], ["approvals", "审批"], ["live-mode", "模拟盘与实盘"], ["models", "模型"], ["telegram", "Telegram"], ["faq", "常见问题"],
   ["security", "安全"], ["changelog", "更新日志"],
 ];
 
