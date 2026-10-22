@@ -18,7 +18,7 @@ AI 出决策 · 代码守底线 · 大额你来批
 [![Release](https://img.shields.io/github/v/release/TypeThe0ry/BinanceClaw?color=F0B90B)](https://github.com/TypeThe0ry/BinanceClaw/releases)
 [![Docs](https://img.shields.io/badge/docs-online-000000?logo=materialformkdocs&logoColor=white)](https://typethe0ry.github.io/BinanceClaw/)
 
-[快速开始](#-快速开始) · [功能](#-功能) · [工作原理](#-工作原理) · [文档](https://typethe0ry.github.io/BinanceClaw/) · [更新日志](CHANGELOG.md) · [安全](SECURITY.md) · [English](#english)
+[快速开始](#-快速开始) · [功能](#-功能) · [运行模式](#️-运行模式) · [工作原理](#️-工作原理) · [文档](https://typethe0ry.github.io/BinanceClaw/) · [更新日志](CHANGELOG.md) · [安全](SECURITY.md) · [English](#english)
 
 </div>
 
@@ -84,14 +84,36 @@ Claude 订阅（无需 API Key）、OpenAI、任意 OpenAI 兼容接口（DeepSe
 
 </td>
 </tr>
+<tr>
+<td valign="top">
+
+### 🗣️ 多空辩论
+多头、空头、风控三个角色先辩论 1–3 轮，再由决策模型权衡定夺；每个角色可以用不同的模型。
+
+</td>
+<td valign="top">
+
+### 🏟️ 模型竞技场
+多个模型各管一个虚拟账户，同一份实时行情比赛收益率，对比 BTC 持有，挑出最会交易的模型。
+
+</td>
+<td valign="top">
+
+### 🔬 绩效与回测
+夏普、回撤、胜率、盈亏比一目了然；用历史 K 线回放同一套 AI 决策与风控，无未来数据。
+
+</td>
+</tr>
 </table>
 
 ## ⚙️ 工作原理
 
 ```mermaid
 flowchart TD
-    T([事件唤醒 / AI 自定复查时间]) --> S[行情 + 多周期指标 + 账户快照]
-    S --> M[AI 模型<br/>只输出 JSON 计划，无任何工具]
+    T([事件唤醒 / AI 自定复查时间]) --> S[行情 + 多周期指标 + 账户快照 + 近 30 天绩效]
+    S --> D[多空辩论（可选）<br/>多头 · 空头 · 风控]
+    S --> M[AI 决策模型<br/>只输出 JSON 计划，无任何工具]
+    D --> M
     M --> R{风控引擎<br/>纯代码，模型无法绕过}
     R -->|≤ 自动额度| A[自动执行]
     R -->|> 自动额度| P[网页 / Telegram 审批]
@@ -105,6 +127,17 @@ flowchart TD
 决策默认为 **AI 自主实时** 模式：AI 自己决定下次复查时间，价格波动、关键价位、止损止盈、成交、余额变化会实时唤醒它，并受最短/最长间隔和每日调用上限约束。详见 [AI 决策与风控](docs/decisions-and-risk.md)。
 
 ## 🧩 功能
+
+<details open>
+<summary><b>AI 决策</b></summary>
+
+- **任选模型**：Claude 订阅、OpenAI、OpenAI 兼容接口、Anthropic API；可设备用模型，按任务分配大小模型，见 [模型](docs/models.md)。
+- **代码算好的指标**：日线 / 4 小时趋势与 RSI、ATR 波动、MACD（金叉死叉与动能）、布林带（%B 与带宽）、量比、市场宽度；合约另有资金费率与持仓量变化。
+- **自我复盘**：AI 每轮看到自己过去交易的胜率（`track_record`）和账户近 30 天绩效（`performance_30d`），回撤变大或连亏时主动收缩。
+- **多空辩论（可选）**：多头、空头、风控辩论后由决策模型定夺，每个角色可用不同模型，见 [多空辩论](docs/debate.md)。
+- **交易风格与观点**：短线 / 中期 / 长期，外加你对大盘和单币的看法；AI 有跨轮记忆，高风险决策会先问你。
+
+</details>
 
 <details open>
 <summary><b>资金与分配</b></summary>
@@ -138,6 +171,16 @@ flowchart TD
 </details>
 
 <details>
+<summary><b>绩效、回测与竞技场</b></summary>
+
+- **绩效**：收益率、同期 BTC、年化收益与波动、最大回撤与回撤曲线、夏普 / 索提诺 / 卡玛；已平仓交易的胜率、盈亏比、每笔期望、连胜连亏，按币种汇总。
+- **回测实验室**（绩效 › 回测）：选 1–8 个币、日期区间和决策间隔（4h / 12h / 1d），把历史 K 线逐轮回放给同一套提示词、模型和风控；每轮只看已收盘的 K 线、提示词不含日期；结果对比持有 BTC 和等权持有，附交易记录和每轮决策轨迹。
+- **模型竞技场**：最多 8 个模型各管一个虚拟账户，同一时刻拿同一份行情和盘口并行决策，按收益率、超额 BTC、回撤、夏普、胜率排名，每轮决策可并排对比；永远不碰真实账户。
+- 详见 [绩效与回测](docs/performance.md)、[模型竞技场](docs/arena.md)。
+
+</details>
+
+<details>
 <summary><b>界面与通知</b></summary>
 
 - **网页仪表盘**：总览、账户估值曲线（1日 / 7日 / 30天 / 90天 / 一年）、AI 决策流、审批、K 线与成交、对话、日报、设置；深色 / 浅色主题跟随系统，桌面和手机都能用，SSE 实时刷新。
@@ -145,6 +188,25 @@ flowchart TD
 - **Telegram**：审批按钮、成交与暂停通知、每日日报、定时汇总、免打扰，`/status /run /pause /resume /kill`，直接发文字和模型对话（只读），见 [Telegram](docs/telegram.md)。
 
 </details>
+
+## 🎛️ 运行模式
+
+每个维度独立切换，任意组合；所有组合都走同一个代码风控引擎，模式只改变「什么时候决策、交易什么、谁来批准」。
+
+| 维度 | 模式 | 默认 | 作用 |
+|---|---|---|---|
+| 交易模式 | **模拟盘** · 实盘 | 模拟盘 | 模拟盘用真实行情 + 虚拟资金、不下单，流程与实盘完全相同；实盘需通过 API Key 权限检查 |
+| 资产分配 | **手动分配** · AI 自主分配 | 手动分配 | 手动：你定目标比例，偏离超过阈值自动再平衡；AI 自主：AI 自己选币定比例，范围可选全部资产 / 白名单 / 黑名单，范围外的持仓只卖不买 |
+| 决策时机 | **AI 自主实时** · 固定间隔 | AI 自主实时 | 自主：AI 自定下次复查时间，价格波动、关键价位、止损、成交、余额变化实时唤醒；固定：每 N 分钟一轮 |
+| 交易风格 | 短线 · **中期** · 长期 | 中期 | 决定持仓周期、关注的周期和复查间隔 |
+| 风险预设 | 保守 · **均衡** · 积极 | 均衡 | 一键套用单笔 / 每日额度、稳定币下限、暂停线和决策频率 |
+| 审批 | **正常审批** · 免审批（按时段 / 一直） | 正常审批 | 免审批只跳过「等你批准」，所有硬限制照常；卖出和合约开仓需另外勾选 |
+| AI 提问 | **开** · 关 | 开 | 高风险决策先给你选项；超时可选不操作或按 AI 推荐执行 |
+| 交易品种 | 现货 · 合约 · **理财** | 现货 + 理财 | 合约默认关闭、开仓默认要审批；理财把闲置资产申购活期、买卖前自动赎回 |
+| 决策方式 | **单模型** · 多空辩论 | 单模型 | 辩论：三个角色辩论 1–3 轮后由决策模型定夺 |
+| 通知 | **即时** · 定时汇总 · 免打扰 | 即时 | 审批、AI 提问和重大风险提醒始终立即推送 |
+
+另有两个沙盒，永远不碰真实账户：**模型竞技场**（实时行情下多模型比赛）和**回测实验室**（历史行情回放）。完整说明和推荐组合见 [模式一览](docs/modes.md)。
 
 ## 🚀 快速开始
 
@@ -211,6 +273,8 @@ BINANCECLAW_DATA=../data .venv/bin/binanceclaw serve      # --host / --port 可�
 | 稳定币下限 | 15% | 买入后不得低于此比例 |
 | BTC 7 日跌幅暂停线 | 25% | 触发后暂停，`/resume` 恢复 |
 | 决策方式 | AI 自主实时 | 最短间隔 5 分钟、最长 240 分钟、每天最多 48 次调用 |
+| 资产分配 | 手动分配 + 自动再平衡 | 偏离目标 5 个百分点时调回 |
+| 多空辩论 | 关闭 | 开启后每轮多 3 × 轮数 次模型调用 |
 | 审批有效期 | 30 分钟 | |
 
 密钥只放在 `data/.env`（权限 600），由 `binanceclaw setup` 写入，网页上只显示"已配置"。
@@ -222,18 +286,21 @@ BINANCECLAW_DATA=../data .venv/bin/binanceclaw serve      # --host / --port 可�
 | 入门 | 进阶 | 参考 |
 |---|---|---|
 | [快速开始](docs/getting-started.md) | [AI 决策与风控](docs/decisions-and-risk.md) | [模型](docs/models.md) |
-| [界面指南](docs/dashboard.md) | [资金管理与资产分配](docs/capital-and-allocation.md) | [Telegram](docs/telegram.md) |
-| [模拟盘与实盘](docs/live-mode.md) | [风险预设](docs/risk-presets.md) | [常见问题](docs/faq.md) |
-| [审批](docs/approvals.md) | [合约](docs/futures.md) · [理财](docs/earn.md) | [安全](SECURITY.md) · [更新日志](CHANGELOG.md) |
+| [界面指南](docs/dashboard.md) | [多空辩论](docs/debate.md) | [Telegram](docs/telegram.md) |
+| [模式一览](docs/modes.md) | [资金管理与资产分配](docs/capital-and-allocation.md) | [常见问题](docs/faq.md) |
+| [模拟盘与实盘](docs/live-mode.md) | [风险预设](docs/risk-presets.md) | [安全](SECURITY.md) |
+| [审批](docs/approvals.md) | [合约](docs/futures.md) · [理财](docs/earn.md) | [更新日志](CHANGELOG.md) |
+| | [绩效与回测](docs/performance.md) · [模型竞技场](docs/arena.md) | |
 
 ## 🏗️ 项目结构
 
 ```
 backend/binanceclaw/
   exchange/   binance_spot.py · binance_futures.py · broker.py · futures_broker.py · stream.py
-  brain/      providers.py · prompt.py · schema.py（严格 JSON 结构）· indicators.py · allocation.py
+  brain/      providers.py · prompt.py · schema.py（严格 JSON 结构）· indicators.py · allocation.py · debate.py
   risk/       engine.py（硬限制，纯函数）· futures.py · gate.py（实盘准入）· rebalance.py
   core/       service.py（决策管道、执行、审批）· autopilot.py · earn.py · valuation.py · events.py
+              metrics.py · analytics.py（绩效）· backtest.py（回测）· arena.py（竞技场）
   notify/     telegram.py · policy.py · charts.py
   api/        app.py（FastAPI，登录、REST、SSE）
   cli.py      serve · setup · doctor · password
@@ -278,6 +345,11 @@ npm run typecheck && npm test
 - **Human in the loop**: anything above the auto-execute limit needs your approval from the web dashboard or Telegram.
 - **Paper first**: real market data with virtual funds, same pipeline as live; live mode is gated on API-key permission checks (withdrawals must be off).
 - **Fully audited**: inputs, prompts, raw outputs, every risk check and every fill are recorded.
+- **Bull/bear debate** (optional): bull, bear and risk seats argue for 1–3 rounds before the decision model writes the plan; each seat can use a different model.
+- **Performance analytics**: Sharpe, Sortino, Calmar, max drawdown, win rate and profit factor, compared with holding BTC; the AI sees its own 30-day performance every round.
+- **Backtest lab**: replays historical candles through the same prompt, model and risk engine, with no look-ahead, against buy-and-hold BTC.
+- **Model arena**: several models each run a virtual account on the same live data and compete on returns; never touches your real account.
+- **Modes**: paper / live, manual targets / AI-managed allocation (all, whitelist or blacklist), AI-timed / fixed-interval decisions, approval / approval-free windows, spot + optional futures + flexible Earn. See [modes](docs/modes.md) (Chinese).
 
 Quick start: see [Docker](#docker推荐) above. Docs (Chinese) are online at <https://typethe0ry.github.io/BinanceClaw/> and under [docs/](docs/README.md).
 
