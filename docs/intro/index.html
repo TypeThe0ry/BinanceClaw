@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BinanceClaw 介绍动画</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap">
+<style>
+/* Layout: a fixed 1600×900 film stage scaled to fit, with a slim transport bar under it. Single dark look on purpose. */
+:root{
+  --ink:#0c0b09;        /* stage ground, warm black */
+  --ink-2:#17150f;      /* raised panels */
+  --line:#2c281d;       /* hairlines */
+  --paper:#f3eee2;      /* primary text */
+  --mute:#9a927f;       /* secondary text */
+  --gold:#f0b90b;       /* the one accent */
+  --up:#2ebd85;         /* market green */
+  --down:#f6465d;       /* market red */
+  --ai:#7aa7ff;         /* model / machine voice */
+  --f-display:"Bricolage Grotesque","Noto Sans SC",system-ui,sans-serif;
+  --f-cn:"Noto Sans SC","PingFang SC","Microsoft YaHei","WenQuanYi Zen Hei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--ink);color:var(--paper);font-family:var(--f-cn);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px;box-sizing:border-box}
+*{box-sizing:border-box}
+.player{max-width:1280px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.frame{position:relative;width:100%;aspect-ratio:16/9;max-width:100%;overflow:hidden;border-radius:10px;background:var(--ink);border:1px solid var(--line)}
+.stage{position:absolute;left:0;top:0;width:1600px;height:900px;transform-origin:0 0;overflow:hidden;
+  background:radial-gradient(1200px 700px at 50% 40%,#1a170f 0%,var(--ink) 70%)}
+.scene{position:absolute;inset:0}
+.abs{position:absolute}
+.cn{font-family:var(--f-cn)} .mono{font-family:var(--f-mono)} .disp{font-family:var(--f-display)}
+.gold{color:var(--gold)} .up{color:var(--up)} .down{color:var(--down)} .mute{color:var(--mute)} .aic{color:var(--ai)}
+.eyebrow{font:500 22px/1 var(--f-cn);letter-spacing:.3em;color:var(--mute)}
+.h1{font:900 76px/1.15 var(--f-cn);letter-spacing:.02em;text-wrap:balance}
+.h2{font:900 56px/1.2 var(--f-cn);text-wrap:balance}
+.grain{position:absolute;inset:0;pointer-events:none;opacity:.06;
+  background-image:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px)}
+
+/* transport */
+.bar{display:flex;align-items:center;gap:12px;font:500 13px/1 var(--f-cn);color:var(--mute)}
+.btn{appearance:none;border:1px solid var(--line);background:var(--ink-2);color:var(--paper);border-radius:8px;height:34px;min-width:34px;padding:0 12px;font:500 13px/1 var(--f-cn);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn:hover{border-color:var(--gold)}
+.btn:focus-visible,.track:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.track{position:relative;flex:1;height:34px;cursor:pointer;min-width:0}
+.track .rail{position:absolute;left:0;right:0;top:15px;height:4px;border-radius:2px;background:var(--line)}
+.track .fill{position:absolute;left:0;top:15px;height:4px;border-radius:2px;background:var(--gold);width:0}
+.track .mk{position:absolute;top:11px;width:2px;height:12px;background:#4a4434}
+.chap{font-variant-numeric:tabular-nums;white-space:nowrap}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips button{appearance:none;border:0;background:none;color:var(--mute);font:500 12px/1 var(--f-cn);padding:6px 8px;border-radius:6px;cursor:pointer}
+.chips button.on{color:var(--ink);background:var(--gold)}
+.chips button:focus-visible{outline:2px solid var(--gold)}
+@media (max-width:560px){.chap{display:none}.chips button{padding:5px 6px}}
+
+/* start overlay */
+.cover{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:rgba(12,11,9,.72);backdrop-filter:blur(3px);cursor:pointer;z-index:5;border:0;width:100%;color:var(--paper)}
+.cover .play{width:96px;height:96px;border-radius:50%;background:var(--gold);display:grid;place-items:center;box-shadow:0 0 0 10px rgba(240,185,11,.15)}
+.cover .lbl{font:700 clamp(14px,2.2vw,22px)/1.4 var(--f-cn)}
+.cover .sub{font:400 clamp(11px,1.4vw,14px)/1.4 var(--f-cn);color:var(--mute)}
+
+/* shared bits */
+.card{background:var(--ink-2);border:1px solid var(--line);border-radius:18px}
+.pill{display:inline-flex;align-items:center;gap:10px;border-radius:999px;padding:10px 20px;font:700 26px/1 var(--f-cn)}
+.node{position:absolute;width:300px;height:124px;border-radius:16px;background:var(--ink-2);border:2px solid var(--line);padding:20px 22px;display:flex;flex-direction:column;justify-content:center;gap:10px}
+.node b{font:900 30px/1 var(--f-cn)} .node span{font:400 18px/1.3 var(--f-cn);color:var(--mute)}
+.out{position:absolute;width:300px;height:108px;border-radius:16px;border:2px solid var(--line);background:var(--ink-2);padding:16px 22px;display:flex;flex-direction:column;justify-content:center;gap:8px}
+.out b{font:900 28px/1 var(--f-cn)} .out span{font:400 17px/1.3 var(--f-cn);color:var(--mute)}
+.pkt{position:absolute;left:0;top:0;padding:10px 16px;border-radius:12px;font:700 20px/1 var(--f-mono);white-space:nowrap;background:var(--paper);color:var(--ink);box-shadow:0 8px 30px rgba(0,0,0,.5)}
+.tile{position:absolute;width:440px;height:200px;padding:28px 30px;display:flex;flex-direction:column;gap:14px}
+.tile svg{width:46px;height:46px;flex:none}
+.tile b{font:900 32px/1.1 var(--f-cn)} .tile span{font:400 21px/1.45 var(--f-cn);color:var(--mute)}
+.tab{font:700 24px/1 var(--f-cn);color:var(--mute);padding:12px 22px;border-radius:999px;border:1px solid var(--line)}
+.tab.on{color:var(--ink);background:var(--gold);border-color:var(--gold)}
+.panel{position:absolute;left:0;top:190px;width:1600px;height:710px}
+.bub{position:absolute;max-width:470px;padding:20px 24px;border-radius:18px;font:500 25px/1.45 var(--f-cn);background:var(--ink-2);border:2px solid var(--line)}
+.bub .who{display:block;font:900 20px/1 var(--f-cn);margin-bottom:10px;letter-spacing:.1em}
+.cmp{position:absolute;left:110px;top:200px;width:1380px;border-collapse:separate;border-spacing:0}
+.cmp th,.cmp td{height:66px;padding:0 18px;font:500 23px/1.2 var(--f-cn);text-align:center;border-bottom:1px solid var(--line)}
+.cmp th{font:700 22px/1.3 var(--f-cn);color:var(--mute);height:92px}
+.cmp th small{display:block;font:400 16px/1.3 var(--f-cn);color:#6f6858;margin-top:4px}
+.cmp td:first-child,.cmp th:first-child{text-align:left;color:var(--paper);font-weight:700;width:360px}
+.cmp .me{color:var(--gold);font-weight:900}
+.cmp th.me{color:var(--gold);font-size:26px}
+.y{color:var(--up)} .n{color:#6f6858} .p{color:#c9a64a}
+.term{position:absolute;left:90px;top:190px;width:900px;height:620px;border-radius:16px;background:#080806;border:1px solid var(--line);overflow:hidden}
+.term .tb{height:44px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 18px}
+.term .tb i{width:13px;height:13px;border-radius:50%;background:#3a3528;display:block}
+.term pre{margin:0;padding:22px 26px;font:400 21px/1.75 var(--f-mono);color:var(--paper);white-space:pre-wrap;word-break:break-all}
+.term .ps{color:var(--gold)} .term .ok{color:var(--up)} .term .dim{color:var(--mute)}
+.step{position:absolute;left:1050px;width:470px;display:flex;gap:18px;align-items:flex-start}
+.step .num{flex:none;width:46px;height:46px;border-radius:50%;border:2px solid var(--gold);color:var(--gold);display:grid;place-items:center;font:800 22px/1 var(--f-display)}
+.step b{display:block;font:900 27px/1.2 var(--f-cn);margin-bottom:6px} .step span{font:400 19px/1.45 var(--f-cn);color:var(--mute)}
+.caret{display:inline-block;width:11px;height:22px;background:var(--gold);vertical-align:-3px}
+</style>
+
+</head>
+<body>
+<div class="player">
+  <div class="frame" id="frame">
+    <div class="stage" id="stage">
+
+      <!-- S0 disclaimer -->
+      <section class="scene" id="s0">
+        <div class="abs" id="s0n" style="left:0;right:0;top:170px;text-align:center;font:800 260px/1 var(--f-display);color:var(--gold);font-variant-numeric:tabular-nums;letter-spacing:-.02em">99%</div>
+        <div class="abs" id="s0t" style="left:0;right:0;top:460px;text-align:center;font:900 54px/1.2 var(--f-cn)">本项目的代码由 <span class="aic">AI</span> 编写</div>
+        <div class="abs" style="left:150px;right:150px;top:630px;display:flex;gap:24px;justify-content:center">
+          <div class="card" id="w1" style="flex:1;padding:26px 28px;border-color:#5a3a1e"><div style="font:900 30px/1 var(--f-cn);color:var(--gold);margin-bottom:12px">不是投资建议</div><div class="mute" style="font:400 21px/1.45 var(--f-cn)">这是自托管的个人工具，<br>所有交易决定和后果由你承担</div></div>
+          <div class="card" id="w2" style="flex:1;padding:26px 28px;border-color:#5a2230"><div style="font:900 30px/1 var(--f-cn);color:var(--down);margin-bottom:12px">加密资产风险极高</div><div class="mute" style="font:400 21px/1.45 var(--f-cn)">价格可能一天腰斩，<br>你可能亏掉全部本金</div></div>
+          <div class="card" id="w3" style="flex:1;padding:26px 28px"><div style="font:900 30px/1 var(--f-cn);margin-bottom:12px">AI 会犯错</div><div class="mute" style="font:400 21px/1.45 var(--f-cn)">先用模拟盘跑足够久，<br>只投入能承受损失的钱</div></div>
+        </div>
+      </section>
+
+      <!-- S1 hook -->
+      <section class="scene" id="s1">
+        <svg id="candles" class="abs" style="left:0;top:0" width="1600" height="900" viewBox="0 0 1600 900"></svg>
+        <div class="abs h1" id="s1a" style="left:120px;top:90px">如果把币安账户交给 AI……</div>
+        <div class="abs h1 down" id="s1b" style="left:120px;top:190px">万一它一把梭？</div>
+        <div class="abs" id="s1c" style="left:120px;top:760px;font:700 40px/1.3 var(--f-cn)">AI 可以出主意，<span class="gold">底线写在代码里。</span></div>
+      </section>
+
+      <!-- S2 title -->
+      <section class="scene" id="s2">
+        <svg id="logo" class="abs" style="left:700px;top:120px" width="200" height="200" viewBox="0 0 64 64">
+          <rect id="logoBg" width="64" height="64" rx="14" fill="#000" stroke="#3a3426" stroke-width="1"/>
+          <path class="claw" d="M18 46c4-14 10-24 14-28" stroke="#f0b90b" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+          <path class="claw" d="M28 48c3-12 8-21 12-25" stroke="#f0b90b" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+          <path class="claw" d="M38 48c2-9 6-16 9-19" stroke="#f0b90b" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+        </svg>
+        <div class="abs disp" id="s2t" style="left:0;right:0;top:350px;text-align:center;font:800 150px/1 var(--f-display);letter-spacing:-.03em"></div>
+        <div class="abs" style="left:0;right:0;top:560px;display:flex;justify-content:center;gap:26px">
+          <div class="pill" id="tg1" style="background:#1d2a44;color:var(--ai)">AI 出决策</div>
+          <div class="pill" id="tg2" style="background:var(--gold);color:var(--ink)">代码守底线</div>
+          <div class="pill" id="tg3" style="background:var(--paper);color:var(--ink)">大额你来批</div>
+        </div>
+        <div class="abs mute" id="s2s" style="left:0;right:0;top:690px;text-align:center;font:400 28px/1.5 var(--f-cn)">自托管的币安 AI 资产管家 · 现货 / 合约 / 活期理财 · MIT 开源</div>
+      </section>
+
+      <!-- S3 pipeline -->
+      <section class="scene" id="s3">
+        <div class="abs eyebrow" id="s3e" style="left:80px;top:70px">工作原理</div>
+        <div class="abs h2" id="s3h" style="left:80px;top:105px">每一笔交易，都要过三道关</div>
+        <svg class="abs" style="left:0;top:0" width="1600" height="900" viewBox="0 0 1600 900" id="s3wires">
+          <g stroke="#3a3426" stroke-width="3" fill="none">
+            <path id="wA" d="M380 362 H470"/><path id="wB" d="M770 362 H860"/>
+            <path id="wC1" d="M1160 362 C1210 362 1210 254 1260 254"/>
+            <path id="wC2" d="M1160 362 C1210 362 1210 424 1260 424"/>
+            <path id="wC3" d="M1160 362 C1210 362 1210 594 1260 594"/>
+          </g>
+        </svg>
+        <div class="node" id="n1" style="left:80px;top:300px"><b>行情 · 账户</b><span>多周期 K 线、MACD、布林带<br>持仓与成本</span></div>
+        <div class="node" id="n2" style="left:470px;top:300px;border-color:#2a3d63"><b class="aic">AI 模型</b><span>只输出 JSON 计划<br>拿不到任何工具</span></div>
+        <div class="node" id="n3" style="left:860px;top:300px;border-color:#6b5310"><b class="gold">风控引擎</b><span id="n3s">纯代码 · 模型无法绕过</span></div>
+        <div class="out" id="o1" style="left:1260px;top:200px"><b class="up">自动执行</b><span>≤ 自动额度 $200</span></div>
+        <div class="out" id="o2" style="left:1260px;top:370px"><b class="gold">等你审批</b><span>网页 / Telegram 一键批准</span></div>
+        <div class="out" id="o3" style="left:1260px;top:540px"><b class="down">截断或拒绝</b><span>超出硬限制</span></div>
+        <div class="abs card mono" id="json" style="left:470px;top:470px;padding:18px 22px;font:400 17px/1.6 var(--f-mono);white-space:pre;color:var(--paper)"></div>
+        <div class="pkt" id="pk1">买 BTC $150</div>
+        <div class="pkt" id="pk2">买 ETH $600</div>
+        <div class="pkt" id="pk3">买 SOL $5,000</div>
+        <div class="abs" id="phone" style="left:955px;top:470px;width:280px;height:400px;border-radius:34px;background:#101418;border:3px solid #333;padding:18px 14px;box-shadow:0 30px 80px rgba(0,0,0,.6)">
+          <div style="font:700 15px/1 var(--f-cn);color:#8fa3b8;text-align:center;margin-bottom:14px">BinanceClaw Bot</div>
+          <div style="background:#1e2a36;border-radius:14px;padding:14px;font:400 16px/1.5 var(--f-cn);color:#e8eef4">
+            <b style="color:var(--gold)">待审批</b><br>买入 ETHUSDT · $600<br><span style="color:#8fa3b8">超过自动额度 $200<br>30 分钟内有效</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <div id="approve" style="flex:1;position:relative;overflow:hidden;background:#24384c;border-radius:10px;padding:12px 0;text-align:center;font:700 17px/1 var(--f-cn);color:#e8eef4">批准<i id="ripple" style="position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px;border-radius:50%;background:rgba(240,185,11,.55)"></i></div>
+            <div style="flex:1;background:#24384c;border-radius:10px;padding:12px 0;text-align:center;font:700 17px/1 var(--f-cn);color:#e8eef4">拒绝</div>
+          </div>
+          <div id="approved" style="margin-top:12px;background:#1e2a36;border-radius:14px;padding:12px 14px;font:400 16px/1.5 var(--f-cn);color:var(--up)">已批准，正在下单</div>
+        </div>
+        <div class="abs card" id="audit" style="left:80px;top:690px;width:1440px;height:150px;padding:20px 26px;display:flex;gap:40px;align-items:center">
+          <div style="flex:none"><div style="font:900 28px/1 var(--f-cn)">审计记录</div><div class="mute" style="font:400 18px/1.4 var(--f-cn);margin-top:8px">每一轮都留底</div></div>
+          <div id="auditLines" class="mono" style="flex:1;min-width:0;font:400 18px/1.7 var(--f-mono);color:var(--mute);white-space:pre;overflow:hidden"></div>
+        </div>
+      </section>
+
+      <!-- S4 what it helps -->
+      <section class="scene" id="s4">
+        <div class="abs eyebrow" id="s4e" style="left:110px;top:80px">它能帮你做什么</div>
+        <div class="abs h2" id="s4h" style="left:110px;top:115px">从选币到下单，一条龙托管</div>
+        <div class="tile card" id="t1" style="left:110px;top:250px"><svg viewBox="0 0 48 48" fill="none" stroke="#f0b90b" stroke-width="3"><circle cx="24" cy="24" r="18"/><path d="M24 6v18l13 9"/></svg><b>AI 自主分配</b><span>自己选币和仓位，自选资产固定入选，带跨轮记忆</span></div>
+        <div class="tile card" id="t2" style="left:580px;top:250px"><svg viewBox="0 0 48 48" fill="none" stroke="#f0b90b" stroke-width="3"><path d="M6 36h36M10 36V20M20 36V10M30 36V24M40 36V16"/></svg><b>目标配置 + 再平衡</b><span>你定比例，偏离超过阈值自动拉回</span></div>
+        <div class="tile card" id="t3" style="left:1050px;top:250px"><svg viewBox="0 0 48 48" fill="none" stroke="#f0b90b" stroke-width="3"><rect x="6" y="10" width="36" height="28" rx="4"/><path d="M6 20h36M14 30h8"/></svg><b>现货 · 合约 · 理财</b><span>全市场现货，可选 U 本位永续，闲钱自动进活期</span></div>
+        <div class="tile card" id="t4" style="left:110px;top:480px"><svg viewBox="0 0 48 48" fill="none" stroke="#f0b90b" stroke-width="3"><path d="M26 4 10 28h14l-2 16 16-24H24z"/></svg><b>实时唤醒</b><span>价格异动、关键价位、止损止盈、成交都会叫醒 AI</span></div>
+        <div class="tile card" id="t5" style="left:580px;top:480px"><svg viewBox="0 0 48 48" fill="none" stroke="#f0b90b" stroke-width="3"><path d="M6 38 18 24l8 8 16-20"/><path d="M34 12h8v8"/></svg><b>盈亏一目了然</b><span>每个币的成本与盈亏，和「全买 BTC」对比</span></div>
+        <div class="tile card" id="t6" style="left:1050px;top:480px"><svg viewBox="0 0 48 48" fill="none" stroke="#f0b90b" stroke-width="3"><path d="M42 8 6 22l12 5 3 13 7-8 9 7z"/></svg><b>Telegram 随身管</b><span>审批按钮、成交通知、日报，/pause /kill 一键刹车</span></div>
+      </section>
+
+      <!-- S5 highlights -->
+      <section class="scene" id="s5">
+        <div class="abs eyebrow" id="s5e" style="left:110px;top:70px">亮点</div>
+        <div class="abs" id="tabs" style="left:110px;top:110px;display:flex;gap:14px">
+          <div class="tab">多空辩论</div><div class="tab">模型竞技场</div><div class="tab">回测实验室</div><div class="tab">全程可审计</div>
+        </div>
+        <div class="abs mute" id="demo" style="right:110px;top:126px;font:400 18px/1 var(--f-cn)">画面数据为示意</div>
+
+        <div class="panel" id="p1">
+          <div class="abs h2" style="left:110px;top:20px;font-size:44px">多头、空头、风控先吵一架，<span class="gold">再由决策模型拍板</span></div>
+          <div class="bub" id="b1" style="left:110px;top:150px;border-color:#1d5a43"><span class="who up">多头</span>MACD 日线金叉，量比 1.8，BTC 可以加仓</div>
+          <div class="bub" id="b2" style="left:1020px;top:150px;border-color:#6a2331"><span class="who down">空头</span>资金费率连续为正，现在追高容易被套</div>
+          <div class="bub" id="b3" style="left:110px;top:400px;border-color:#2a3d63"><span class="who aic">风控</span>单币不超过 10%，跌破 4% 止损</div>
+          <div class="bub" id="b4" style="left:1020px;top:400px;border-color:#6b5310;background:#211c0d"><span class="who gold">决策</span>小仓位试探：买入 BTC $120，挂止损</div>
+          <svg id="gavel" class="abs" style="left:740px;top:300px" width="120" height="120" viewBox="0 0 64 64" fill="none" stroke="#f0b90b" stroke-width="4" stroke-linecap="round"><path d="M14 50h26"/><g id="gavelHead"><rect x="26" y="10" width="22" height="12" rx="3" transform="rotate(35 37 16)"/><path d="M33 24 20 42"/></g></svg>
+        </div>
+
+        <div class="panel" id="p2">
+          <div class="abs h2" style="left:110px;top:20px;font-size:44px">同一份行情，几个模型各管一个虚拟账户<span class="gold">比收益</span></div>
+          <div id="bars" class="abs" style="left:110px;top:140px;width:1380px;height:380px"></div>
+          <div class="abs" id="models" style="left:110px;top:560px;width:1380px;display:flex;flex-wrap:wrap;gap:12px"></div>
+        </div>
+
+        <div class="panel" id="p3">
+          <div class="abs h2" style="left:110px;top:20px;font-size:44px">用历史 K 线回放<span class="gold">同一套 AI 决策和风控</span></div>
+          <svg id="bt" class="abs" style="left:110px;top:120px" width="960" height="520" viewBox="0 0 960 520"></svg>
+          <div class="abs" style="left:1130px;top:140px;display:flex;flex-direction:column;gap:26px" id="btStats"></div>
+        </div>
+
+        <div class="panel" id="p4">
+          <div class="abs h2" style="left:110px;top:20px;font-size:44px">AI 每一步怎么想的，<span class="gold">都能翻出来看</span></div>
+          <div class="abs card" style="left:110px;top:130px;width:820px;padding:30px 34px;display:flex;flex-direction:column;gap:22px" id="auditList"></div>
+          <div class="abs" style="left:1000px;top:130px;width:490px;display:flex;flex-direction:column;gap:20px" id="perf"></div>
+        </div>
+      </section>
+
+      <!-- S6 compare -->
+      <section class="scene" id="s6">
+        <div class="abs eyebrow" id="s6e" style="left:110px;top:70px">和同类比一比</div>
+        <div class="abs h2" id="s6h" style="left:110px;top:105px;font-size:48px">功能不求最多，<span class="gold">安全放第一位</span></div>
+        <table class="cmp" id="cmp">
+          <thead><tr><th></th><th>交易所网格机器人<small>如币安内置网格</small></th><th>开源量化框架<small>如 Freqtrade</small></th><th>AI 交易系统<small>如 NOFX</small></th><th class="me">BinanceClaw</th></tr></thead>
+          <tbody>
+            <tr><td>AI 读行情做决策</td><td class="n">无</td><td class="p">自己写策略</td><td class="y">有</td><td class="me">有</td></tr>
+            <tr><td>模型绕不过的代码风控</td><td class="p">参数止损</td><td class="p">策略内实现</td><td class="p">部分</td><td class="me">每笔必过</td></tr>
+            <tr><td>大额交易人工审批</td><td class="n">无</td><td class="n">少见</td><td class="n">少见</td><td class="me">网页 + Telegram</td></tr>
+            <tr><td>Claude 订阅免 API Key</td><td class="n">无</td><td class="n">无</td><td class="n">少见</td><td class="me">有</td></tr>
+            <tr><td>多空辩论 / 模型竞技场</td><td class="n">无</td><td class="n">无</td><td class="y">有</td><td class="me">有</td></tr>
+            <tr><td>回测</td><td class="n">少见</td><td class="y">有</td><td class="y">有</td><td class="me">有</td></tr>
+            <tr><td>支持的交易所</td><td class="mute">单一</td><td class="y">多家</td><td class="y">多家</td><td class="me" style="color:var(--paper);font-weight:500">仅币安</td></tr>
+          </tbody>
+        </table>
+        <div class="abs mute" id="s6f" style="left:110px;top:840px;font:400 17px/1 var(--f-cn)">按各项目公开资料归纳的典型情况，具体以各产品为准</div>
+      </section>
+
+      <!-- S7 how to use -->
+      <section class="scene" id="s7">
+        <div class="abs eyebrow" id="s7e" style="left:90px;top:70px">如何上手</div>
+        <div class="abs h2" id="s7h" style="left:90px;top:105px;font-size:48px">五分钟部署，<span class="gold">先跑模拟盘</span></div>
+        <div class="term" id="term"><div class="tb"><i></i><i></i><i></i><span class="mono mute" style="margin-left:12px;font-size:15px">~/BinanceClaw</span></div><pre id="tx"></pre></div>
+        <div class="step" id="st1" style="top:200px"><div class="num">1</div><div><b>Docker 一键部署</b><span>默认只监听本机 127.0.0.1:8686</span></div></div>
+        <div class="step" id="st2" style="top:345px"><div class="num">2</div><div><b>创建币安 API Key</b><span>只开读取和现货交易，绑定 IP 白名单，提现必须关闭</span></div></div>
+        <div class="step" id="st3" style="top:510px"><div class="num">3</div><div><b>模拟盘跑够久</b><span>真实行情 + 虚拟资金，流程和实盘一模一样</span></div></div>
+        <div class="step" id="st4" style="top:655px"><div class="num">4</div><div><b>再决定是否开实盘</b><span>通过权限检查才解锁，小额起步</span></div></div>
+      </section>
+
+      <!-- S8 outro -->
+      <section class="scene" id="s8">
+        <svg id="logo2" class="abs" style="left:730px;top:150px" width="140" height="140" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#000" stroke="#3a3426"/><path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="#f0b90b" stroke-width="4.5" stroke-linecap="round" fill="none"/></svg>
+        <div class="abs disp" id="s8t" style="left:0;right:0;top:320px;text-align:center;font:800 110px/1 var(--f-display);letter-spacing:-.03em">BinanceClaw</div>
+        <div class="abs mono gold" id="s8u" style="left:0;right:0;top:470px;text-align:center;font:700 34px/1 var(--f-mono)">github.com/TypeThe0ry/BinanceClaw</div>
+        <div class="abs" id="s8s" style="left:0;right:0;top:545px;text-align:center;font:500 28px/1.5 var(--f-cn)">AI 出决策 · 代码守底线 · 大额你来批</div>
+        <div class="abs mute" id="s8d" style="left:0;right:0;top:760px;text-align:center;font:400 21px/1.6 var(--f-cn)">99% 代码由 AI 编写 · 不构成投资建议 · 加密资产可能亏光本金 · 风险自负</div>
+      </section>
+
+      <div class="grain"></div>
+    </div>
+    <button class="cover" id="cover" type="button" aria-label="播放">
+      <span class="play"><svg width="38" height="38" viewBox="0 0 24 24" fill="#0c0b09"><path d="M7 4.5v15l13-7.5z"/></svg></span>
+      <span class="lbl">BinanceClaw 介绍动画 · 不到 2 分钟</span>
+      <span class="sub">含少量音效，无背景音乐</span>
+      <span class="sub">99% 代码由 AI 编写 · 不构成投资建议 · 加密资产可能亏光本金</span>
+    </button>
+  </div>
+  <div class="bar" id="bar">
+    <button class="btn" id="pp" type="button" aria-label="播放 / 暂停"><svg id="ppI" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg></button>
+    <div class="track" id="track" tabindex="0" role="slider" aria-label="进度" aria-valuemin="0"><div class="rail"></div><div class="fill" id="fill"></div></div>
+    <span class="chap" id="clock">0:00 / 0:00</span>
+    <button class="btn" id="snd" type="button" aria-pressed="true">音效 开</button>
+  </div>
+  <div class="chips" id="chips"></div>
+</div>
+
+<script>
+(()=>{
+const W=1600,H=900;
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const cl=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const pr=(t,a,b)=>cl((t-a)/(b-a));
+const eo=x=>1-Math.pow(1-x,3);
+const eio=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
+const eb=x=>{const c1=1.70158,c3=c1+1;return 1+c3*Math.pow(x-1,3)+c1*Math.pow(x-1,2)};
+const rnd=i=>{const x=Math.sin(i*12.9898+78.233)*43758.5453;return x-Math.floor(x)};
+const lerp=(a,b,p)=>a+(b-a)*p;
+function fx(el,p,o={}){
+  const {y=30,x=0,s=null,r=0}=o; if(typeof el==='string')el=$(el);
+  el.style.opacity=p; let tr=`translate(${(1-p)*x}px,${(1-p)*y}px)`;
+  if(s!==null)tr+=` scale(${lerp(s,1,p)})`; if(r)tr+=` rotate(${(1-p)*r}deg)`;
+  el.style.transform=tr;
+}
+const type=(full,p)=>full.slice(0,Math.round(full.length*cl(p)));
+
+/* ---------- static builds ---------- */
+// candles
+const cand=[];(()=>{let p=100;for(let i=0;i<44;i++){let o=p,d;
+  if(i<27)d=.9+(rnd(i)-.42)*4.2; else if(i<35)d=-(6+rnd(i)*5); else d=(rnd(i)-.5)*3;
+  let c=o+d; cand.push({o,c,h:Math.max(o,c)+rnd(i+50)*2.4,l:Math.min(o,c)-rnd(i+80)*2.4}); p=c;}})();
+const pMax=Math.max(...cand.map(k=>k.h)),pMin=Math.min(...cand.map(k=>k.l));
+const py=v=>200+(pMax-v)/(pMax-pMin)*500;
+const postLow=Math.min(...cand.slice(35).map(k=>k.l));
+const floorP=Math.min(...cand.slice(0,27).map(k=>k.l))-1.5, floorY=py(floorP);
+const svgC=$('#candles');
+svgC.innerHTML=cand.map((k,i)=>`<g class="cd" data-i="${i}"><line x1="0" x2="0" stroke-width="3"/><rect width="20" rx="2"/></g>`).join('')+
+ `<g id="floor"><line x1="100" x2="1500" y1="${floorY}" y2="${floorY}" stroke="#f0b90b" stroke-width="5" stroke-dasharray="18 10"/><rect x="100" y="${floorY+16}" width="200" height="40" rx="8" fill="#f0b90b"/><text x="200" y="${floorY+44}" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-weight="900" font-size="22" fill="#0c0b09">风控底线</text></g>`;
+const cdEls=[...svgC.querySelectorAll('.cd')];
+
+// arena
+const contestants=[["Claude Opus",7.8],["DeepSeek",4.6],["GPT",3.1],["Qwen",-1.9]];
+$('#bars').innerHTML=contestants.map((c,i)=>`<div class="abs" style="left:0;top:${i*92}px;width:1380px;height:72px;display:flex;align-items:center;gap:22px">
+ <div style="width:220px;font:700 28px/1 var(--f-cn)">${c[0]}</div>
+ <div style="flex:1;position:relative;height:56px;border-left:2px solid var(--line)"><div class="bar-f" style="position:absolute;top:0;height:56px;border-radius:0 10px 10px 0"></div></div>
+ <div class="bar-v mono" style="width:150px;text-align:right;font:700 30px/1 var(--f-mono);font-variant-numeric:tabular-nums"></div></div>`).join('');
+const modelNames=["Claude 订阅（免 API Key）","OpenAI","DeepSeek","通义","Ollama","OpenRouter","Anthropic API"];
+$('#models').innerHTML=modelNames.map(m=>`<div class="mchip" style="padding:12px 20px;border-radius:999px;border:1px solid var(--line);font:500 22px/1 var(--f-cn)">${m}</div>`).join('');
+
+// backtest
+const btN=120, strat=[], hold=[];(()=>{let a=100,b=100;for(let i=0;i<btN;i++){
+  const m=Math.sin(i/9)*1.6+Math.sin(i/23+1.2)*1.5+(rnd(i+300)-.5)*2.2+.2; b*=1+m/100;
+  a*=1+(m>0?m*.5:m*.3)/100; strat.push(a);hold.push(b);}})();
+const stratDD=(()=>{let pk=0,dd=0;strat.forEach(v=>{pk=Math.max(pk,v);dd=Math.min(dd,v/pk-1)});return +(dd*100).toFixed(1)})();
+const bMax=Math.max(...strat,...hold)+3,bMin=Math.min(...strat,...hold)-3;
+const bx=i=>60+i/(btN-1)*880, by=v=>470-(v-bMin)/(bMax-bMin)*430;
+$('#bt').innerHTML=`<g stroke="#2c281d">${[0,1,2,3,4].map(k=>`<line x1="60" x2="940" y1="${40+k*107.5}" y2="${40+k*107.5}"/>`).join('')}</g>
+ <path id="btHold" fill="none" stroke="#9a927f" stroke-width="3" stroke-dasharray="8 7"/>
+ <path id="btArea" fill="rgba(240,185,11,.12)"/><path id="btStrat" fill="none" stroke="#f0b90b" stroke-width="4"/>
+ <circle id="btDot" r="8" fill="#f0b90b"/>
+ <text x="60" y="510" fill="#9a927f" font-size="20" font-family="Noto Sans SC, sans-serif">实线：AI 策略　虚线：持有 BTC</text>`;
+const btStatsDef=[["总收益率","%",+(strat[btN-1]-100).toFixed(1),1],["持有 BTC","%",+(hold[btN-1]-100).toFixed(1),1],["最大回撤","%",stratDD,1],["夏普比率","",1.12,2]];
+$('#btStats').innerHTML=btStatsDef.map(s=>`<div><div class="mute" style="font:500 22px/1 var(--f-cn);margin-bottom:10px">${s[0]}</div><div class="btv mono" style="font:700 52px/1 var(--f-mono);font-variant-numeric:tabular-nums">0</div></div>`).join('');
+
+// audit list
+const auditItems=["行情与账户快照","完整提示词","模型原始输出","风控逐条检查 9/9","成交回报与滑点"];
+$('#auditList').innerHTML=auditItems.map(a=>`<div class="ai-row" style="display:flex;align-items:center;gap:20px;font:500 30px/1 var(--f-cn)"><span class="ck" style="width:38px;height:38px;border-radius:50%;border:2px solid var(--up);display:grid;place-items:center;color:var(--up);font:900 22px/1 var(--f-cn)">✓</span>${a}</div>`).join('');
+const perfDef=[["夏普","1.12"],["最大回撤",stratDD+"%"],["盈亏比","1.9"],["胜率","58%"]];
+$('#perf').innerHTML=`<div style="font:900 30px/1.3 var(--f-cn)">绩效页</div><div class="mute" style="font:400 21px/1.5 var(--f-cn);margin-top:-8px">AI 每轮都参考近 30 天绩效</div>`+
+ `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`+perfDef.map(p=>`<div class="card pf" style="padding:22px 24px"><div class="mute" style="font:500 20px/1 var(--f-cn);margin-bottom:12px">${p[0]}</div><div class="mono" style="font:700 40px/1 var(--f-mono)">${p[1]}</div></div>`).join('')+`</div>`;
+
+// terminal script: [startTime, text, kind]
+const TERM=[
+ [0.8,"$ git clone https://github.com/TypeThe0ry/BinanceClaw.git","cmd"],
+ [2.9,"$ cd BinanceClaw && docker compose build","cmd"],
+ [5.0,"$ docker compose run --rm -it binanceclaw setup","cmd"],
+ [7.2,"  ✓ 网页密码   ✓ 币安 API Key   ✓ 模型   ✓ Telegram","ok"],
+ [8.4,"$ docker compose run --rm binanceclaw doctor","cmd"],
+ [10.4,"  ✓ 全部检查通过 · 当前：模拟盘","ok"],
+ [11.6,"$ docker compose up -d","cmd"],
+ [12.8,"  → http://127.0.0.1:8686","ok"],
+];
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+/* ---------- scenes ---------- */
+const S=[];let acc=0;
+function scene(id,label,dur,render,cues=[]){S.push({id,label,dur,start:acc,el:$('#'+id),render,cues});acc+=dur;}
+
+// S0 disclaimer
+// S0 disclaimer: everything at once, under one second (full text again on the outro and the cover)
+scene('s0','声明',1,lt=>{
+  const p=eo(pr(lt,0,.15));
+  ['#s0n','#s0t','#w1','#w2','#w3'].forEach(e=>fx(e,p,{s:.92,y:0}));
+},[[.03,'thud']]);
+
+// S1 hook
+scene('s1','痛点',10,lt=>{
+  const shown=pr(lt,.3,5.2)*cand.length, clamp=eo(pr(lt,6.4,6.9));
+  const crash=lt>4.2&&lt<6.4?Math.sin(lt*70)*6*(1-pr(lt,4.2,6.4)):0;
+  const cw=(1400)/cand.length;
+  cdEls.forEach((g,i)=>{const k=cand[i];const vis=cl(shown-i);
+    let o=k.o,c=k.c,h=k.h,l=k.l;
+    if(clamp>0&&i>=35){const d=(floorP+1.2-postLow)*clamp;o+=d;c+=d;h+=d;l+=d}
+    else if(clamp>0){const f=v=>v<floorP?lerp(v,floorP,clamp):v;o=f(o);c=f(c);l=f(l);h=Math.max(h,lerp(h,floorP+.6,clamp))}
+    const x=100+i*cw+cw/2+crash, up=c>=o, col=up?'#2ebd85':'#f6465d';
+    const line=g.firstChild,rect=g.lastChild;
+    line.setAttribute('x1',x);line.setAttribute('x2',x);line.setAttribute('y1',py(h));line.setAttribute('y2',py(l));line.setAttribute('stroke',col);
+    const y1=py(Math.max(o,c)),y2=py(Math.min(o,c));rect.setAttribute('x',x-cw*.32);rect.setAttribute('width',cw*.64);
+    rect.setAttribute('y',y1);rect.setAttribute('height',Math.max(2,y2-y1));rect.setAttribute('fill',col);
+    g.style.opacity=vis*(clamp>0&&i>=27&&i<35?lerp(1,.75,clamp):1);});
+  const fl=$('#floor');const fp=pr(lt,6.2,6.6);fl.style.opacity=fp;fl.style.transform=`translateY(${(1-eo(fp))*-260}px)`;
+  fx('#s1a',pr(lt,.4,1.1),{y:20});
+  const b=pr(lt,4.5,4.9);fx('#s1b',b,{s:1.4,y:0});$('#s1b').style.transform+=` translateX(${lt>4.5&&lt<5.6?Math.sin(lt*90)*5:0}px)`;
+  fx('#s1c',pr(lt,7.2,7.9),{y:24});
+  svgC.style.opacity=1-pr(lt,9.3,10)*.0;
+},[[.4,'whoosh'],[4.5,'alarm'],[6.55,'stamp'],[7.3,'blip']]);
+
+// S2 title
+const NAME="BinanceClaw";
+scene('s2','是什么',8,lt=>{
+  $$('.claw').forEach((p,i)=>{const L=60;p.style.strokeDasharray=L;p.style.strokeDashoffset=L*(1-eo(pr(lt,.3+i*.18,.9+i*.18)));});
+  fx('#logo',eb(pr(lt,0,.6)),{s:.6,y:0});
+  const n=Math.round(pr(lt,1.1,2.1)*NAME.length);
+  $('#s2t').innerHTML=NAME.split('').map((c,i)=>`<span${i===7?' class="gold"':''} style="opacity:${i<n?1:0};display:inline-block;transform:translateY(${i<n?0:30}px)">${c}</span>`).join('');
+  fx('#tg1',eb(pr(lt,2.6,3)),{s:.5,y:0}); fx('#tg2',eb(pr(lt,3.3,3.7)),{s:.5,y:0}); fx('#tg3',eb(pr(lt,4,4.4)),{s:.5,y:0});
+  fx('#s2s',pr(lt,5,5.7),{y:16});
+},[[.1,'rise'],[1.1,'whoosh'],[2.62,'stamp'],[3.32,'stamp'],[4.02,'stamp']]);
+
+// S3 pipeline
+const JSONTXT=`{
+  "summary": "BTC 回踩支撑",
+  "trades": [
+    {"side":"buy","asset":"BTC","usd":150},
+    {"side":"buy","asset":"ETH","usd":600},
+    {"side":"buy","asset":"SOL","usd":5000}
+  ]
+}`;
+const AUD=["#4182  输入快照 ✓  提示词 ✓  原始输出 ✓","#4182  BTC $150  ≤ 自动额度        → 已执行","#4182  ETH $600  > 自动额度        → 已审批 → 已执行","#4182  SOL $5000 > 单笔上限 $800    → 拒绝"];
+function pktPos(k,outY){ // k: 0..1 along route
+  const pts=[[620,262],[1010,262],[1010,262],[1100,262],[1222,outY]];
+  const seg=[.3,.25,.2,.25];let acc2=0;
+  for(let i=0;i<seg.length;i++){if(k<=acc2+seg[i]||i===seg.length-1){const p=cl((k-acc2)/seg[i]);return[lerp(pts[i][0],pts[i+1][0],eio(p)),lerp(pts[i][1],pts[i+1][1],eio(p))]}acc2+=seg[i];}
+}
+scene('s3','原理',18,lt=>{
+  fx('#s3e',pr(lt,.1,.6),{y:-10}); fx('#s3h',pr(lt,.2,.8),{y:20});
+  fx('#n1',eo(pr(lt,.6,1.1)),{x:-40,y:0}); fx('#n2',eo(pr(lt,.9,1.4)),{x:-40,y:0}); fx('#n3',eo(pr(lt,1.2,1.7)),{x:-40,y:0});
+  ['#o1','#o2','#o3'].forEach((s,i)=>fx(s,eo(pr(lt,1.5+i*.15,2+i*.15)),{x:40,y:0}));
+  $('#s3wires').style.opacity=pr(lt,1.2,2);
+  const jp=pr(lt,2.2,4.4);$('#json').style.opacity=pr(lt,2,2.3)*(1-pr(lt,13.6,14.1));
+  $('#json').innerHTML=esc(type(JSONTXT,jp))+(jp<1?'<span class="caret"></span>':'');
+  // packets
+  const P=[['#pk1',4.4,254,'#o1',"$150 ≤ 自动额度 $200 ✓"],['#pk2',7.0,424,'#o2',"$600 > 自动额度 → 送审"],['#pk3',11.2,594,'#o3',"$5,000 > 单笔上限 $800 ✗"]];
+  let status="纯代码 · 模型无法绕过";
+  P.forEach(([s,t0,oy,o,msg],i)=>{const el=$(s);
+    const k=i===1?(lt<11.3?pr(lt,t0,t0+1.8)*.75:.75+pr(lt,11.3,11.9)*.25):pr(lt,t0,t0+2.4);
+    const [x,y]=pktPos(k,oy);el.style.transform=`translate(${x-el.offsetWidth/2}px,${y-22}px)`;
+    const tEnd=i===1?12.3:t0+2.7;const vis=lt>=t0&&lt<tEnd;el.style.opacity=vis?cl((lt-t0)/.2)*(1-pr(lt,tEnd-.3,tEnd)):0;
+    if(k>.3&&k<=.75&&!(i===1&&lt>9.4))status=msg;
+    const hit=pr(lt,t0+2.3,t0+2.5)*(1-pr(lt,t0+3.6,t0+4.4)), oe=$(o);
+    const col=['#2ebd85','#f0b90b','#f6465d'][i];
+    if(i===1){const ap=pr(lt,11.8,12)*(1-pr(lt,13,13.6));oe.style.borderColor=ap>0?col:'';oe.style.boxShadow=ap>0?`0 0 40px ${col}55`:'none';}
+    else{oe.style.borderColor=hit>0?col:'';oe.style.boxShadow=hit>0?`0 0 40px ${col}55`:'none';}
+    if(i===2){el.style.background=k>.5?'#f6465d':'';el.style.color=k>.5?'#fff':'';el.style.textDecoration=k>.95?'line-through':'none'}
+  });
+  $('#n3s').textContent=status; $('#n3').style.borderColor=status.startsWith('纯')?'#6b5310':'#f0b90b';
+  // phone for packet2 approval
+  const ph=eo(pr(lt,9.4,9.9))*(1-pr(lt,12.4,12.9));fx('#phone',ph,{y:120});
+  const tap=pr(lt,10.9,11.5);$('#ripple').style.transform=`scale(${tap*18})`;$('#ripple').style.opacity=tap>0?1-tap:0;
+  $('#approve').style.background=lt>11.0?'#b88d08':'#24384c';
+  fx('#approved',pr(lt,11.3,11.6),{y:10});
+  // audit
+  fx('#audit',eo(pr(lt,14,14.5)),{y:40});
+  const lines=AUD.map((l,i)=>type(l,pr(lt,14.4+i*.7,14.4+i*.7+.6)));
+  $('#auditLines').innerHTML=lines.map((l,i)=>`<div style="color:${['#9a927f','#2ebd85','#f0b90b','#f6465d'][i]}">${esc(l)||'&nbsp;'}</div>`).join('');
+},[[.6,'whoosh'],[2.2,'blip'],[4.4,'pop'],[5.6,'tick'],[6.75,'chime'],[7.0,'pop'],[8.2,'tick'],[9.4,'blip'],[9.5,'whoosh'],[10.95,'click'],[11.3,'chime'],[11.2,'pop'],[12.4,'tick'],[13.6,'buzz'],[14,'whoosh'],[14.4,'key'],[15.1,'key'],[15.8,'key'],[16.5,'key']]);
+
+// S4 tiles
+scene('s4','能做什么',12,lt=>{
+  fx('#s4e',pr(lt,.1,.6),{y:-10}); fx('#s4h',pr(lt,.2,.8),{y:20});
+  for(let i=1;i<=6;i++)fx('#t'+i,eb(pr(lt,.9+i*.7,1.4+i*.7)),{s:.85,y:30});
+},[[.2,'whoosh'],...[1,2,3,4,5,6].map(i=>[.95+i*.7,'pop'])]);
+
+// S5 highlights (4 panels × 5.5s)
+const PD=5.5;
+scene('s5','亮点',22,lt=>{
+  fx('#s5e',pr(lt,.1,.6),{y:-10}); fx('#tabs',pr(lt,.2,.8),{y:-10}); $('#demo').style.opacity=pr(lt,.5,1);
+  const idx=Math.min(3,Math.floor(lt/PD));
+  $$('#tabs .tab').forEach((t,i)=>t.classList.toggle('on',i===idx));
+  ['#p1','#p2','#p3','#p4'].forEach((p,i)=>{const l=lt-i*PD;const a=pr(l,0,.4)*(1-pr(l,PD-.3,PD));
+    $(p).style.opacity=a;$(p).style.transform=`translateX(${(1-pr(l,0,.4))*60}px)`;$(p).hidden=a<=0;});
+  // p1 debate
+  let l=lt;
+  fx('#b1',eb(pr(l,.6,1)),{s:.7,y:0});fx('#b2',eb(pr(l,1.5,1.9)),{s:.7,y:0});fx('#b3',eb(pr(l,2.4,2.8)),{s:.7,y:0});
+  fx('#gavel',pr(l,3.1,3.3),{y:0});
+  const sw=l<3.3?-40:(l<3.6?lerp(-40,25,pr(l,3.3,3.5)):lerp(25,0,pr(l,3.5,3.9)));
+  $('#gavelHead').style.transform=`rotate(${sw}deg)`;$('#gavelHead').style.transformOrigin='20px 42px';
+  fx('#b4',eb(pr(l,3.6,4)),{s:.7,y:0});
+  // p2 arena
+  l=lt-PD;
+  const bars=$$('.bar-f'),vals=$$('.bar-v'),gp=eo(pr(l,.5,3.4));
+  contestants.forEach((c,i)=>{const wob=Math.sin(l*3+i*2)*1.4*(1-gp);const v=c[1]*gp+wob*(gp>0?1:0);
+    const w=Math.abs(v)/9*1000;const b=bars[i];b.style.width=w+'px';
+    b.style.left=v>=0?'0':'auto';b.style.right=v<0?'auto':'auto';
+    if(v<0){b.style.left='0';b.style.background='#f6465d';b.style.borderRadius='0 10px 10px 0'}else b.style.background=i===0?'#f0b90b':'#4a4434';
+    vals[i].textContent=(v>=0?'+':'')+v.toFixed(1)+'%';vals[i].style.color=v>=0?(i===0?'#f0b90b':'#f3eee2'):'#f6465d';});
+  $$('.mchip').forEach((m,i)=>fx(m,eo(pr(l,3.4+i*.12,3.8+i*.12)),{y:16}));
+  // p3 backtest
+  l=lt-2*PD;
+  const bp=eio(pr(l,.4,4)),nPts=Math.max(2,Math.round(bp*(btN-1))+1);
+  const ds=strat.slice(0,nPts).map((v,i)=>`${i?'L':'M'}${bx(i).toFixed(1)} ${by(v).toFixed(1)}`).join('');
+  $('#btStrat').setAttribute('d',ds);$('#btArea').setAttribute('d',ds+`L${bx(nPts-1)} 470L60 470Z`);
+  $('#btHold').setAttribute('d',hold.slice(0,nPts).map((v,i)=>`${i?'L':'M'}${bx(i).toFixed(1)} ${by(v).toFixed(1)}`).join(''));
+  $('#btDot').setAttribute('cx',bx(nPts-1));$('#btDot').setAttribute('cy',by(strat[nPts-1]));
+  $$('.btv').forEach((e,i)=>{const s=btStatsDef[i],v=s[2]*eo(pr(l,.8+i*.3,3.6+i*.2));e.textContent=(s[1]==='%'&&v>0?'+':'')+v.toFixed(s[3])+s[1];
+    e.style.color=i===0?'#f0b90b':(i===2?'#f6465d':'#f3eee2');});
+  // p4 audit
+  l=lt-3*PD;
+  $$('.ai-row').forEach((r,i)=>fx(r,eo(pr(l,.5+i*.45,.9+i*.45)),{x:-30,y:0}));
+  fx('#perf',pr(l,2.6,3.2),{y:20});
+},[[.2,'whoosh'],[.6,'pop'],[1.5,'pop'],[2.4,'pop'],[3.42,'gavel'],[3.6,'chime'],
+   [PD,'whoosh'],[PD+3.4,'chime'],
+   [2*PD,'whoosh'],[2*PD+4,'blip'],
+   [3*PD,'whoosh'],...[0,1,2,3,4].map(i=>[3*PD+.5+i*.45,'tick']),[3*PD+2.7,'blip']]);
+
+// S6 compare
+scene('s6','对比',14,lt=>{
+  fx('#s6e',pr(lt,.1,.6),{y:-10}); fx('#s6h',pr(lt,.2,.8),{y:20});
+  fx($('#cmp thead tr'),pr(lt,.8,1.3),{y:-10});
+  $$('#cmp tbody tr').forEach((r,i)=>{fx(r,eo(pr(lt,1.6+i*.9,2.1+i*.9)),{x:-40,y:0});
+    const me=r.lastElementChild;const g=pr(lt,2+i*.9,2.3+i*.9)*(1-pr(lt,2.6+i*.9,3.4+i*.9));me.style.textShadow=g>0?`0 0 ${24*g}px rgba(240,185,11,.9)`:'none';});
+  const th=$('#cmp th.me');th.style.textShadow=lt>9?'0 0 18px rgba(240,185,11,.6)':'none';
+  $('#cmp').style.setProperty('--hl',pr(lt,9,9.6));
+  $$('#cmp .me').forEach(c=>c.style.background=`rgba(240,185,11,${.07*pr(lt,9,9.6)})`);
+  fx('#s6f',pr(lt,9.6,10.2),{y:10});
+},[[.2,'whoosh'],...[0,1,2,3,4,5,6].map(i=>[1.62+i*.9,'tick']),[9.0,'chime']]);
+
+// S7 how to use
+scene('s7','上手',20,lt=>{
+  fx('#s7e',pr(lt,.1,.6),{y:-10}); fx('#s7h',pr(lt,.2,.8),{y:20});
+  fx('#term',eo(pr(lt,.3,.8)),{y:30});
+  let html='';let cursorOn=true;
+  TERM.forEach(([t0,txt,kind],i)=>{if(lt<t0)return;const dur=kind==='cmd'?Math.min(2.2,txt.length*.032):.25;
+    const s=type(txt,pr(lt,t0,t0+dur));
+    if(kind==='cmd')html+=`<span class="ps">$</span>${esc(s.slice(1))}\n`;else html+=`<span class="ok">${esc(s)}</span>\n`;});
+  html+=`<span class="caret" style="opacity:${Math.floor(lt*2.5)%2?0:1}"></span>`;
+  $('#tx').innerHTML=html;
+  [['#st1',1],['#st2',6],['#st3',11],['#st4',14.5]].forEach(([s,t])=>fx(s,eo(pr(lt,t,t+.6)),{x:40,y:0}));
+},(()=>{const c=[[.3,'whoosh']];TERM.forEach(([t0,txt,kind])=>{if(kind==='cmd'){const d=Math.min(2.2,txt.length*.032);for(let x=0;x<d;x+=.09)c.push([t0+x,'key'])}else c.push([t0,'blip'])});
+  c.push([12.9,'chime']);[1,6,11,14.5].forEach(t=>c.push([t,'pop']));return c})());
+
+// S8 outro
+scene('s8','结尾',8,lt=>{
+  fx('#logo2',eb(pr(lt,.2,.8)),{s:.5,y:0}); fx('#s8t',pr(lt,.6,1.2),{y:30});
+  fx('#s8u',pr(lt,1.3,1.9),{y:20}); fx('#s8s',pr(lt,2,2.6),{y:20}); fx('#s8d',pr(lt,3,3.6),{y:10});
+},[[.2,'rise'],[.6,'thud'],[1.3,'chime']]);
+
+const T=acc;
+const CUES=S.flatMap(s=>s.cues.map(([t,n])=>({t:s.start+t,n}))).sort((a,b)=>a.t-b.t);
+
+function render(t){
+  t=cl(t,0,T-1e-3);
+  S.forEach((s,i)=>{const lt=t-s.start;const on=lt>=0&&lt<s.dur;s.el.hidden=!on;
+    if(on){const fi=i===0?1:pr(lt,0,.45),fo=i===S.length-1?1:1-pr(lt,s.dur-.45,s.dur);s.el.style.opacity=Math.min(fi,fo);s.render(lt);}});
+}
+
+/* ---------- audio ---------- */
+const noiseBufs=new WeakMap();
+function nbuf(ctx){let b=noiseBufs.get(ctx);if(!b){b=ctx.createBuffer(1,ctx.sampleRate,ctx.sampleRate);const d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;noiseBufs.set(ctx,b)}return b}
+function env(g,w,a,pk,d){g.gain.setValueAtTime(.0001,w);g.gain.exponentialRampToValueAtTime(pk,w+a);g.gain.exponentialRampToValueAtTime(.0001,w+a+d)}
+function tone(ctx,out,w,type,f0,f1,d,v,a=.004){const o=ctx.createOscillator(),g=ctx.createGain();o.type=type;o.frequency.setValueAtTime(f0,w);if(f1)o.frequency.exponentialRampToValueAtTime(f1,w+d);env(g,w,a,v,d);o.connect(g).connect(out);o.start(w);o.stop(w+a+d+.05)}
+function noise(ctx,out,w,d,v,ft,f0,f1,q=1,a=.004){const s=ctx.createBufferSource();s.buffer=nbuf(ctx);const f=ctx.createBiquadFilter();f.type=ft;f.Q.value=q;f.frequency.setValueAtTime(f0,w);if(f1)f.frequency.exponentialRampToValueAtTime(f1,w+a+d);const g=ctx.createGain();env(g,w,a,v,d);s.connect(f).connect(g).connect(out);s.start(w);s.stop(w+a+d+.05)}
+const SFX={
+  tick:(c,o,w)=>tone(c,o,w,'sine',2300,null,.03,.07),
+  key:(c,o,w)=>noise(c,o,w,.018,.09,'highpass',2500+Math.random()*1500,null,.7),
+  click:(c,o,w)=>{noise(c,o,w,.02,.25,'bandpass',3000,null,2);tone(c,o,w,'sine',1200,600,.05,.12)},
+  blip:(c,o,w)=>tone(c,o,w,'sine',880,1320,.09,.13),
+  pop:(c,o,w)=>tone(c,o,w,'sine',560,240,.09,.2),
+  whoosh:(c,o,w)=>noise(c,o,w,.45,.16,'bandpass',300,2800,.9,.22),
+  rise:(c,o,w)=>{tone(c,o,w,'sine',220,880,.5,.08,.2);noise(c,o,w,.5,.08,'bandpass',400,3000,1,.3)},
+  thud:(c,o,w)=>{tone(c,o,w,'sine',150,42,.4,.55);noise(c,o,w,.08,.18,'lowpass',900,null,.7)},
+  stamp:(c,o,w)=>{tone(c,o,w,'triangle',190,80,.14,.4);noise(c,o,w,.06,.3,'lowpass',2200,null,.7)},
+  chime:(c,o,w)=>{tone(c,o,w,'sine',1046.5,null,.8,.12);tone(c,o,w+.09,'sine',1568,null,.9,.1)},
+  buzz:(c,o,w)=>{const f=c.createBiquadFilter();f.type='lowpass';f.frequency.value=900;f.connect(o);tone(c,f,w,'sawtooth',150,110,.28,.16)},
+  alarm:(c,o,w)=>{for(let i=0;i<2;i++){tone(c,o,w+i*.3,'square',700,null,.12,.05);tone(c,o,w+i*.3+.15,'square',540,null,.12,.05)}},
+  gavel:(c,o,w)=>{tone(c,o,w,'sine',180,50,.3,.5);tone(c,o,w,'triangle',950,700,.06,.25);noise(c,o,w,.04,.25,'bandpass',1800,null,1.5)},
+};
+let actx=null,master=null,soundOn=true;
+function ensureAudio(){if(!actx){const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;actx=new AC();master=actx.createGain();master.gain.value=.8;master.connect(actx.destination)}if(actx.state==='suspended')actx.resume()}
+function fire(name){if(!soundOn||!actx)return;try{SFX[name](actx,master,actx.currentTime+.01)}catch(e){}}
+
+/* ---------- transport ---------- */
+const stage=$('#stage'),frame=$('#frame');
+function fit(){stage.style.transform=`scale(${frame.clientWidth/W})`}
+new ResizeObserver(fit).observe(frame);fit();
+let t=0,playing=false,last=0;
+const fmt=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+const chips=$('#chips');chips.innerHTML=S.map((s,i)=>`<button type="button" data-i="${i}">${s.label}</button>`).join('');
+const track=$('#track');S.forEach(s=>{if(!s.start)return;const m=document.createElement('div');m.className='mk';m.style.left=(s.start/T*100)+'%';track.appendChild(m)});
+track.setAttribute('aria-valuemax',Math.round(T));
+function ui(){ $('#fill').style.width=(t/T*100)+'%';$('#clock').textContent=`${fmt(t)} / ${fmt(T)}`;track.setAttribute('aria-valuenow',Math.round(t));
+  const cur=S.findIndex(s=>t>=s.start&&t<s.start+s.dur);[...chips.children].forEach((b,i)=>b.classList.toggle('on',i===cur));
+  $('#ppI').innerHTML=playing?'<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>':'<path d="M7 4.5v15l13-7.5z"/>';}
+function seek(nt){t=cl(nt,0,T);render(t);ui()}
+function play(){ensureAudio();$('#cover').hidden=true;if(t>=T-.05)t=0;playing=true;last=performance.now();requestAnimationFrame(loop);ui()}
+function pause(){playing=false;ui()}
+function loop(now){if(!playing)return;const dt=Math.min(.1,(now-last)/1000);last=now;const prev=t;t=Math.min(T,t+dt);
+  for(const c of CUES){if(c.t>prev&&c.t<=t)fire(c.n)}
+  render(t);ui();if(t>=T){playing=false;ui();return}requestAnimationFrame(loop)}
+$('#cover').onclick=play;
+$('#pp').onclick=()=>playing?pause():play();
+$('#snd').onclick=e=>{soundOn=!soundOn;e.currentTarget.textContent=soundOn?'音效 开':'音效 关';e.currentTarget.setAttribute('aria-pressed',soundOn)};
+chips.onclick=e=>{const b=e.target.closest('button');if(!b)return;seek(S[+b.dataset.i].start+.01);if(!playing)play()};
+function trackSeek(e){const r=track.getBoundingClientRect();seek((e.clientX-r.left)/r.width*T)}
+let drag=false;track.onpointerdown=e=>{drag=true;track.setPointerCapture(e.pointerId);trackSeek(e)};track.onpointermove=e=>{if(drag)trackSeek(e)};track.onpointerup=()=>drag=false;
+document.addEventListener('keydown',e=>{if(e.target.closest&&e.target.closest('input,textarea'))return;
+  if(e.code==='Space'){e.preventDefault();playing?pause():play()}else if(e.code==='ArrowRight')seek(t+5);else if(e.code==='ArrowLeft')seek(t-5)});
+
+// resting frame: the title card, so a thumbnail reads as the product
+seek(S[2].start+6.5);
+
+// hooks for offline rendering
+window.__T=T;window.__seek=x=>{render(x)};
+window.__renderAudio=async(sr=22050)=>{const oc=new OfflineAudioContext(1,Math.ceil(sr*(T+1)),sr);const m=oc.createGain();m.gain.value=.8;m.connect(oc.destination);
+  CUES.forEach(c=>SFX[c.n](oc,m,c.t+.01));const buf=await oc.startRendering();const d=buf.getChannelData(0);
+  const out=new DataView(new ArrayBuffer(44+d.length*2));const ws=(o,s)=>{for(let i=0;i<s.length;i++)out.setUint8(o+i,s.charCodeAt(i))};
+  ws(0,'RIFF');out.setUint32(4,36+d.length*2,true);ws(8,'WAVEfmt ');out.setUint32(16,16,true);out.setUint16(20,1,true);out.setUint16(22,1,true);
+  out.setUint32(24,sr,true);out.setUint32(28,sr*2,true);out.setUint16(32,2,true);out.setUint16(34,16,true);ws(36,'data');out.setUint32(40,d.length*2,true);
+  for(let i=0;i<d.length;i++)out.setInt16(44+i*2,cl(d[i],-1,1)*32767,true);
+  let s='';const u=new Uint8Array(out.buffer);for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)};
+})();
+</script>
+</body>
+</html>

@@ -25,6 +25,13 @@ AI 出决策 · 代码守底线 · 大额你来批
 > [!WARNING]
 > 这是自托管的个人工具，**不是投资建议**。加密资产波动剧烈，AI 会犯错。先用模拟盘跑足够久，再决定是否开启实盘，并且只投入你能承受损失的资金。
 
+## 🎬 两分钟看懂
+
+<p align="center">
+  <a href="https://typethe0ry.github.io/BinanceClaw/intro/"><img src="docs/images/intro-poster.jpg" alt="BinanceClaw 介绍动画" width="100%" /></a>
+  <br/><sub>点击播放介绍动画（含音效）· 也可以下载 <a href="docs/intro/binanceclaw-intro.mp4">MP4</a></sub>
+</p>
+
 ---
 
 ## 📸 界面
