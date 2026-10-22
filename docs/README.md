@@ -1,5 +1,7 @@
 # BinanceClaw 文档
 
+🎬 [两分钟介绍动画](intro/index.html)（含音效）
+
 | 文档 | 内容 |
 |---|---|
 | [快速开始](getting-started.md) | 安装、设置向导、自检、访问 |
