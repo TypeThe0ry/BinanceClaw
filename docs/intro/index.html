@@ -108,11 +108,8 @@ body{background:var(--ink);color:var(--paper);font-family:var(--f-cn);
 
       <!-- S0 disclaimer -->
       <section class="scene" id="s0">
-        <canvas id="rain" class="abs" width="1600" height="900" style="left:0;top:0"></canvas>
-        <div class="abs eyebrow" id="s0e" style="left:0;right:0;top:120px;text-align:center">开始之前，先说清楚</div>
-        <div class="abs" id="s0n" style="left:0;right:0;top:170px;text-align:center;font:800 260px/1 var(--f-display);color:var(--gold);font-variant-numeric:tabular-nums;letter-spacing:-.02em">0%</div>
-        <div class="abs" id="s0t" style="left:0;right:0;top:450px;text-align:center;font:900 54px/1.2 var(--f-cn)">本项目的代码由 <span class="aic">AI</span> 编写</div>
-        <div class="abs mute" id="s0t2" style="left:0;right:0;top:530px;text-align:center;font:400 26px/1.4 var(--f-cn)">AI 会写代码，也会写出 bug。使用前请自行审阅。</div>
+        <div class="abs" id="s0n" style="left:0;right:0;top:170px;text-align:center;font:800 260px/1 var(--f-display);color:var(--gold);font-variant-numeric:tabular-nums;letter-spacing:-.02em">99%</div>
+        <div class="abs" id="s0t" style="left:0;right:0;top:460px;text-align:center;font:900 54px/1.2 var(--f-cn)">本项目的代码由 <span class="aic">AI</span> 编写</div>
         <div class="abs" style="left:150px;right:150px;top:630px;display:flex;gap:24px;justify-content:center">
           <div class="card" id="w1" style="flex:1;padding:26px 28px;border-color:#5a3a1e"><div style="font:900 30px/1 var(--f-cn);color:var(--gold);margin-bottom:12px">不是投资建议</div><div class="mute" style="font:400 21px/1.45 var(--f-cn)">这是自托管的个人工具，<br>所有交易决定和后果由你承担</div></div>
           <div class="card" id="w2" style="flex:1;padding:26px 28px;border-color:#5a2230"><div style="font:900 30px/1 var(--f-cn);color:var(--down);margin-bottom:12px">加密资产风险极高</div><div class="mute" style="font:400 21px/1.45 var(--f-cn)">价格可能一天腰斩，<br>你可能亏掉全部本金</div></div>
@@ -275,8 +272,9 @@ body{background:var(--ink);color:var(--paper);font-family:var(--f-cn);
     </div>
     <button class="cover" id="cover" type="button" aria-label="播放">
       <span class="play"><svg width="38" height="38" viewBox="0 0 24 24" fill="#0c0b09"><path d="M7 4.5v15l13-7.5z"/></svg></span>
-      <span class="lbl">BinanceClaw 介绍动画 · 约 2 分钟</span>
+      <span class="lbl">BinanceClaw 介绍动画 · 不到 2 分钟</span>
       <span class="sub">含少量音效，无背景音乐</span>
+      <span class="sub">99% 代码由 AI 编写 · 不构成投资建议 · 加密资产可能亏光本金</span>
     </button>
   </div>
   <div class="bar" id="bar">
@@ -370,24 +368,11 @@ const S=[];let acc=0;
 function scene(id,label,dur,render,cues=[]){S.push({id,label,dur,start:acc,el:$('#'+id),render,cues});acc+=dur;}
 
 // S0 disclaimer
-const rain=$('#rain').getContext('2d');const glyphs="{}[]()=>;:01aiAIdefreturnif<>/*+-%$#";
-scene('s0','声明',11,lt=>{
-  const k=pr(lt,.9,3.2), n=Math.round(eo(k)*99);
-  $('#s0n').textContent=n+'%';
-  fx('#s0e',pr(lt,.2,.8),{y:-14});
-  const pop=lt>3.2?1+Math.max(0,.08*(1-(lt-3.2)/.35)):1;
-  $('#s0n').style.transform=`scale(${pop})`; $('#s0n').style.opacity=pr(lt,.5,1);
-  fx('#s0t',pr(lt,3.3,3.9),{y:20}); fx('#s0t2',pr(lt,4.1,4.7),{y:16});
-  fx('#w1',eo(pr(lt,5.4,6)),{y:40}); fx('#w2',eo(pr(lt,6.3,6.9)),{y:40}); fx('#w3',eo(pr(lt,7.2,7.8)),{y:40});
-  // code rain
-  rain.clearRect(0,0,W,H); const a=lerp(.55,.14,pr(lt,3,4.5));
-  rain.font='18px "JetBrains Mono", monospace';
-  for(let c=0;c<64;c++){const v=.6+rnd(c)*1.3,x=c*25+6,head=((lt*v*240)+rnd(c+99)*1100)%1200-100;
-    for(let j=0;j<14;j++){const y=head-j*22;if(y<-20||y>H)continue;
-      const g=glyphs[Math.floor(rnd(c*31+j+Math.floor(lt*7))*glyphs.length)];
-      rain.fillStyle=j===0?`rgba(243,238,226,${a})`:`rgba(240,185,11,${a*(1-j/14)*.8})`;rain.fillText(g,x,y);}}
-},[[.9,'whoosh'],...Array.from({length:14},(_,i)=>[0.95+eoInv(i/14)*2.25,'tick']),[3.22,'thud'],[3.35,'chime'],[5.45,'blip'],[6.35,'blip'],[7.25,'blip']]);
-function eoInv(y){return 1-Math.cbrt(1-y)}
+// S0 disclaimer: everything at once, under one second (full text again on the outro and the cover)
+scene('s0','声明',1,lt=>{
+  const p=eo(pr(lt,0,.15));
+  ['#s0n','#s0t','#w1','#w2','#w3'].forEach(e=>fx(e,p,{s:.92,y:0}));
+},[[.03,'thud']]);
 
 // S1 hook
 scene('s1','痛点',10,lt=>{
