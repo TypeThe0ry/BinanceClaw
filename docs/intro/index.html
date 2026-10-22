@@ -98,6 +98,36 @@ body{background:var(--ink);color:var(--paper);font-family:var(--f-cn);
 .step .num{flex:none;width:46px;height:46px;border-radius:50%;border:2px solid var(--gold);color:var(--gold);display:grid;place-items:center;font:800 22px/1 var(--f-display)}
 .step b{display:block;font:900 27px/1.2 var(--f-cn);margin-bottom:6px} .step span{font:400 19px/1.45 var(--f-cn);color:var(--mute)}
 .caret{display:inline-block;width:11px;height:22px;background:var(--gold);vertical-align:-3px}
+/* S3b operation demo */
+.br{position:absolute;left:110px;top:195px;width:1380px;height:620px;border-radius:14px;background:#0f0e0b;border:1px solid var(--line);overflow:hidden;box-shadow:0 30px 90px rgba(0,0,0,.55)}
+.br .tb{height:42px;display:flex;align-items:center;gap:8px;padding:0 18px;border-bottom:1px solid var(--line);background:#14120e}
+.br .tb i{width:12px;height:12px;border-radius:50%;background:#3a3528;display:block}
+.br .url{margin-left:18px;flex:1;max-width:520px;height:26px;border-radius:7px;background:#0b0a08;color:var(--mute);font:400 15px/26px var(--f-mono);padding:0 12px}
+.br .nav{position:absolute;left:0;right:0;top:42px;height:62px;border-bottom:1px solid var(--line);font:500 19px/62px var(--f-cn);color:var(--mute)}
+.br .nav span{position:absolute;top:0}
+.br .nav .on{color:var(--paper)}
+.badge{display:inline-block;min-width:22px;height:22px;border-radius:11px;background:var(--gold);color:var(--ink);font:800 14px/22px var(--f-display);text-align:center;margin-left:6px;vertical-align:2px}
+.bbtn{display:inline-block;border-radius:9px;padding:9px 18px;font:700 17px/1 var(--f-cn)}
+.uprow{position:absolute;left:40px;right:40px;border-bottom:1px solid var(--line)}
+.toast{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);background:var(--paper);color:var(--ink);border-radius:12px;padding:14px 22px;font:700 18px/1 var(--f-cn);white-space:nowrap}
+.cursor{position:absolute;left:0;top:0;width:34px;height:34px;pointer-events:none;z-index:4}
+.clickfx{position:absolute;width:60px;height:60px;margin:-30px 0 0 -30px;border-radius:50%;border:3px solid var(--gold);pointer-events:none;z-index:3}
+.ph{position:absolute;width:340px;height:660px;border-radius:44px;background:#0b0d10;border:3px solid #2e2e2e;overflow:hidden;box-shadow:0 30px 90px rgba(0,0,0,.6)}
+.ph .sb{height:40px;display:flex;justify-content:space-between;align-items:center;padding:0 26px;font:600 14px/1 var(--f-display);color:#cfd6dd}
+.tgh{height:56px;display:flex;align-items:center;gap:12px;padding:0 16px;background:#17212b;color:#e8eef4;font:700 17px/1.2 var(--f-cn)}
+.tgh .av{width:36px;height:36px;border-radius:50%;background:#000;display:grid;place-items:center}
+.tgmsg{position:absolute;left:12px;right:30px;background:#182533;border-radius:16px;overflow:hidden;color:#e8eef4;font:400 15px/1.5 var(--f-cn)}
+.tgkb{position:absolute;left:12px;right:30px;display:flex;gap:6px}
+.tgkb div{flex:1;background:#24384c;border-radius:10px;padding:11px 0;text-align:center;font:600 15px/1 var(--f-cn);color:#e8eef4;position:relative;overflow:hidden}
+.mw{background:#0c0b09}
+.mw .top{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--line);font:800 18px/1 var(--f-display)}
+.mw .bn{position:absolute;left:0;right:0;bottom:0;height:70px;border-top:1px solid var(--line);display:flex;font:500 13px/1 var(--f-cn);color:var(--mute);background:#0c0b09}
+.mw .bn div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;position:relative}
+.mw .bn i{display:block;width:20px;height:20px;border-radius:6px;border:2px solid currentColor}
+.pt{position:absolute;left:1010px;width:500px;display:flex;gap:16px;align-items:flex-start;font:500 25px/1.45 var(--f-cn)}
+.pt b{flex:none;width:30px;height:30px;margin-top:5px;border-radius:50%;background:var(--gold);color:var(--ink);display:grid;place-items:center;font:900 17px/1 var(--f-cn)}
+.finger{position:absolute;width:54px;height:54px;margin:-27px 0 0 -27px;border-radius:50%;background:rgba(243,238,226,.35);border:2px solid rgba(243,238,226,.8);z-index:4;pointer-events:none}
+
 </style>
 
 </head>
@@ -179,6 +209,85 @@ body{background:var(--ink);color:var(--paper);font-family:var(--f-cn);
           <div style="flex:none"><div style="font:900 28px/1 var(--f-cn)">审计记录</div><div class="mute" style="font:400 18px/1.4 var(--f-cn);margin-top:8px">每一轮都留底</div></div>
           <div id="auditLines" class="mono" style="flex:1;min-width:0;font:400 18px/1.7 var(--f-mono);color:var(--mute);white-space:pre;overflow:hidden"></div>
         </div>
+      </section>
+
+      <!-- S3b operation demo -->
+      <section class="scene" id="s3b">
+        <div class="abs eyebrow" id="obE" style="left:110px;top:70px">操作演示</div>
+        <div class="abs h2" id="obH" style="left:110px;top:105px;font-size:48px">网页上点一下，<span class="gold">手机上也能批</span></div>
+
+        <div class="br" id="br">
+          <div class="tb"><i></i><i></i><i></i><div class="url" id="url">127.0.0.1:8686/</div></div>
+          <div class="nav">
+            <span style="left:26px;color:var(--paper);font:800 21px/62px var(--f-display);display:flex;align-items:center;gap:10px"><svg width="28" height="28" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#000"/><path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="#fff" stroke-width="5" stroke-linecap="round" fill="none"/></svg>BinanceClaw</span>
+            <span id="nv0" class="on" style="left:250px">资产</span><span style="left:334px">现货</span><span style="left:418px">合约</span><span style="left:502px">AI</span>
+            <span id="nv4" style="left:566px">审批<i class="badge" id="nbadge">1</i></span>
+            <span style="left:682px">对话</span><span style="left:766px">日报</span><span style="left:850px">绩效</span><span style="left:934px">竞技场</span>
+            <span style="left:1130px"><i class="bbtn" style="background:#1f2a1f;color:var(--up);font-size:15px;padding:7px 12px;font-style:normal">模拟盘</i></span>
+            <span style="left:1230px;color:var(--down);font-weight:700">■ 紧急停止</span>
+          </div>
+          <div id="pgHome" class="abs" style="left:40px;top:134px;right:40px;bottom:0">
+            <div class="mute" style="font:500 18px/1 var(--f-cn)">总资产</div>
+            <div class="mono" style="font:700 54px/1.3 var(--f-mono);margin-top:6px">$10,000.00</div>
+            <svg width="1300" height="300" viewBox="0 0 1300 300" style="margin-top:20px"><path d="M0 230 C120 220 200 240 300 200 S500 160 620 170 S820 120 940 110 S1160 80 1300 60" stroke="#f0b90b" stroke-width="3" fill="none"/><path d="M0 230 C120 220 200 240 300 200 S500 160 620 170 S820 120 940 110 S1160 80 1300 60 V300 H0Z" fill="rgba(240,185,11,.08)"/></svg>
+          </div>
+          <div id="pgAppr" class="abs" style="left:0;top:104px;right:0;bottom:0">
+            <div class="abs" style="left:40px;top:28px;font:800 30px/1 var(--f-cn)">审批</div>
+            <div class="abs" style="left:40px;top:80px;display:flex;gap:28px;font:600 19px/1 var(--f-cn)"><span style="padding-bottom:10px;border-bottom:2px solid var(--paper)">待处理<span class="gold" id="pcount" style="margin-left:6px">1</span></span><span class="mute">历史</span></div>
+            <div class="uprow" id="arow" style="top:130px;height:74px">
+              <div class="abs mono mute" style="left:0;top:26px;font-size:17px">14:32:08</div>
+              <div class="abs" style="left:150px;top:22px;display:flex;align-items:center;gap:12px;font:700 21px/1 var(--f-cn)"><span class="up" style="font-size:18px">买入</span>BTC</div>
+              <div class="abs mono" style="left:330px;top:24px;font:700 21px/1 var(--f-mono)">$600</div>
+              <div class="abs" style="left:450px;top:26px;font:400 17px/1 var(--f-cn);color:var(--mute)">剩余 <span class="mono gold" id="cd">29:41</span></div>
+              <div class="abs mute" id="chev" style="left:1000px;top:20px;font:400 30px/1 var(--f-cn)">›</div>
+              <div class="abs" style="right:0;top:16px;display:flex;gap:10px"><span class="bbtn" style="border:1px solid var(--line);color:var(--paper)">拒绝</span><span class="bbtn" id="apBtn" style="background:var(--up);color:#06150e">批准</span></div>
+            </div>
+            <div class="abs" id="adet" style="left:40px;right:40px;top:214px;display:grid;grid-template-columns:1fr 1fr;gap:30px;font:400 19px/1.55 var(--f-cn)">
+              <div><div class="mute" style="font-size:15px;margin-bottom:6px">理由</div>回踩 4 小时支撑后企稳，日线 MACD 金叉，量比放大到 1.8</div>
+              <div><div class="mute" style="font-size:15px;margin-bottom:6px">判断错了的信号</div>4 小时收盘跌破支撑位，或量能明显萎缩</div>
+            </div>
+            <div class="abs mute" id="aempty" style="left:0;right:0;top:250px;text-align:center;font:400 20px/1 var(--f-cn)">没有待处理的审批</div>
+          </div>
+          <div class="toast" id="toast"><span class="up">●</span> 已批准：重新风控通过，买入 BTC $600</div>
+        </div>
+        <svg class="cursor" id="cur" viewBox="0 0 24 24"><path d="M4 2l16 10-7 1.6L9.6 21z" fill="#f3eee2" stroke="#0c0b09" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        <div class="clickfx" id="cfx"></div>
+
+        <div class="ph" id="ph1" style="left:170px;top:190px">
+          <div class="sb"><span>14:32</span><span>5G ▮▮▮</span></div>
+          <div class="tgh"><div class="av"><svg width="22" height="22" viewBox="0 0 64 64"><path d="M18 46c4-14 10-24 14-28M28 48c3-12 8-21 12-25M38 48c2-9 6-16 9-19" stroke="#fff" stroke-width="6" stroke-linecap="round" fill="none"/></svg></div><div>BinanceClaw<div style="font:400 13px/1.2 var(--f-cn);color:#8fa3b8">机器人</div></div></div>
+          <div class="tgmsg" id="tgm" style="top:112px">
+            <svg width="298" height="140" viewBox="0 0 298 140" style="display:block;background:#0f1a24" id="tgchart"></svg>
+            <div id="tgcap" style="padding:10px 12px 12px;white-space:pre-wrap">🟡 待批准 [模拟盘]
+BUY BTCUSDT  $600
+
+理由：回踩 4 小时支撑后企稳，日线 MACD 金叉
+
+判断错了的信号：4 小时收盘跌破支撑位
+
+30 分钟内有效</div>
+          </div>
+          <div class="tgkb" id="tgkb" style="top:530px"><div id="tgOk">✅ 批准<i id="rip2" style="position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px;border-radius:50%;background:rgba(240,185,11,.6)"></i></div><div>❌ 拒绝</div></div>
+        </div>
+
+        <div class="ph mw" id="ph2" style="left:570px;top:190px">
+          <div class="sb"><span>14:32</span><span>5G ▮▮▮</span></div>
+          <div class="top"><span>BinanceClaw</span><span class="up" style="font:600 13px/1 var(--f-cn);border:1px solid #1f3a2c;border-radius:6px;padding:5px 8px">模拟盘</span></div>
+          <div style="padding:18px 18px 0;font:800 24px/1 var(--f-cn)">审批</div>
+          <div style="padding:16px 18px 0;display:flex;gap:20px;font:600 15px/1 var(--f-cn)"><span style="padding-bottom:8px;border-bottom:2px solid var(--paper)">待处理<span class="gold" id="m2c" style="margin-left:4px">1</span></span><span class="mute">历史</span></div>
+          <div id="m2row" style="margin:6px 18px 0;padding:14px 0;border-bottom:1px solid var(--line)">
+            <div style="display:flex;align-items:center;gap:10px;font:700 17px/1 var(--f-cn)"><span class="up" style="font-size:15px">买入</span>BTC<span class="mono" style="font-weight:700">$600</span><span class="mono gold" style="margin-left:auto;font-size:14px" id="cd2">29:41</span></div>
+            <div style="display:flex;gap:8px;margin-top:12px"><span class="bbtn" style="flex:1;text-align:center;border:1px solid var(--line);font-size:15px">拒绝</span><span class="bbtn" style="flex:1;text-align:center;background:var(--up);color:#06150e;font-size:15px">批准</span></div>
+          </div>
+          <div id="m2done" class="abs" style="left:18px;right:18px;top:200px;font:400 15px/1.5 var(--f-cn)"><div class="mute" style="text-align:center;margin-top:14px">没有待处理的审批</div><div style="margin-top:22px;padding:12px 14px;border-radius:12px;background:var(--ink-2);border:1px solid var(--line)"><span class="up">已批准（Telegram）</span><br><span class="mute">买入 BTC $600 · 已成交</span></div></div>
+          <div class="bn"><div><i></i>资产</div><div><i></i>现货</div><div><i></i>合约</div><div style="color:var(--paper)"><i></i>审批<span id="m2dot" style="position:absolute;right:24%;top:10px;width:9px;height:9px;border-radius:50%;background:var(--gold)"></span></div><div><i></i>更多</div></div>
+        </div>
+        <div class="finger" id="fing"></div>
+
+        <div class="pt" id="pt1" style="top:230px"><b>1</b><span>网页、Telegram 哪边先批都行，另一边自动同步，同一笔不会执行两次</span></div>
+        <div class="pt" id="pt2" style="top:375px"><b>2</b><span>批准时会用最新价格和余额，把风控重新检查一遍再下单</span></div>
+        <div class="pt" id="pt3" style="top:520px"><b>3</b><span>30 分钟没人批就自动作废，<span class="mono">/kill</span> 一键作废全部</span></div>
+        <div class="pt" id="pt4" style="top:665px"><b>4</b><span>睡觉时用 <span class="mono">/sleep</span> 设免审批时段，风控限额照常</span></div>
       </section>
 
       <!-- S4 what it helps -->
@@ -272,7 +381,7 @@ body{background:var(--ink);color:var(--paper);font-family:var(--f-cn);
     </div>
     <button class="cover" id="cover" type="button" aria-label="播放">
       <span class="play"><svg width="38" height="38" viewBox="0 0 24 24" fill="#0c0b09"><path d="M7 4.5v15l13-7.5z"/></svg></span>
-      <span class="lbl">BinanceClaw 介绍动画 · 不到 2 分钟</span>
+      <span class="lbl">BinanceClaw 介绍动画 · 约 2 分钟</span>
       <span class="sub">含少量音效，无背景音乐</span>
       <span class="sub">99% 代码由 AI 编写 · 不构成投资建议 · 加密资产可能亏光本金</span>
     </button>
@@ -454,6 +563,46 @@ scene('s3','原理',18,lt=>{
   const lines=AUD.map((l,i)=>type(l,pr(lt,14.4+i*.7,14.4+i*.7+.6)));
   $('#auditLines').innerHTML=lines.map((l,i)=>`<div style="color:${['#9a927f','#2ebd85','#f0b90b','#f6465d'][i]}">${esc(l)||'&nbsp;'}</div>`).join('');
 },[[.6,'whoosh'],[2.2,'blip'],[4.4,'pop'],[5.6,'tick'],[6.75,'chime'],[7.0,'pop'],[8.2,'tick'],[9.4,'blip'],[9.5,'whoosh'],[10.95,'click'],[11.3,'chime'],[11.2,'pop'],[12.4,'tick'],[13.6,'buzz'],[14,'whoosh'],[14.4,'key'],[15.1,'key'],[15.8,'key'],[16.5,'key']]);
+
+// S3b operation demo: web approval, then phone approval
+const kf=(lt,keys)=>{if(lt<=keys[0][0])return keys[0].slice(1);for(let i=1;i<keys.length;i++){if(lt<=keys[i][0]){const a=keys[i-1],b=keys[i],p=eio(pr(lt,a[0],b[0]));return[lerp(a[1],b[1],p),lerp(a[2],b[2],p)]}}return keys[keys.length-1].slice(1)};
+(()=>{const g=$('#tgchart');let p=60,h='';for(let i=0;i<26;i++){const o=p,c=p+(rnd(i+900)-.45)*7;const hi=Math.max(o,c)+rnd(i+950)*3,lo=Math.min(o,c)-rnd(i+990)*3;p=c;
+  const x=12+i*10.6,y=v=>130-(v-48)*6,col=c>=o?'#2ebd85':'#f6465d';h+=`<line x1="${x}" x2="${x}" y1="${y(hi)}" y2="${y(lo)}" stroke="${col}" stroke-width="1.5"/><rect x="${x-3}" width="6" y="${y(Math.max(o,c))}" height="${Math.max(1.5,Math.abs(c-o))}" fill="${col}"/>`;}
+  g.innerHTML=h+`<path d="M281 ${130-(p-48)*6+12} l6 10 h-12z" fill="#f0b90b"/><text x="10" y="18" fill="#8fa3b8" font-size="11" font-family="JetBrains Mono, monospace">BTCUSDT 4h · PENDING</text>`;})();
+const TGCAP=$('#tgcap').textContent;
+scene('s3b','操作',20,lt=>{
+  fx('#obE',pr(lt,.1,.6),{y:-10}); fx('#obH',pr(lt,.2,.8),{y:20});
+  // part A: web
+  const brA=eo(pr(lt,.5,1.1))*(1-pr(lt,9,9.5)); fx('#br',brA,{y:40}); $('#br').hidden=brA<=0;
+  const b=eb(pr(lt,1.3,1.6)); $('#nbadge').style.transform=`scale(${lt<8.3?b:1-pr(lt,8.3,8.5)})`;
+  const onAppr=lt>=2.8; $('#pgHome').hidden=onAppr; $('#pgAppr').hidden=!onAppr;
+  $('#url').textContent=onAppr?'127.0.0.1:8686/approvals':'127.0.0.1:8686/';
+  $('#nv0').classList.toggle('on',!onAppr); $('#nv4').classList.toggle('on',onAppr);
+  const left=1781-Math.floor(Math.max(0,lt-2.8)); $('#cd').textContent=`${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}`; $('#cd2').textContent=$('#cd').textContent;
+  const det=eo(pr(lt,4.2,4.6)); $('#adet').style.opacity=det*(1-pr(lt,8.2,8.5)); $('#adet').style.transform=`translateY(${(1-det)*-10}px)`; $('#chev').style.transform=`rotate(${det*90}deg)`;
+  const gone=pr(lt,8.2,8.5); $('#arow').style.opacity=1-gone; $('#pcount').style.opacity=1-gone; $('#aempty').style.opacity=pr(lt,8.4,8.7);
+  $('#apBtn').textContent=lt>=6.9&&lt<7.6?'执行中…':'批准';
+  const ts=pr(lt,7.6,7.85)*(1-pr(lt,8.9,9.2)); $('#toast').style.opacity=ts; $('#toast').style.transform=`translateX(-50%) translateY(${(1-ts)*20}px)`;
+  // browser coords: br at (110,175); nav row y 175+42+31; 审批 at x 110+566+20
+  const [cx,cy]=kf(lt,[[1.4,900,640],[2.6,700,268],[3.2,700,268],[4.0,1160,466],[4.8,1160,466],[6.7,1414,466]]);
+  const curA=pr(lt,1.2,1.4)*(1-pr(lt,8.8,9.1)); const cur=$('#cur'); cur.style.opacity=curA; cur.style.transform=`translate(${cx-6}px,${cy-4}px)`;
+  const clicks=[2.7,4.1,6.9]; const cf=$('#cfx'); let cfo=0,cfs=1;
+  clicks.forEach(c=>{const k=pr(lt,c,c+.45);if(k>0&&k<1){cfo=1-k;cfs=.4+k}}); cf.style.opacity=cfo; cf.style.left=cx+'px'; cf.style.top=cy+'px'; cf.style.transform=`scale(${cfs})`;
+  // part B: phones
+  const pB=eo(pr(lt,9.5,10.1)); fx('#ph1',pB,{y:80}); $('#ph1').hidden=pB<=0;
+  const p2=eo(pr(lt,10.4,11)); fx('#ph2',p2,{y:80}); $('#ph2').hidden=p2<=0;
+  const msg=eb(pr(lt,10.1,10.4)); fx('#tgm',msg,{s:.85,y:20}); fx('#tgkb',msg,{y:10});
+  $('#ph1').style.transform+=` translateX(${lt>10.1&&lt<10.6?Math.sin(lt*120)*4:0}px)`;
+  const done=lt>=12.6;
+  $('#tgcap').textContent=done?'✅ BUY BTCUSDT  $600 — approved（Telegram）\n已按最新价格重新风控并成交':TGCAP;
+  $('#tgchart').style.display=done?'none':'block'; $('#tgkb').style.visibility=done?'hidden':'visible';
+  $('#tgOk').style.background=lt>12.4&&!done?'#b88d08':'#24384c';
+  const tp=pr(lt,12.4,12.9); $('#rip2').style.transform=`scale(${tp*16})`; $('#rip2').style.opacity=tp>0?1-tp:0;
+  const [fxp,fyp]=kf(lt,[[11.3,420,800],[12.3,262,739]]); const fg=$('#fing'); fg.style.opacity=pr(lt,11.2,11.5)*(1-pr(lt,12.9,13.3)); fg.style.left=fxp+'px'; fg.style.top=fyp+'px';
+  fg.style.transform=`scale(${lt>12.3&&lt<12.6?.8:1})`;
+  const m2=pr(lt,12.9,13.3); $('#m2row').style.opacity=1-m2; $('#m2c').style.opacity=1-m2; $('#m2dot').style.opacity=1-m2; $('#m2done').style.opacity=pr(lt,13.1,13.5);
+  [['#pt1',13.4],['#pt2',14.6],['#pt3',15.8],['#pt4',17]].forEach(([s,t])=>fx(s,eo(pr(lt,t,t+.5)),{x:40,y:0}));
+},[[.2,'whoosh'],[1.3,'pop'],[2.7,'click'],[4.1,'click'],[6.9,'click'],[7.6,'chime'],[9.5,'whoosh'],[10.1,'blip'],[10.15,'buzz'],[12.4,'click'],[12.6,'chime'],[13.0,'pop'],[13.4,'tick'],[14.6,'tick'],[15.8,'tick'],[17,'tick']]);
 
 // S4 tiles
 scene('s4','能做什么',12,lt=>{
