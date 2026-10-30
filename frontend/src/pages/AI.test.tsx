@@ -50,4 +50,18 @@ describe("AI decision detail", () => {
     expect(await screen.findByText("判断", { selector: "h2" })).toBeInTheDocument();
     expect(screen.queryByText("多空辩论", { selector: "h2" })).toBeNull();
   });
+
+  it("lists the news the round was given", async () => {
+    open(cycle({ timing: { news_ms: 1500 }, context: { news: { source: "model", fetched_at: "2026-10-30 08:00 UTC", overview: "监管偏多",
+      items: [{ title: "SEC 批准 ETF", url: "https://x.com/1", source: "Reuters", time: "2026-10-30 07:00", assets: ["BTC"], impact: "bullish", summary: "资金流入" },
+        { title: "交易所被盗", assets: ["ETH"], impact: "bearish" }] } } }));
+    expect(await screen.findByText("新闻", { selector: "h2" })).toBeInTheDocument();
+    expect(screen.getByText("监管偏多")).toBeInTheDocument();
+    const items = screen.getAllByTestId("news-item");
+    expect(items).toHaveLength(2);
+    expect(within(items[0]).getByRole("link", { name: "SEC 批准 ETF" })).toHaveAttribute("href", "https://x.com/1");
+    expect(within(items[0]).getByText("利好")).toBeInTheDocument();
+    expect(within(items[1]).getByText("利空")).toBeInTheDocument();
+    expect(screen.getByText(/新闻 1\.5s/)).toBeInTheDocument();
+  });
 });

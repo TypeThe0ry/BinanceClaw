@@ -14,6 +14,7 @@ const INDEX: Record<PagePath, { title: string; words: string }[]> = {
     { title: "交易模式", words: "实盘 模拟盘 开启实盘 API 权限 提现 重置" },
     { title: "AI 模型", words: "提供方 模型 备用模型 Base URL 连通测试 按任务分配模型 Claude OpenAI Anthropic" },
     { title: "多空辩论", words: "辩论 多头 空头 风控 决策模型 角色 轮数 共识" },
+    { title: "联网新闻", words: "新闻 联网 搜索 WebSearch 消息面 RSS 新闻源 话题" },
     { title: "节奏", words: "决策方式 自主实时 固定间隔 复查间隔 最短间隔 最长不决策 调用上限 波动唤醒 审批有效期 日报时间" },
     { title: "理财", words: "活期 申购 赎回 稳定币 现货保留 最小划转 Simple Earn" },
     { title: "Telegram 推送", words: "推送频率 即时 定时汇总 免打扰 通知 消息" },

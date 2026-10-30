@@ -57,6 +57,10 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "min_move_usd": (1, 100_000),
     # telegram
     "digest_minutes": (5, 1440),
+    # 联网新闻
+    "refresh_minutes": (5, 1440),
+    "lookback_hours": (1, 168),
+    "max_items": (1, 20),
 }
 
 # Suggestions for the asset picker (any TRADING <TOKEN>USDT spot pair can also be typed in).
@@ -137,10 +141,11 @@ MODEL_TASKS: dict[str, str] = {
     "chat": "对话",
     "report": "日报点评",
     "debate": "多空辩论",
+    "news": "新闻搜索",
 }
 MODEL_TIERS = ("fast", "strong", "main")          # main = the provider's own model setting
 DEFAULT_TASK_TIERS: dict[str, str] = {"decision": "strong", "allocation": "strong", "chat": "strong", "report": "fast",
-                                      "debate": "strong"}
+                                      "debate": "strong", "news": "fast"}
 # Built-in tier models per provider; providers without an entry use their main model for every tier.
 TIER_MODELS: dict[str, dict[str, str]] = {
     "claude_code": {"fast": "claude-haiku-5-5", "strong": "claude-opus-5-5"},
@@ -200,6 +205,42 @@ class Debate(BaseModel):
     bear: RoleModel = Field(default_factory=RoleModel)
     risk: RoleModel = Field(default_factory=RoleModel)
     judge: RoleModel = Field(default_factory=RoleModel)
+
+
+# 联网新闻 RSS sources used when the model cannot search the web itself
+DEFAULT_FEEDS = [
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://cointelegraph.com/rss",
+    "https://decrypt.co/feed",
+]
+
+
+class News(BaseModel):
+    """联网新闻: before a decision round, gather the latest news and hand it to the decision model as data.
+    auto = the model searches the web itself when its provider can (Claude Code WebSearch/WebFetch, Anthropic API
+    and OpenAI web search), otherwise the RSS feeds; model = web search only; feeds = RSS only.
+    News informs the plan; the risk engine and every limit stay exactly the same."""
+    enabled: bool = True
+    source: Literal["auto", "model", "feeds"] = "auto"
+    refresh_minutes: int = 60          # reuse the last digest for this long (rounds in between cost no search)
+    lookback_hours: int = 24
+    max_items: int = 8
+    topics: list[str] = Field(default_factory=list)     # extra things to watch, e.g. "美联储", "ETF"
+    feeds: list[str] = Field(default_factory=lambda: list(DEFAULT_FEEDS))
+
+    @field_validator("topics")
+    @classmethod
+    def _topics(cls, v):
+        return list(dict.fromkeys(t.strip()[:40] for t in v if t.strip()))[:10]
+
+    @field_validator("feeds")
+    @classmethod
+    def _feeds(cls, v):
+        out = list(dict.fromkeys(u.strip() for u in v if u.strip()))
+        bad = [u for u in out if not u.startswith(("http://", "https://"))]
+        if bad:
+            raise ValueError(f"新闻源必须是 http(s) 链接：{bad[0]}")
+        return out[:20]
 
 
 class Capital(BaseModel):
@@ -481,6 +522,7 @@ class Settings(BaseModel):
     provider_fallback: ProviderSettings | None = None     # used when the primary model fails
     model_routing: ModelRouting = Field(default_factory=ModelRouting)
     debate: Debate = Field(default_factory=Debate)
+    news: News = Field(default_factory=News)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     futures: Futures = Field(default_factory=Futures)
     earn: Earn = Field(default_factory=Earn)
@@ -534,7 +576,8 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _clamp(self):
-        for sect in (self.limits, self.schedule, self.allocation, self.futures, self.earn, self.notify, self.questions):
+        for sect in (self.limits, self.schedule, self.allocation, self.futures, self.earn, self.notify, self.questions,
+                     self.news):
             for k, (lo, hi) in HARD_BOUNDS.items():
                 if hasattr(sect, k):
                     val = getattr(sect, k)
@@ -717,6 +760,7 @@ DECISION_FIELDS: dict[str, str] = {
     "provider": "AI 模型",
     "model_routing": "模型分配",
     "debate": "多空辩论",
+    "news": "联网新闻",
     "approval_free": "免审批",
     "strategy": "交易风格",
     "outlook": "个人观点",

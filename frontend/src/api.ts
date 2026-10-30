@@ -165,9 +165,12 @@ export interface CycleFull extends CycleRow {
   prompt: string;
   raw_output: string;
   usage: Record<string, unknown>;
-  timing?: { market_ms?: number; account_ms?: number; debate_ms?: number; model_ms?: number; execute_ms?: number };
+  timing?: { market_ms?: number; account_ms?: number; news_ms?: number; debate_ms?: number; model_ms?: number; execute_ms?: number };
   debate?: Partial<DebateLog>;
 }
+
+export interface NewsItem { title: string; source?: string; url?: string; time?: string; assets?: string[]; impact?: "bullish" | "bearish" | "neutral"; summary?: string }
+export interface NewsCtx { source: "model" | "feeds"; fetched_at: string; overview?: string; items: NewsItem[] }
 
 export type DebateRole = "bull" | "bear" | "risk";
 export interface DebateTurn {

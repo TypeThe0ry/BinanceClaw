@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { CycleFull, CycleRow, DebateLog, DebateTurn, TrackRecord, WinStat } from "../api";
+import type { CycleFull, CycleRow, DebateLog, DebateTurn, NewsCtx, TrackRecord, WinStat } from "../api";
 import { Decision, DocLink, Empty, Page, RiskChecks, SectionHead, Side, Skeleton, Tabs } from "../components/ui";
 import { clock, pct, token, usd, useApi, fmtPrice } from "../lib";
 
@@ -79,7 +79,7 @@ export function AIList() {
   );
 }
 
-const STAGES = [["market_ms", "行情"], ["account_ms", "账户"], ["debate_ms", "辩论"], ["model_ms", "模型"], ["execute_ms", "执行"]] as const;
+const STAGES = [["market_ms", "行情"], ["account_ms", "账户"], ["news_ms", "新闻"], ["debate_ms", "辩论"], ["model_ms", "模型"], ["execute_ms", "执行"]] as const;
 
 const ROLE = { bull: "多头", bear: "空头", risk: "风控" } as const;
 const STANCE = { bullish: ["看多", "text-up"], bearish: ["看空", "text-down"], neutral: ["中性", "text-fg-2"] } as const;
@@ -111,6 +111,35 @@ function Turn({ t }: { t: DebateTurn }) {
         </div>
       )}
     </div>
+  );
+}
+
+const IMPACT = { bullish: ["利好", "text-up"], bearish: ["利空", "text-down"], neutral: ["中性", "text-fg-3"] } as const;
+
+function News({ n }: { n: NewsCtx }) {
+  return (
+    <section>
+      <SectionHead title="新闻" doc="news" right={<span className="text-[12px] text-fg-3">{n.source === "model" ? "联网搜索" : "新闻源"} · {n.fetched_at}</span>} />
+      {n.overview && <p className="pt-3 text-[14px] leading-relaxed">{n.overview}</p>}
+      {n.items.length ? (
+        <ul className="pt-1">
+          {n.items.map((it, i) => {
+            const [label, cls] = IMPACT[it.impact ?? "neutral"] ?? IMPACT.neutral;
+            return (
+              <li key={i} className="border-b border-line py-3" data-testid="news-item">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[14px]">
+                  {it.url ? <a href={it.url} target="_blank" rel="noreferrer noopener" className="font-medium hover:underline">{it.title}</a>
+                    : <span className="font-medium">{it.title}</span>}
+                  <span className={`text-[12.5px] ${cls}`}>{label}</span>
+                  <span className="ml-auto text-[12px] text-fg-3">{[it.assets?.join(" "), it.source, it.time].filter(Boolean).join(" · ")}</span>
+                </div>
+                {it.summary && <p className="mt-1 text-[13.5px] leading-relaxed text-fg-2">{it.summary}</p>}
+              </li>
+            );
+          })}
+        </ul>
+      ) : <p className="pt-3 text-[14px] text-fg-2">无</p>}
+    </section>
   );
 }
 
@@ -179,6 +208,8 @@ export function AIDetail() {
         </dl>
         <Raw text={JSON.stringify(c.context, null, 2)} />
       </section>
+
+      {!!(c.context as { news?: NewsCtx }).news && <News n={(c.context as { news: NewsCtx }).news} />}
 
       {!!c.debate?.turns?.length && <Debate d={c.debate as DebateLog} />}
 

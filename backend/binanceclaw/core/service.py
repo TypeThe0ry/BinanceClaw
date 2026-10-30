@@ -19,6 +19,7 @@ from sqlmodel import desc, select
 from ..brain import allocation as alloc
 from ..brain import debate as deb
 from ..brain import indicators as ta
+from ..brain import news as nws
 from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
@@ -816,6 +817,16 @@ class Service:
             self.pause(trig)
             return finish(status="skipped", summary=f"触发暂停条件：{trig}")
 
+        try:
+            digest = self.news_digest(self.news_tokens(s, pf))
+        except Exception:   # news only informs the plan: never let it take the round down
+            log.exception("news step failed")
+            digest = None
+        if digest is not None:
+            context["news"] = self.news_context(digest)
+            t2 = lap("news_ms", t2)
+            c = self.db.update(Cycle, c.id, context=context)
+
         prompt = build_user_prompt(context)
         self.db.update(Cycle, c.id, prompt=prompt)
         if trigger != "manual" and self.autopilot.auto:
@@ -875,6 +886,78 @@ class Service:
         out["questions"] = self.create_questions(plan.questions, c.id)
         lap("execute_ms", t3)
         return finish(status="done", plan=out, risk=risk, summary=plan.summary)
+
+    # ------------------------------------------------------------------ 联网新闻
+    NEWS_TOKENS = 12
+    NEWS_RETRY_MINUTES = 15     # a failed search is retried after this long, not every round
+
+    def news_tokens(self, s, pf: Portfolio) -> list[str]:
+        """What the news search looks for: the largest holdings, then the tradable assets and perps."""
+        vals = pf.values()
+        held = sorted((t for t in vals if t not in s.stables and t != FUTURES_ASSET and vals[t] >= 1), key=lambda t: -vals[t])
+        perps = s.futures.symbols if s.futures.enabled else []
+        out = list(dict.fromkeys(["BTC", *held, *s.tradable_tokens(), *perps]))
+        return out[: self.NEWS_TOKENS]
+
+    def news_digest(self, tokens: list[str], force: bool = False) -> dict | None:
+        """The latest news digest, reused for news.refresh_minutes while it still covers ``tokens``.
+        None when news is off. See brain/news.py for the two sources."""
+        n = self.settings.news
+        if not n.enabled:
+            return None
+        key = [n.source, n.topics, n.lookback_hours, n.max_items, n.feeds]
+        cached = self.db.kv_get("news_cache")
+        if cached and not force and cached.get("key") == key and set(tokens) <= set(cached.get("tokens", [])):
+            ttl = n.refresh_minutes if not cached["digest"].get("error") else min(n.refresh_minutes, self.NEWS_RETRY_MINUTES)
+            if time.time() - cached["digest"]["fetched_at"] < ttl * 60:
+                return cached["digest"]
+        digest = self._gather_news(n, tokens)
+        self.db.kv_set("news_cache", {"key": key, "tokens": tokens, "digest": digest})
+        self.events.emit("news", {"items": len(digest["items"])})
+        return digest
+
+    def _news_providers(self, source: str) -> list:
+        ps = [self.routed("news")]
+        if self.fallback:
+            ps.append(self.routed("news", self.fallback))
+        return [p for p in ps if p.web_search] if source != "feeds" else []
+
+    def _gather_news(self, n, tokens: list[str]) -> dict:
+        t0 = time.time()
+        errors = []
+        for p in self._news_providers(n.source):
+            try:
+                comp = p.research(nws.SYSTEM.format(hours=n.lookback_hours, n=n.max_items),
+                                  nws.research_prompt(tokens, n.topics, n.lookback_hours))
+                d = nws.parse_digest(comp.text, n.max_items)
+                return {**d, "source": "model", "model": comp.model, "tokens": tokens, "fetched_at": time.time(),
+                        "ms": int((time.time() - t0) * 1000), "errors": errors}
+            except (ProviderError, PlanError) as e:
+                log.warning("news search on %s failed: %s", p.model or p.name, e)
+                errors.append(f"{p.model or p.name}：{str(e)[:200]}")
+        if n.source == "model":
+            return {"overview": "", "items": [], "source": "model", "model": "", "tokens": tokens, "fetched_at": time.time(),
+                    "ms": int((time.time() - t0) * 1000), "errors": errors or ["当前模型不支持联网搜索"], "error": True}
+        d = nws.from_feeds(n.feeds, tokens, n.topics, n.lookback_hours, n.max_items)
+        errors += d.pop("errors")
+        return {**d, "source": "feeds", "model": "", "tokens": tokens, "fetched_at": time.time(),
+                "ms": int((time.time() - t0) * 1000), "errors": errors, "error": not d["items"] and bool(errors)}
+
+    def news_context(self, digest: dict) -> dict:
+        """The digest as the decision model sees it."""
+        out = {"note": nws.NOTE, "source": digest["source"],
+               "fetched_at": dt.datetime.fromtimestamp(digest["fetched_at"], dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+               "items": [{k: it[k] for k in ("title", "source", "time", "assets", "impact", "summary", "url") if it.get(k)}
+                         for it in digest["items"]]}
+        if digest.get("overview"):
+            out["overview"] = digest["overview"]
+        if not digest["items"]:
+            out["note"] = "本轮没有取到新闻，只按行情和账户数据决策"
+        return out
+
+    def latest_news(self) -> dict | None:
+        cached = self.db.kv_get("news_cache")
+        return cached["digest"] if cached else None
 
     # ------------------------------------------------------------------ 多空辩论
     def seat_provider(self, rm: RoleModel, task: str):
@@ -1628,6 +1711,9 @@ class Service:
                                                   "category_weights", "targets", "today", "btc_change_7d", "pending_approvals")}
             slim["recent_decisions"] = self.recent_decisions(3)
             slim["memory"] = self.settings.memory
+            news = self.latest_news()
+            if news and news["items"] and self.settings.news.enabled:
+                slim["news"] = self.news_context(news)
             import json as _json
             system = CHAT_SYSTEM + "\n<data>\n" + _json.dumps(slim, ensure_ascii=False, default=str) + "\n</data>"
             msgs = [{"role": m.role, "content": m.text} for m in hist]
