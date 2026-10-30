@@ -553,7 +553,8 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         for name, cls in PROVIDERS.items():
             p = cls(ProviderSettings(name=name, base_url=s.provider.base_url), svc.secrets)
             ok, msg = p.available()
-            avail[name] = {"ok": ok, "message": msg if not ok else "", "default_model": cls.default_model}
+            avail[name] = {"ok": ok, "message": msg if not ok else "", "default_model": cls.default_model,
+                           "web_search": cls.web_search}
         return {"settings": s.model_dump(), "secrets": svc.secrets.configured(), "providers": avail,
                 "presets": RISK_PRESETS, "candidates": CANDIDATE_TOKENS, "deployed_usd": round(svc.deployed_usd(), 2),
                 "bounds": HARD_BOUNDS, "confirm_phrase": CONFIRM_PHRASE,
@@ -624,6 +625,21 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             replied.append(c)
         return {"ok": True, "reply": replied[-1].text[:200], "model": "、".join(dict.fromkeys(c.model for c in replied)),
                 "ms": int((time.time() - t0) * 1000)}
+
+    @app.get("/api/news", dependencies=auth)
+    def get_news():
+        return svc.latest_news() or {}
+
+    @app.post("/api/news/refresh", dependencies=auth)
+    def refresh_news():
+        s = svc.settings
+        if not s.news.enabled:
+            raise HTTPException(400, "联网新闻未开启")
+        try:
+            tokens = svc.news_tokens(s, svc.portfolio(svc.market_snapshot()[0]))
+        except ExchangeError:
+            tokens = list(dict.fromkeys(["BTC", *s.tradable_tokens()]))[: svc.NEWS_TOKENS]
+        return svc.news_digest(tokens, force=True)
 
     @app.get("/api/live/check", dependencies=auth)
     def live_check():

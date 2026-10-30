@@ -1,7 +1,8 @@
 """Model providers behind one interface.
 
 * claude_code   — Claude subscription via the Claude Code CLI (``claude -p``), no API key.
-                  Runs with **all tools disabled** and no MCP servers.
+                  Runs with **all tools disabled** and no MCP servers; the news step (``research``)
+                  enables only WebSearch and WebFetch.
 * openai        — OpenAI Chat Completions (API key).
 * openai_compat — any OpenAI-compatible endpoint (DeepSeek, Qwen, Ollama, OpenRouter...).
 * anthropic_api — Anthropic Messages API (API key).
@@ -11,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -52,6 +54,13 @@ class Provider:
     def available(self) -> tuple[bool, str]:
         return True, ""
 
+    # 联网新闻: providers that can search the web themselves (see brain/news.py)
+    web_search = False
+
+    def research(self, system: str, prompt: str) -> Completion:
+        """One call with web search on; the reply is the model's news digest."""
+        raise ProviderError(f"{self.name} 不支持联网搜索")
+
     def with_model(self, model: str) -> Provider:
         """This provider calling ``model`` instead ("" or the same model = this provider)."""
         if not model or model == self.model:
@@ -78,17 +87,27 @@ class ClaudeCodeProvider(Provider):
             return False, "Claude Code 未登录：运行 `claude setup-token` 并把 token 写入 CLAUDE_CODE_OAUTH_TOKEN"
         return True, b
 
+    web_search = True
+    WEB_TOOLS = "WebSearch,WebFetch"
+
     def complete(self, system, messages, json_mode=False):
-        ok, b = self.available()
-        if not ok:
-            raise ProviderError(b)
         # Claude Code -p takes a single prompt: flatten multi-turn chat into a transcript.
         if len(messages) == 1:
             prompt = messages[0]["content"]
         else:
             lines = [("用户" if m["role"] == "user" else "助理") + "：" + m["content"] for m in messages[:-1]]
             prompt = "【之前的对话】\n" + "\n\n".join(lines) + "\n\n【当前问题】\n" + messages[-1]["content"]
-        cmd = [b, "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config",
+        return self._run(system, prompt, ["--tools", ""])
+
+    def research(self, system, prompt):
+        # Only the two web tools, pre-approved so -p never waits for a permission prompt
+        return self._run(system, prompt, ["--tools", self.WEB_TOOLS, "--allowedTools", self.WEB_TOOLS])
+
+    def _run(self, system: str, prompt: str, tools: list[str]) -> Completion:
+        ok, b = self.available()
+        if not ok:
+            raise ProviderError(b)
+        cmd = [b, "-p", "--output-format", "json", *tools, "--strict-mcp-config",
                "--no-session-persistence", "--system-prompt", system]
         if self.model:
             cmd += ["--model", self.model]
@@ -157,9 +176,35 @@ class OpenAIProvider(Provider):
         return Completion(text, d.get("model", self.model), d.get("usage", {}), int((time.time() - t0) * 1000))
 
 
+    web_search = True
+
+    def research(self, system, prompt):
+        """Responses API with the hosted web search tool."""
+        key = self._key()
+        if not key:
+            raise ProviderError("未配置 OPENAI_API_KEY")
+        body = {"model": self.model, "instructions": system, "input": prompt, "tools": [{"type": "web_search"}]}
+        t0 = time.time()
+        try:
+            r = httpx.post(self._base().rstrip("/") + "/responses", json=body, headers={"Authorization": f"Bearer {key}"},
+                           timeout=self.cfg.timeout_seconds)
+        except httpx.HTTPError as e:
+            raise ProviderError(f"{self.name} 请求失败：{e}") from e
+        if r.status_code >= 400:
+            raise ProviderError(f"{self.name} HTTP {r.status_code}: {r.text[:300]}")
+        d = r.json()
+        text = "".join(c.get("text", "") for o in d.get("output", []) if o.get("type") == "message"
+                       for c in o.get("content", []) if c.get("type") == "output_text")
+        return Completion(text, d.get("model", self.model), d.get("usage", {}), int((time.time() - t0) * 1000))
+
+
 class OpenAICompatProvider(OpenAIProvider):
     name = "openai_compat"
     default_model = "deepseek-chat"
+    web_search = False      # endpoints differ; news comes from the RSS feeds instead
+
+    def research(self, system, prompt):
+        return Provider.research(self, system, prompt)
 
     def _key(self):
         return self.secrets.openai_compat_api_key
@@ -182,24 +227,60 @@ class AnthropicAPIProvider(Provider):
         k = self.secrets.anthropic_api_key
         return (bool(k), "" if k else "未配置 ANTHROPIC_API_KEY")
 
+    web_search = True
+    URL = "https://api.anthropic.com/v1/messages"
+
+    def _headers(self):
+        return {"x-api-key": self.secrets.anthropic_api_key, "anthropic-version": "2023-06-01"}
+
+    def _post(self, body: dict) -> dict:
+        try:
+            r = httpx.post(self.URL, json=body, headers=self._headers(), timeout=self.cfg.timeout_seconds)
+        except httpx.HTTPError as e:
+            raise ProviderError(f"Anthropic 请求失败：{e}") from e
+        if r.status_code >= 400:
+            raise ProviderError(f"Anthropic HTTP {r.status_code}: {r.text[:300]}")
+        return r.json()
+
+    @staticmethod
+    def _text(d: dict) -> str:
+        return "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
+
     def complete(self, system, messages, json_mode=False):
         if not self.secrets.anthropic_api_key:
             raise ProviderError("未配置 ANTHROPIC_API_KEY")
         # The system prompt is the same every round: cache it so repeat rounds start faster and cost less.
         body = {"model": self.model, "max_tokens": 4096, "messages": messages,
                 "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]}
-        headers = {"x-api-key": self.secrets.anthropic_api_key, "anthropic-version": "2023-06-01"}
         t0 = time.time()
-        try:
-            r = httpx.post("https://api.anthropic.com/v1/messages", json=body, headers=headers,
-                           timeout=self.cfg.timeout_seconds)
-        except httpx.HTTPError as e:
-            raise ProviderError(f"Anthropic 请求失败：{e}") from e
-        if r.status_code >= 400:
-            raise ProviderError(f"Anthropic HTTP {r.status_code}: {r.text[:300]}")
-        d = r.json()
-        text = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
-        return Completion(text, d.get("model", self.model), d.get("usage", {}), int((time.time() - t0) * 1000))
+        d = self._post(body)
+        return Completion(self._text(d), d.get("model", self.model), d.get("usage", {}), int((time.time() - t0) * 1000))
+
+    # Models with the dynamic-filtering web search; older ones (and Haiku) get the basic tool.
+    _DYNAMIC = re.compile(r"claude-(fable|mythos|opus-(5|4-[678])|sonnet-(5|4-6))")
+
+    def search_tool(self) -> dict:
+        kind = "web_search_20260209" if self._DYNAMIC.match(self.model or "") else "web_search_20250305"
+        return {"type": kind, "name": "web_search", "max_uses": 5}
+
+    def research(self, system, prompt):
+        """Messages API with the server-side web search tool. A long search may pause the turn
+        (stop_reason pause_turn): send the partial reply back so the server continues it."""
+        if not self.secrets.anthropic_api_key:
+            raise ProviderError("未配置 ANTHROPIC_API_KEY")
+        messages: list = [{"role": "user", "content": prompt}]
+        body = {"model": self.model, "max_tokens": 8000, "system": system, "tools": [self.search_tool()]}
+        t0 = time.time()
+        usage: dict = {}
+        for _ in range(4):
+            d = self._post({**body, "messages": messages})
+            for k, v in (d.get("usage") or {}).items():
+                if isinstance(v, int):
+                    usage[k] = usage.get(k, 0) + v
+            if d.get("stop_reason") != "pause_turn":
+                break
+            messages = [*messages, {"role": "assistant", "content": d.get("content", [])}]
+        return Completion(self._text(d), d.get("model", self.model), usage, int((time.time() - t0) * 1000))
 
 
 PROVIDERS = {p.name: p for p in (ClaudeCodeProvider, OpenAIProvider, OpenAICompatProvider, AnthropicAPIProvider)}

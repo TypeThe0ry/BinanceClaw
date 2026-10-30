@@ -276,13 +276,22 @@ def plan(*actions, summary="test", futures=None, focus=None):
     return out
 
 
+@pytest.fixture(autouse=True)
+def _offline_news(monkeypatch):
+    """RSS feeds are never fetched for real in tests."""
+    def fetch(url, timeout=10.0):
+        raise RuntimeError("offline")
+    monkeypatch.setattr("binanceclaw.brain.news.fetch", fetch)
+
+
 @pytest.fixture
 def svc(tmp_path):
     from binanceclaw.core.service import Service
     s = Service(data_dir=tmp_path, secrets=Secrets(binance_api_key="k", binance_api_secret="s"), client=FakeSpot(),
                 fclient=FakeFutures())
     # most tests exercise the model's own plan; tests/test_universe.py covers rebalancing
-    s.settings_store.update({"allocation": {"auto_rebalance": False}})
+    # tests/test_news.py covers the news step; elsewhere it would reach the network
+    s.settings_store.update({"allocation": {"auto_rebalance": False}, "news": {"enabled": False}})
     return s
 
 

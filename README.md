@@ -118,8 +118,10 @@ Claude 订阅（无需 API Key）、OpenAI、任意 OpenAI 兼容接口（DeepSe
 ```mermaid
 flowchart TD
     T([事件唤醒 / AI 自定复查时间]) --> S[行情 + 多周期指标 + 账户快照 + 近 30 天绩效]
+    S --> N[联网新闻<br/>WebSearch · 联网搜索 · RSS]
     S --> D[多空辩论（可选）<br/>多头 · 空头 · 风控]
     S --> M[AI 决策模型<br/>只输出 JSON 计划，无任何工具]
+    N --> M
     D --> M
     M --> R{风控引擎<br/>纯代码，模型无法绕过}
     R -->|≤ 自动额度| A[自动执行]
@@ -142,6 +144,7 @@ flowchart TD
 - **代码算好的指标**：日线 / 4 小时趋势与 RSI、ATR 波动、MACD（金叉死叉与动能）、布林带（%B 与带宽）、量比、市场宽度；合约另有资金费率与持仓量变化。
 - **自我复盘**：AI 每轮看到自己过去交易的胜率（`track_record`）和账户近 30 天绩效（`performance_30d`），回撤变大或连亏时主动收缩。
 - **多空辩论（可选）**：多头、空头、风控辩论后由决策模型定夺，每个角色可用不同模型，见 [多空辩论](docs/debate.md)。
+- **联网新闻**：每轮决策前搜集最新新闻，Claude 订阅用 Claude Code 内置的 WebSearch / WebFetch，Anthropic API、OpenAI 用各自的联网搜索，其他模型读 RSS 新闻源；AI 同时看行情和消息面，风控不变，见 [联网新闻](docs/news.md)。
 - **交易风格与观点**：短线 / 中期 / 长期，外加你对大盘和单币的看法；AI 有跨轮记忆，高风险决策会先问你。
 
 </details>
@@ -211,6 +214,7 @@ flowchart TD
 | AI 提问 | **开** · 关 | 开 | 高风险决策先给你选项；超时可选不操作或按 AI 推荐执行 |
 | 交易品种 | 现货 · 合约 · **理财** | 现货 + 理财 | 合约默认关闭、开仓默认要审批；理财把闲置资产申购活期、买卖前自动赎回 |
 | 决策方式 | **单模型** · 多空辩论 | 单模型 | 辩论：三个角色辩论 1–3 轮后由决策模型定夺 |
+| 联网新闻 | **自动** · 模型联网搜索 · 新闻源 · 关 | 自动 | 决策前搜集最新新闻；自动 = 模型能联网就让模型搜，否则读 RSS |
 | 通知 | **即时** · 定时汇总 · 免打扰 | 即时 | 审批、AI 提问和重大风险提醒始终立即推送 |
 
 另有两个沙盒，永远不碰真实账户：**模型竞技场**（实时行情下多模型比赛）和**回测实验室**（历史行情回放）。完整说明和推荐组合见 [模式一览](docs/modes.md)。
@@ -282,6 +286,7 @@ BINANCECLAW_DATA=../data .venv/bin/binanceclaw serve      # --host / --port 可�
 | 决策方式 | AI 自主实时 | 最短间隔 5 分钟、最长 240 分钟、每天最多 48 次调用 |
 | 资产分配 | 手动分配 + 自动再平衡 | 偏离目标 5 个百分点时调回 |
 | 多空辩论 | 关闭 | 开启后每轮多 3 × 轮数 次模型调用 |
+| 联网新闻 | 开启，每 60 分钟刷新 | 搜索用轻量模型，中间的轮次复用上次结果 |
 | 审批有效期 | 30 分钟 | |
 
 密钥只放在 `data/.env`（权限 600），由 `binanceclaw setup` 写入，网页上只显示"已配置"。
@@ -293,7 +298,7 @@ BINANCECLAW_DATA=../data .venv/bin/binanceclaw serve      # --host / --port 可�
 | 入门 | 进阶 | 参考 |
 |---|---|---|
 | [快速开始](docs/getting-started.md) | [AI 决策与风控](docs/decisions-and-risk.md) | [模型](docs/models.md) |
-| [界面指南](docs/dashboard.md) | [多空辩论](docs/debate.md) | [Telegram](docs/telegram.md) |
+| [界面指南](docs/dashboard.md) | [多空辩论](docs/debate.md) · [联网新闻](docs/news.md) | [Telegram](docs/telegram.md) |
 | [模式一览](docs/modes.md) | [资金管理与资产分配](docs/capital-and-allocation.md) | [常见问题](docs/faq.md) |
 | [模拟盘与实盘](docs/live-mode.md) | [风险预设](docs/risk-presets.md) | [安全](SECURITY.md) |
 | [审批](docs/approvals.md) | [合约](docs/futures.md) · [理财](docs/earn.md) | [更新日志](CHANGELOG.md) |
@@ -353,6 +358,7 @@ npm run typecheck && npm test
 - **Paper first**: real market data with virtual funds, same pipeline as live; live mode is gated on API-key permission checks (withdrawals must be off).
 - **Fully audited**: inputs, prompts, raw outputs, every risk check and every fill are recorded.
 - **Bull/bear debate** (optional): bull, bear and risk seats argue for 1–3 rounds before the decision model writes the plan; each seat can use a different model.
+- **Live news**: before each round the latest news is gathered (Claude Code's built-in WebSearch/WebFetch, Anthropic or OpenAI web search, or RSS feeds) and weighed alongside market data; the risk engine is unchanged.
 - **Performance analytics**: Sharpe, Sortino, Calmar, max drawdown, win rate and profit factor, compared with holding BTC; the AI sees its own 30-day performance every round.
 - **Backtest lab**: replays historical candles through the same prompt, model and risk engine, with no look-ahead, against buy-and-hold BTC.
 - **Model arena**: several models each run a virtual account on the same live data and compete on returns; never touches your real account.

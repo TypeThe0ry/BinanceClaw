@@ -4,7 +4,7 @@ import { post } from "../api";
 import { Page, Seg, SectionHead, Skeleton, Spinner } from "../components/ui";
 import { useApi } from "../lib";
 import { setPref, useThemePref } from "../theme";
-import { DEBATE_DEFAULT, type DebateCfg, type NotifyCfg, Num, type Routing, Row, type Seat, SettingsNav, type Tier, useSettingsDraft } from "../components/settingsKit";
+import { DEBATE_DEFAULT, type DebateCfg, NEWS_DEFAULT, type NewsCfg, type NotifyCfg, Num, type Routing, Row, type Seat, SettingsNav, type Tier, useSettingsDraft } from "../components/settingsKit";
 
 interface EarnResp { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }>;
   products: Record<string, { apr?: string | null; error?: string }> }
@@ -21,6 +21,7 @@ function deviceName(ua: string) {
 
 const TIER_LABEL: Record<Tier, string> = { fast: "轻量", strong: "决策", main: "主模型" };
 const PROVIDER: Record<string, string> = { claude_code: "Claude 订阅", openai: "OpenAI", openai_compat: "OpenAI 兼容", anthropic_api: "Anthropic API" };
+const NEWS_SOURCE: Record<NewsCfg["source"], string> = { auto: "自动", model: "模型联网搜索", feeds: "新闻源" };
 const SEATS: [Seat, string][] = [["bull", "多头"], ["bear", "空头"], ["risk", "风控"], ["judge", "决策"]];
 
 /** 设置: system-level settings. Investment/AI decision config lives on the 配置 page (Config.tsx). */
@@ -32,6 +33,7 @@ export default function Settings() {
   const themePref = useThemePref();
   const [phrase, setPhrase] = useState("");
   const [testing, setTesting] = useState(false);
+  const [searching, setSearching] = useState(false);
   if (!data || !d) return <Skeleton className="h-96" />;
   const b = data.bounds;
 
@@ -53,6 +55,17 @@ export default function Settings() {
   const pname = d.provider.name;
   const db: DebateCfg = { ...DEBATE_DEFAULT, ...d.debate };
   const setDb = (patch: Partial<DebateCfg>) => setD({ ...d, debate: { ...db, ...patch } });
+  const nw: NewsCfg = { ...NEWS_DEFAULT, ...d.news };
+  const setNw = (patch: Partial<NewsCfg>) => setD({ ...d, news: { ...nw, ...patch } });
+  const webOk = !!data.providers[pname]?.web_search;
+  async function searchNews() {
+    setSearching(true);
+    try {
+      const r = await post<{ items: unknown[]; source: string; errors?: string[] }>("/news/refresh");
+      toast(r.items.length ? `${r.items.length} 条 · ${NEWS_SOURCE[r.source as NewsCfg["source"]] ?? r.source}` : (r.errors?.[0] ?? "0 条"), r.items.length ? "ok" : "err");
+    } catch (e) { toast((e as Error).message, "err"); }
+    setSearching(false);
+  }
   const setSch = (patch: Partial<typeof sch>) => setD({ ...d, schedule: { ...sch, ...patch } });
 
   return (
@@ -186,6 +199,43 @@ export default function Settings() {
           </>
         )}
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ debate: db })}>保存</button></div>
+      </section>
+
+      <section>
+        <SectionHead title="联网新闻" doc="news" />
+        <Row label="开启">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={nw.enabled} aria-label="开启联网新闻"
+            onChange={(e) => setNw({ enabled: e.target.checked })} />
+        </Row>
+        {nw.enabled && (
+          <>
+            <Row label="来源">
+              <Seg id="news-source" value={nw.source} onChange={(k) => setNw({ source: k })}
+                items={(Object.keys(NEWS_SOURCE) as NewsCfg["source"][]).map((k) => ({ k, label: NEWS_SOURCE[k] }))} />
+            </Row>
+            {nw.source !== "feeds" && !webOk && (
+              <Row label="状态"><span className="text-[13px] text-warn">{PROVIDER[pname] ?? pname} 不支持联网搜索{nw.source === "auto" ? "，使用新闻源" : ""}</span></Row>
+            )}
+            <Row label="刷新间隔"><Num unit="分钟" value={nw.refresh_minutes} min={b.refresh_minutes?.[0]} max={b.refresh_minutes?.[1]} onChange={(x) => setNw({ refresh_minutes: x })} /></Row>
+            <Row label="时间范围"><Num unit="小时" value={nw.lookback_hours} min={b.lookback_hours?.[0]} max={b.lookback_hours?.[1]} onChange={(x) => setNw({ lookback_hours: x })} /></Row>
+            <Row label="条数上限"><Num unit="条" value={nw.max_items} min={b.max_items?.[0]} max={b.max_items?.[1]} onChange={(x) => setNw({ max_items: x })} /></Row>
+            <Row label="关注话题">
+              <input className="input h-9 w-72" aria-label="关注话题" value={nw.topics.join("，")} placeholder="美联储，ETF"
+                onChange={(e) => setNw({ topics: e.target.value.split(/[,，、]/) })} />
+            </Row>
+            {nw.source !== "model" && (
+              <Row label="新闻源">
+                <textarea className="input min-h-[96px] w-80 py-2 text-[13px]" aria-label="新闻源" value={nw.feeds.join("\n")}
+                  onChange={(e) => setNw({ feeds: e.target.value.split("\n") })} />
+              </Row>
+            )}
+          </>
+        )}
+        <div className="flex gap-2 pt-4">
+          <button className="btn-primary" onClick={() => save({ news: { ...nw, topics: nw.topics.map((t) => t.trim()).filter(Boolean),
+            feeds: nw.feeds.map((t) => t.trim()).filter(Boolean) } })}>保存</button>
+          {nw.enabled && <button className="btn-secondary" onClick={searchNews} disabled={searching}>{searching ? <Spinner /> : "立即搜索"}</button>}
+        </div>
       </section>
 
       <section>

@@ -13,9 +13,10 @@ account with money you can afford to lose.
 | | |
 |---|---|
 | Decision calls | No tools at all (Claude Code runs with `--tools ""`, no MCP servers, empty working directory; API providers get a plain chat request). The only output that matters is a JSON plan validated against a strict schema (`extra="forbid"`). |
+| News calls | 联网新闻 (on by default): before a decision round the model may search the web. Claude Code then runs with only `WebSearch` and `WebFetch` (`--tools "WebSearch,WebFetch"`, no MCP servers, empty working directory, no exchange or other credentials in its environment); the Anthropic API and OpenAI use their server-side web search tools. The reply is parsed as a news digest only (titles, links, short summaries, clipped), never as a plan. RSS feeds are fetched by the backend and parsed as plain text. |
 | Chat calls | Read-only: the model receives a data snapshot and can only reply with text. It cannot place orders or change settings. |
 | Execution | Only the risk engine (`risk/engine.py`) turns a plan into orders, and only within hard limits. Every order is re-checked against fresh data right before it is sent. |
-| Prompt injection | Market data and history are passed inside `<data>` tags and labelled as data. Even if a model is manipulated, the worst it can do is propose actions that the risk engine still caps or rejects. |
+| Prompt injection | Market data, history and news are passed inside `<data>` tags and labelled as data; news is also marked unverified. Even if a model is manipulated, the worst it can do is propose actions that the risk engine still caps or rejects. |
 
 ## Hard limits (enforced in code)
 
