@@ -237,6 +237,24 @@ class ChatMessage(SQLModel, table=True):
     role: str                                 # user | assistant
     text: str
     provider: str = ""
+    approvals: list = Field(default_factory=list, sa_column=Column(JSON))   # trade plans proposed in this reply
+
+
+class LimitOrder(SQLModel, table=True):
+    """An approved chat plan waiting for its price: BinanceClaw places the order itself when the
+    market reaches the level (risk checks run again at that moment)."""
+    id: str = Field(default_factory=_id, primary_key=True)
+    created: float = Field(default_factory=time.time)
+    expires: float
+    approval_id: str = ""
+    symbol: str
+    side: str                                 # BUY: price <= limit | SELL: price >= limit
+    quote_usd: float
+    price: float
+    status: str = Field(default="open", index=True)   # open | filled | failed | cancelled | expired
+    result: str = ""
+    order_id: str = ""
+    done_at: Optional[float] = None
 
 
 class Report(SQLModel, table=True):
@@ -323,6 +341,17 @@ class Database:
 
     def pending_approvals(self) -> list[Approval]:
         return self.all(select(Approval).where(Approval.status == "pending").order_by(Approval.created))
+
+    def claim_limit_order(self, lid: str, new_status: str) -> bool:
+        """Atomically open -> new_status, so a fill and a cancel can never both happen."""
+        with self.write_lock, self.session() as s:
+            lo = s.get(LimitOrder, lid)
+            if not lo or lo.status != "open":
+                return False
+            lo.status = new_status
+            s.add(lo)
+            s.commit()
+            return True
 
     def claim_approval(self, aid: str, new_status: str, by: str) -> Optional[Approval]:
         """Atomically pending -> new_status. Returns the row only for the single winner."""

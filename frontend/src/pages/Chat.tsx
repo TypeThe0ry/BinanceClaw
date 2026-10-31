@@ -1,14 +1,74 @@
 import { ArrowUp, TelegramLogo } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
-import { post, type ChatMsg } from "../api";
+import { post, type ChatMsg, type ChatPlan } from "../api";
+import { Countdown, useNow } from "../components/ApprovalRow";
 import { Md } from "../components/Md";
-import { DocLink, Page, Spinner } from "../components/ui";
-import { ago, useApi, useToast } from "../lib";
+import { DocLink, Page, Side, Spinner } from "../components/ui";
+import { ago, fmtPrice, token, usd, useApi, useToast } from "../lib";
+
+const DONE: Record<string, [string, string]> = {
+  rejected: ["已拒绝", "text-fg-2"], expired: ["已过期", "text-fg-3"], failed: ["未执行", "text-down"], approved: ["已成交", "text-up"],
+  open: ["挂单中", "text-warn"], placing: ["下单中", "text-warn"], filled: ["已成交", "text-up"], cancelled: ["已撤单", "text-fg-2"],
+};
+
+function PlanCard({ a, onDone }: { a: ChatPlan; onDone: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+  const left = Math.max(0, a.expires - useNow());
+  const limit = a.payload?.order === "limit";
+  const lo = a.limit;
+  const state = a.status === "pending" ? (left > 0 ? "pending" : "expired") : a.status === "approved" && lo ? lo.status : a.status;
+  const result = lo?.result || a.result;
+
+  async function act(path: string, kind: string) {
+    setBusy(kind);
+    try {
+      const r = await post<{ ok: boolean; message: string }>(path);
+      toast(r.message, r.ok ? "ok" : "err");
+    } catch (e) {
+      toast((e as Error).message, "err");
+    } finally {
+      setBusy(null);
+      onDone();
+    }
+  }
+
+  const [label, color] = DONE[state] ?? [state, "text-fg-2"];
+  return (
+    <div className="mt-2 rounded-xl border border-line px-4 py-3" data-testid="plan">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="flex items-center gap-2 text-[14px]"><Side side={a.side} /><b className="font-semibold">{token(a.symbol)}</b></span>
+        <span className="num text-[14px]">{usd(a.quote_usd)}</span>
+        <span className="num text-[13px] text-fg-2">{limit ? `挂单 ${a.side === "BUY" ? "≤" : "≥"} ${fmtPrice(a.payload?.price)}` : "市价"}</span>
+        <div className="ml-auto flex items-center gap-2">
+          {state === "pending" ? (
+            <>
+              <Countdown left={left} />
+              <button className="btn-secondary btn-sm" disabled={!!busy} onClick={() => act(`/approvals/${a.id}/reject`, "reject")}>{busy === "reject" ? "…" : "拒绝"}</button>
+              <button className={`${a.side === "BUY" ? "btn-up" : "btn-down"} btn-sm`} disabled={!!busy} onClick={() => act(`/approvals/${a.id}/approve`, "approve")}>
+                {busy === "approve" ? "…" : limit ? "批准挂单" : "批准下单"}
+              </button>
+            </>
+          ) : (
+            <>
+              <span className={`text-[13px] ${color}`}>{label}</span>
+              {state === "open" && lo && (
+                <button className="btn-secondary btn-sm" disabled={!!busy} onClick={() => act(`/limit-orders/${lo.id}/cancel`, "cancel")}>{busy === "cancel" ? "…" : "撤单"}</button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      {result && state !== "pending" && <p className="mt-1.5 text-[12.5px] text-fg-2">{result}</p>}
+    </div>
+  );
+}
 
 const SUGGEST = ["配置离目标差多少？", "上一轮为什么这么决定？", "BTC 跌到多少会暂停？", "这周买了什么？"];
 
 export default function Chat() {
-  const { data, reload, setData } = useApi<{ cut: number; messages: ChatMsg[] }>("/chat?limit=200", { kinds: ["chat"] });
+  const { data, reload, setData } = useApi<{ cut: number; messages: ChatMsg[]; plans?: Record<string, ChatPlan> }>("/chat?limit=200",
+    { kinds: ["chat", "approval", "approval_created", "limit_order"] });
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const end = useRef<HTMLDivElement>(null);
@@ -22,7 +82,7 @@ export default function Chat() {
     if (!q || busy) return;
     setText("");
     setBusy(true);
-    setData((d) => ({ cut: d?.cut ?? 0, messages: [...(d?.messages ?? []), { id: -Date.now(), ts: Date.now() / 1000, channel: "web", role: "user", text: q }] }));
+    setData((d) => ({ cut: d?.cut ?? 0, plans: d?.plans, messages: [...(d?.messages ?? []), { id: -Date.now(), ts: Date.now() / 1000, channel: "web", role: "user", text: q }] }));
     try { await post("/chat", { text: q }); } catch (e) { toast((e as Error).message, "err"); } finally { setBusy(false); reload(); }
   }
 
@@ -47,6 +107,7 @@ export default function Chat() {
         ) : (
           <div key={m.id} className="max-w-[92%]">
             <Md text={m.text} compact />
+            {(m.approvals ?? []).map((id) => data?.plans?.[id] && <PlanCard key={id} a={data.plans[id]} onDone={reload} />)}
             <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-fg-3">{m.channel === "telegram" && <TelegramLogo size={12} />}{ago(m.ts)}</p>
           </div>
         ))}
