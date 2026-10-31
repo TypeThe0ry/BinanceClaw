@@ -32,7 +32,7 @@ from ..config import (
     ProviderSettings,
 )
 from ..core.backtest import Busy
-from ..db import AiQuestion, Approval, Backtest, ChatMessage, Cycle, Order, Report
+from ..db import AiQuestion, Approval, Backtest, ChatMessage, Cycle, LimitOrder, Order, Report
 from ..exchange.binance_spot import ExchangeError
 from ..risk.gate import CONFIRM_PHRASE
 
@@ -333,6 +333,18 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         ok, msg = svc.resolve_approval(aid, action == "approve", "web")
         return {"ok": ok, "message": msg}
 
+    @app.get("/api/limit-orders", dependencies=auth)
+    def limit_orders(status: str | None = None, limit: int = 50):
+        stmt = select(LimitOrder).order_by(desc(LimitOrder.created)).limit(min(limit, 500))
+        if status:
+            stmt = stmt.where(LimitOrder.status == status)
+        return [lo.model_dump() for lo in svc.db.all(stmt)]
+
+    @app.post("/api/limit-orders/{lid}/cancel", dependencies=auth)
+    def cancel_limit_order(lid: str):
+        ok = svc.cancel_limit_order(lid, "web")
+        return {"ok": ok, "message": "已撤单" if ok else "这笔挂单已成交、已撤或不存在"}
+
     @app.get("/api/questions", dependencies=auth)
     def questions(status: str | None = None, limit: int = 50):
         stmt = select(AiQuestion).order_by(desc(AiQuestion.created)).limit(min(limit, 500))
@@ -532,7 +544,16 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     def chat_history(limit: int = 100):
         cut = svc.db.kv_get("chat_cut_ts", 0)
         rows = svc.db.all(select(ChatMessage).order_by(desc(ChatMessage.ts)).limit(min(limit, 500)))
-        return {"cut": cut, "messages": [m.model_dump() for m in reversed(rows)]}
+        ids = [a for m in rows if isinstance(m.approvals, list) for a in m.approvals]
+        plans = {}
+        if ids:
+            limits = {lo.approval_id: lo.model_dump()
+                      for lo in svc.db.all(select(LimitOrder).where(LimitOrder.approval_id.in_(ids)))}
+            plans = {a.id: {**a.model_dump(), "limit": limits.get(a.id)}
+                     for a in svc.db.all(select(Approval).where(Approval.id.in_(ids)))}
+        return {"cut": cut, "plans": plans,
+                "messages": [{**m.model_dump(), "approvals": m.approvals if isinstance(m.approvals, list) else []}
+                             for m in reversed(rows)]}
 
     @app.post("/api/chat", dependencies=auth)
     def chat(body: ChatIn):

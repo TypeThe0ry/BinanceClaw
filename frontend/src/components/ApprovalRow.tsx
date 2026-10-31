@@ -48,6 +48,7 @@ export const ApprovalRow = forwardRef<HTMLDivElement, { a: Approval; onDone?: ()
           <span className="flex items-center gap-2 text-[14px]"><Side side={a.side} /><b className="font-semibold">{token(a.symbol)}</b>
             {a.kind === "futures" && <span className="tag bg-hover text-fg-2">永续</span>}</span>
           <span className="num text-[14px]">{usd(a.quote_usd, 0)}{a.kind === "futures" && a.payload?.leverage ? <span className="text-fg-2"> × {a.payload.leverage}x</span> : null}</span>
+          {a.payload?.order === "limit" && <span className="num text-[13px] text-fg-2">挂单 {a.side === "BUY" ? "≤" : "≥"} {fmtPrice(a.payload.price)}</span>}
           {a.kind === "futures" && a.payload?.stop_loss && <span className="num hidden text-[13px] text-fg-2 md:inline">止损 {fmtPrice(a.payload.stop_loss)}</span>}
           <span className="text-[13px] text-fg-3">{expired ? "已过期" : <><span className="hidden sm:inline">剩余 </span><Countdown left={left} /></>}</span>
           <span className={`ml-auto text-fg-3 transition-transform ${open ? "rotate-90" : ""}`}>›</span>

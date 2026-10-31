@@ -206,8 +206,26 @@ export interface Approval {
   resolved_by: string;
   result: string;
   kind?: "spot" | "futures";
-  payload?: { leverage?: number; stop_loss?: number; take_profit?: number | null; margin_usd?: number };
+  payload?: { leverage?: number; stop_loss?: number; take_profit?: number | null; margin_usd?: number;
+    source?: "chat"; order?: "market" | "limit"; price?: number; hours?: number };
 }
+
+export interface LimitOrder {
+  id: string;
+  created: number;
+  expires: number;
+  approval_id: string;
+  symbol: string;
+  side: "BUY" | "SELL";
+  quote_usd: number;
+  price: number;
+  status: "open" | "placing" | "filled" | "failed" | "cancelled" | "expired";
+  result: string;
+  order_id: string;
+  done_at: number | null;
+}
+
+export type ChatPlan = Approval & { limit: LimitOrder | null };
 
 export interface AiQuestion {
   id: string;
@@ -253,7 +271,7 @@ export interface Order {
   cycle_id: string;
 }
 
-export interface ChatMsg { id: number; ts: number; channel: string; role: "user" | "assistant"; text: string }
+export interface ChatMsg { id: number; ts: number; channel: string; role: "user" | "assistant"; text: string; approvals?: string[] }
 export interface Report { day: string; ts: number; text: string }
 export interface Kline { t: number; o: number; h: number; l: number; c: number; v: number }
 

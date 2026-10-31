@@ -200,6 +200,9 @@ class TelegramBot:
                 icon = {"approved": "✅", "rejected": "❌", "expired": "⌛", "failed": "⚪"}.get(a.status, "•")
                 by = {"web": "（网页）", "telegram": "（Telegram）"}.get(a.resolved_by, "")
                 self.edit(a.tg_message_id, f"{icon} {self._ap_title(a)} — {a.status}{by}\n{a.result}")
+        elif kind == "limit_order" and d.get("text"):
+            icon = {"filled": "📌", "expired": "⌛"}.get(d.get("status"), "⚠️")
+            self.send(f"{icon} [{self.label()}] {d['text']}")
         elif kind == "futures" and d.get("text"):
             icon = "🟢" if d.get("ok") else "⚠️"
             if d.get("op") in ("STOP_HIT", "LIQUIDATED", "STOP_FAILED"):
@@ -355,7 +358,11 @@ class TelegramBot:
     @staticmethod
     def _ap_title(a) -> str:
         if a.kind != "futures":
-            return f"{a.side} {a.symbol}  ${a.quote_usd:,.0f}"
+            p = a.payload or {}
+            if p.get("order") == "limit":
+                return (f"{a.side} {a.symbol}  ${a.quote_usd:,.0f}  挂单 {'≤' if a.side == 'BUY' else '≥'} {p.get('price'):g}"
+                        f"（{p.get('hours', 24):g} 小时）")
+            return f"{a.side} {a.symbol}  ${a.quote_usd:,.0f}" + ("  市价" if p.get("source") == "chat" else "")
         p = a.payload or {}
         name = {"OPEN_LONG": "合约开多", "OPEN_SHORT": "合约开空"}.get(a.side, a.side)
         out = f"{name} {a.symbol}  保证金 ${a.quote_usd:,.0f} × {p.get('leverage')}x\n止损 {p.get('stop_loss')}"
@@ -382,12 +389,12 @@ class TelegramBot:
             mid = self.photo(png, cap[:1024], buttons) if png else self.send(cap, buttons)
             self.svc.db.update(Approval, aid, tg_message_id=mid)
             return
-        text = (f"🟡 待批准 [{self.label()}]\n{a.side} {a.symbol}  ${a.quote_usd:,.0f}\n\n"
+        text = (f"🟡 待批准 [{self.label()}]\n{self._ap_title(a)}\n\n"
                 f"理由：{a.reason}\n\n判断错了的信号：{a.invalidation}\n\n{mins} 分钟内有效。批准时会用最新价格重新做风控检查。")
         buttons = [[("✅ 批准", f"ap:{aid}"), ("❌ 拒绝", f"rj:{aid}")]]
         png = self.chart_png(a.symbol, pending=(time.time(), a.quote_usd), title="PENDING")
         if png:
-            cap = (f"🟡 待批准 [{self.label()}]\n{a.side} {a.symbol}  ${a.quote_usd:,.0f}\n\n"
+            cap = (f"🟡 待批准 [{self.label()}]\n{self._ap_title(a)}\n\n"
                    f"理由：{a.reason[:330]}\n\n判断错了的信号：{a.invalidation[:250]}\n\n{mins} 分钟内有效")
             mid = self.photo(png, cap, buttons)
         else:

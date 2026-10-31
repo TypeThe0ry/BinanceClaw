@@ -20,7 +20,7 @@ from ..brain import allocation as alloc
 from ..brain import debate as deb
 from ..brain import indicators as ta
 from ..brain import news as nws
-from ..brain.prompt import CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
+from ..brain.prompt import CHAT_PLANS, CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
 from ..config import (
@@ -35,7 +35,19 @@ from ..config import (
     decision_changes,
     owner_picks,
 )
-from ..db import AiQuestion, Approval, ChatMessage, Cycle, Database, FuturesPosition, FuturesTrade, Order, PriceAlert, Report
+from ..db import (
+    AiQuestion,
+    Approval,
+    ChatMessage,
+    Cycle,
+    Database,
+    FuturesPosition,
+    FuturesTrade,
+    LimitOrder,
+    Order,
+    PriceAlert,
+    Report,
+)
 from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
 from ..exchange.broker import Broker, OrderUnknown
@@ -1458,6 +1470,8 @@ class Service:
             return False, "这笔已处理"
         if a.kind == "futures":
             ok, msg = self.execute_futures(a.payload or {}, via="approved", cycle_id=a.cycle_id)
+        elif (a.payload or {}).get("order") == "limit":
+            ok, msg = self.place_limit(a)
         else:
             ok, msg, _oid = self.execute(a.side, a.symbol, a.quote_usd, via="approved", cycle_id=a.cycle_id)
         self.db.update(Approval, aid, result=msg, status="approved" if ok else "failed")
@@ -1714,14 +1728,17 @@ class Service:
             if news and news["items"] and self.settings.news.enabled:
                 slim["news"] = self.news_context(news)
             import json as _json
-            system = CHAT_SYSTEM + "\n<data>\n" + _json.dumps(slim, ensure_ascii=False, default=str) + "\n</data>"
+            system = CHAT_SYSTEM + CHAT_PLANS + "\n<data>\n" + _json.dumps(slim, ensure_ascii=False, default=str) + "\n</data>"
             msgs = [{"role": m.role, "content": m.text} for m in hist]
+            approvals: list[str] = []
             try:
                 comp = self.complete(system, msgs, task="chat")
-                reply = self._learn(comp.text.strip()) or "（空回复）"
+                reply, approvals = self._chat_plans(self._learn(comp.text.strip()))
+                reply = reply or "（空回复）"
             except ProviderError as e:
                 reply = f"模型调用失败：{e}"
-            self.db.add(ChatMessage(channel=channel, role="assistant", text=reply, provider=self.provider.name))
+            self.db.add(ChatMessage(channel=channel, role="assistant", text=reply, provider=self.provider.name,
+                                    approvals=approvals))
             self.events.emit("chat", {"channel": channel})
             return reply
 
@@ -1738,6 +1755,131 @@ class Service:
             from ..config import MAX_MEMORY
             self.update_settings({"memory": (mem + new)[-MAX_MEMORY:]})
         return self._REMEMBER.sub(lambda m: f"🧠 已记住：{m.group(1)}", reply)
+
+    # ------------------------------------------------------------------ chat trade plans
+    _PLAN = re.compile(r"^[ \t]*(?:📝[ \t]*)?方案[：:][ \t]*(\{.*\})[ \t]*$", re.M)
+    MAX_CHAT_PLANS = 3
+    MAX_LIMIT_HOURS = 168
+
+    def _chat_plans(self, reply: str) -> tuple[str, list[str]]:
+        """Lines the chat model marked 方案：{json} become pending approvals; nothing trades until the owner approves."""
+        found = list(self._PLAN.finditer(reply))
+        if not found:
+            return reply, []
+        ids: list[str] = []
+        lines: dict[int, str] = {}
+        for i, m in enumerate(found):
+            if i >= self.MAX_CHAT_PLANS:
+                lines[m.start()] = f"⚠️ 方案未提交：一次最多 {self.MAX_CHAT_PLANS} 个"
+                continue
+            try:
+                spec = json.loads(m.group(1))
+                if not isinstance(spec, dict):
+                    raise ValueError("格式不对")
+                text, aid = self._chat_plan(spec)
+                ids.append(aid)
+                lines[m.start()] = text
+            except (ValueError, TypeError, ExchangeError) as e:
+                lines[m.start()] = f"⚠️ 方案未提交：{e}"
+        return self._PLAN.sub(lambda m: lines[m.start()], reply), ids
+
+    def _chat_plan(self, d: dict) -> tuple[str, str]:
+        s = self.settings
+        side = str(d.get("side", "")).upper()
+        if side not in ("BUY", "SELL"):
+            raise ValueError("方向只能是 BUY 或 SELL")
+        symbol = normalize_symbol(str(d.get("symbol", "")), s.quote)
+        token = symbol[: -len(s.quote)]
+        usd = float(d.get("usd") or d.get("quote_usd") or 0)
+        if not usd > 0:
+            raise ValueError("金额必须为正数")
+        kind = str(d.get("type") or "market").lower()
+        if kind not in ("market", "limit"):
+            raise ValueError("类型只能是 market 或 limit")
+        prices, _m, btc_change, anomaly = self.market_snapshot()
+        v = evaluate([{"side": side, "symbol": symbol, "quote_usd": usd}], self.portfolio(prices),
+                     self.risk_state(btc_change, anomaly))[0]
+        if v.decision == "reject":
+            raise ValueError(v.reason)
+        amount = round(min(usd, v.approved_usd), 2)
+        payload: dict = {"source": "chat", "order": kind}
+        what = f"{'买入' if side == 'BUY' else '卖出'} {token} ${amount:,.2f}"
+        if kind == "limit":
+            price, now = float(d.get("price") or 0), prices.get(token)
+            if not price > 0 or not now:
+                raise ValueError("挂单价格无效")
+            if (side == "BUY" and price >= now) or (side == "SELL" and price <= now):
+                raise ValueError(f"挂单价 {price:g} 已越过现价 {now:g}")
+            if abs(price / now - 1) > 0.5:
+                raise ValueError(f"挂单价 {price:g} 离现价 {now:g} 超过 50%")
+            hours = min(max(float(d.get("hours") or 24), 1), self.MAX_LIMIT_HOURS)
+            payload.update(price=price, hours=hours)
+            what += f"，挂单 {'≤' if side == 'BUY' else '≥'} {price:g}，{hours:g} 小时有效"
+        else:
+            what += "，市价"
+        a = self.create_approval("", side, symbol, amount, str(d.get("reason", ""))[:1500],
+                                 str(d.get("invalidation", ""))[:800], payload=payload)
+        return f"📝 方案：{what}（待批准）", a.id
+
+    def place_limit(self, a: Approval) -> tuple[bool, str]:
+        p = a.payload or {}
+        lo = self.db.add(LimitOrder(expires=time.time() + float(p.get("hours") or 24) * 3600, approval_id=a.id,
+                                    symbol=a.symbol, side=a.side, quote_usd=a.quote_usd, price=float(p["price"])))
+        self.events.emit("limit_order", {"id": lo.id, "status": "open"})
+        return True, f"已挂单：{self.limit_title(lo)}"
+
+    def limit_title(self, lo: LimitOrder) -> str:
+        tok = lo.symbol[: -len(self.settings.quote)]
+        return (f"{'买入' if lo.side == 'BUY' else '卖出'} {tok} ${lo.quote_usd:,.2f}，"
+                f"价格 {'≤' if lo.side == 'BUY' else '≥'} {lo.price:g}")
+
+    def open_limit_orders(self) -> list[LimitOrder]:
+        return self.db.all(select(LimitOrder).where(LimitOrder.status == "open").order_by(LimitOrder.created))
+
+    def cancel_limit_order(self, lid: str, by: str = "web") -> bool:
+        if not self.db.claim_limit_order(lid, "cancelled"):
+            return False
+        self.db.update(LimitOrder, lid, result=f"已撤单（{by}）", done_at=time.time())
+        self.events.emit("limit_order", {"id": lid, "status": "cancelled"})
+        return True
+
+    def check_limit_orders(self) -> int:
+        """Place approved chat limit plans whose price has been reached; expire the stale ones."""
+        rows = self.open_limit_orders()
+        now = time.time()
+        live = []
+        for lo in rows:
+            if lo.expires < now:
+                if self.db.claim_limit_order(lo.id, "expired"):
+                    self.db.update(LimitOrder, lo.id, result="超时未成交", done_at=now)
+                    self.events.emit("limit_order", {"id": lo.id, "status": "expired",
+                                                     "text": f"挂单已过期：{self.limit_title(lo)}"})
+            else:
+                live.append(lo)
+        if not live:
+            return 0
+        try:
+            px = self.client.prices(sorted({lo.symbol for lo in live}))
+        except ExchangeError:
+            return 0
+        done = 0
+        for lo in live:
+            p = px.get(lo.symbol)
+            if p is None or not ((lo.side == "BUY" and p <= lo.price) or (lo.side == "SELL" and p >= lo.price)):
+                continue
+            if not self.db.claim_limit_order(lo.id, "placing"):
+                continue
+            try:
+                ok, msg, oid = self.execute(lo.side, lo.symbol, lo.quote_usd, via="approved", source="limit")
+            except Exception as e:                      # never leave it stuck in "placing"
+                log.exception("limit order %s failed", lo.id)
+                ok, msg, oid = False, f"未执行：{e}", ""
+            self.db.update(LimitOrder, lo.id, status="filled" if ok else "failed", result=msg, order_id=oid,
+                           done_at=time.time())
+            self.events.emit("limit_order", {"id": lo.id, "status": "filled" if ok else "failed", "ok": ok,
+                                             "text": f"挂单{'成交' if ok else '未执行'}：{self.limit_title(lo)}\n{msg}"})
+            done += 1
+        return done
 
     # ------------------------------------------------------------------ allocation proposals
     PROPOSAL_TTL = 86400
@@ -1959,6 +2101,7 @@ class Service:
                 self.expire_questions()
                 self._every("reconcile", 60, self.reconcile_orders)
                 self._every("alerts", 30, self.check_alerts)
+                self._every("limit_orders", 10, self.check_limit_orders)
                 self._every("futures", 10, self.futures_watch)
                 self._every("earn", 600, self.earn.sweep)
                 self._every("watchdog", 300, self.watchdog)
