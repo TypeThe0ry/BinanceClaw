@@ -217,16 +217,21 @@ DEFAULT_FEEDS = [
 
 class News(BaseModel):
     """联网新闻: before a decision round, gather the latest news and hand it to the decision model as data.
-    auto = the model searches the web itself when its provider can (Claude Code WebSearch/WebFetch, Anthropic API
-    and OpenAI web search), otherwise the RSS feeds; model = web search only; feeds = RSS only.
+    web (default) = the model searches the web itself, any site (Claude Code WebSearch/WebFetch, Anthropic API and
+    OpenAI web search); only when no configured model can search, or the search fails, the RSS feeds; feeds = RSS only.
     News informs the plan; the risk engine and every limit stay exactly the same."""
     enabled: bool = True
-    source: Literal["auto", "model", "feeds"] = "auto"
+    source: Literal["web", "feeds"] = "web"
     refresh_minutes: int = 60          # reuse the last digest for this long (rounds in between cost no search)
     lookback_hours: int = 24
     max_items: int = 8
     topics: list[str] = Field(default_factory=list)     # extra things to watch, e.g. "美联储", "ETF"
     feeds: list[str] = Field(default_factory=lambda: list(DEFAULT_FEEDS))
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _source(cls, v):
+        return "web" if v in ("auto", "model") else v      # saved before web search became the only model path
 
     @field_validator("topics")
     @classmethod
@@ -240,7 +245,7 @@ class News(BaseModel):
         bad = [u for u in out if not u.startswith(("http://", "https://"))]
         if bad:
             raise ValueError(f"新闻源必须是 http(s) 链接：{bad[0]}")
-        return out[:20]
+        return out
 
 
 class Capital(BaseModel):

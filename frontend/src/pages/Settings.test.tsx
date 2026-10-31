@@ -213,16 +213,16 @@ describe("Settings page (设置)", () => {
 
   it("configures the news step and searches now", async () => {
     const api = mockSettings({ extra: { "POST /news/refresh": { items: [{ title: "a" }, { title: "b" }], source: "feeds", errors: [] } },
-      settings: { news: { enabled: true, source: "auto", refresh_minutes: 60, lookback_hours: 24, max_items: 8, topics: [], feeds: ["https://a.example/rss"] } } });
+      settings: { news: { enabled: true, source: "web", refresh_minutes: 60, lookback_hours: 24, max_items: 8, topics: [], feeds: ["https://a.example/rss"] } } });
     renderPage(<Settings />);
     const sec = await waitFor(() => section("联网新闻"));
     expect(within(sec).getByText("Claude 订阅 不支持联网搜索，使用新闻源")).toBeInTheDocument();
-    await userEvent.click(within(sec).getByRole("button", { name: "模型联网搜索" }));
-    expect(within(sec).queryByLabelText("新闻源")).toBeNull();
+    await userEvent.click(within(sec).getByRole("button", { name: "新闻源" }));
+    expect(within(sec).getByLabelText("新闻源")).toBeInTheDocument();
     await userEvent.type(within(sec).getByLabelText("关注话题"), "美联储，ETF");
     await userEvent.click(within(sec).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
-    expect(api.find("PUT", "/settings")[0].body).toEqual({ news: { enabled: true, source: "model", refresh_minutes: 60, lookback_hours: 24,
+    expect(api.find("PUT", "/settings")[0].body).toEqual({ news: { enabled: true, source: "feeds", refresh_minutes: 60, lookback_hours: 24,
       max_items: 8, topics: ["美联储", "ETF"], feeds: ["https://a.example/rss"] } });
     await userEvent.click(within(sec).getByRole("button", { name: "立即搜索" }));
     await waitFor(() => expect(api.find("POST", "/news/refresh")).toHaveLength(1));

@@ -117,12 +117,20 @@ def test_cycle_falls_back_to_feeds(svc, monkeypatch):
     assert "search down" in svc.latest_news()["errors"][0]
 
 
-def test_model_only_source_without_web_search(svc):
-    svc.settings_store.update({"news": {"enabled": True, "source": "model"}})
+def test_web_search_is_the_default_and_old_sources_migrate():
+    assert Settings().news.source == "web"
+    for old in ("auto", "model"):
+        assert Settings.model_validate({"news": {"source": old}}).news.source == "web"
+    assert len(Settings.model_validate({"news": {"feeds": [f"https://f{i}.example/rss" for i in range(40)]}}).news.feeds) == 40
+
+
+def test_no_web_search_falls_back_to_feeds(svc):
+    svc.settings_store.update({"news": {"enabled": True}})
     use(svc, plan())                                                   # FakeProvider cannot search
     c = svc.run_cycle("manual")
-    assert c.status == "done" and c.context["news"]["items"] == []
+    assert c.status == "done" and c.context["news"]["items"] == []    # feeds are offline in tests
     assert "没有取到新闻" in c.context["news"]["note"]
+    assert "不支持联网搜索" in svc.latest_news()["errors"][0]
 
 
 def test_news_failure_never_blocks_the_round(svc, monkeypatch):
@@ -178,6 +186,7 @@ def test_anthropic_research_continues_paused_turn(monkeypatch):
     p = AnthropicAPIProvider(ProviderSettings(name="anthropic_api", model="claude-opus-5-5"), Secrets(anthropic_api_key="k"))
     c = p.research("sys", "q")
     assert c.text == '{"items":[]}' and c.usage["input_tokens"] == 12
-    assert bodies[0]["tools"][0]["type"] == "web_search_20260209"
+    tool = bodies[0]["tools"][0]
+    assert tool["type"] == "web_search_20260209" and "allowed_domains" not in tool and "blocked_domains" not in tool
     assert bodies[1]["messages"][-1]["role"] == "assistant"
     assert p.with_model("claude-haiku-5-5").search_tool()["type"] == "web_search_20250305"

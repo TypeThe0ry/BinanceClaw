@@ -935,9 +935,8 @@ class Service:
             except (ProviderError, PlanError) as e:
                 log.warning("news search on %s failed: %s", p.model or p.name, e)
                 errors.append(f"{p.model or p.name}：{str(e)[:200]}")
-        if n.source == "model":
-            return {"overview": "", "items": [], "source": "model", "model": "", "tokens": tokens, "fetched_at": time.time(),
-                    "ms": int((time.time() - t0) * 1000), "errors": errors or ["当前模型不支持联网搜索"], "error": True}
+        if n.source == "web" and not errors:
+            errors.append("当前模型不支持联网搜索，改用新闻源")
         d = nws.from_feeds(n.feeds, tokens, n.topics, n.lookback_hours, n.max_items)
         errors += d.pop("errors")
         return {**d, "source": "feeds", "model": "", "tokens": tokens, "fetched_at": time.time(),

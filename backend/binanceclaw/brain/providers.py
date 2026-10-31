@@ -261,7 +261,7 @@ class AnthropicAPIProvider(Provider):
 
     def search_tool(self) -> dict:
         kind = "web_search_20260209" if self._DYNAMIC.match(self.model or "") else "web_search_20250305"
-        return {"type": kind, "name": "web_search", "max_uses": 5}
+        return {"type": kind, "name": "web_search", "max_uses": 10}   # any site: no allowed/blocked domains
 
     def research(self, system, prompt):
         """Messages API with the server-side web search tool. A long search may pause the turn
