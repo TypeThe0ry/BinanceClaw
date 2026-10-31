@@ -198,7 +198,7 @@ class TelegramBot:
             a = self.svc.db.get(Approval, d["id"])
             if a:
                 icon = {"approved": "✅", "rejected": "❌", "expired": "⌛", "failed": "⚪"}.get(a.status, "•")
-                by = {"web": "（网页）", "telegram": "（Telegram）"}.get(a.resolved_by, "")
+                by = {"web": "（网页）", "telegram": "（Telegram）", "ai": "（AI 撤回）"}.get(a.resolved_by, "")
                 self.edit(a.tg_message_id, f"{icon} {self._ap_title(a)} — {a.status}{by}\n{a.result}")
         elif kind == "limit_order" and d.get("text"):
             icon = {"filled": "📌", "expired": "⌛"}.get(d.get("status"), "⚠️")

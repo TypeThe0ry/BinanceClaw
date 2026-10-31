@@ -1,7 +1,7 @@
 import { CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, post, type Approval, type Kline, type Order, type Overview, type PriceAlert } from "../api";
+import { api, post, type Approval, type Kline, type LimitOrder, type Order, type Overview, type PriceAlert } from "../api";
 import { Change, Empty, FlashNum, Page, Seg, Side, Tabs } from "../components/ui";
 import { alpha, candleColors, chartTheme, useColors } from "../theme";
 import { clock, fmtPrice, token, usd, useApi, useTicker, useToast } from "../lib";
@@ -12,7 +12,9 @@ const IV: { k: Iv; label: string; limit: number }[] = [
   { k: "4h", label: "4时", limit: 300 }, { k: "1d", label: "1日", limit: 300 },
 ];
 
-function Chart({ symbol, iv, orders, alerts }: { symbol: string; iv: Iv; orders: Order[]; alerts: PriceAlert[] }) {
+type Resting = { id: string; created: number; expires: number; symbol: string; side: string; quote_usd: number; price: number; approval?: Approval; order?: LimitOrder };
+
+function Chart({ symbol, iv, orders, alerts, limits }: { symbol: string; iv: Iv; orders: Order[]; alerts: PriceAlert[]; limits: Resting[] }) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi>();
   const col = useColors();
@@ -58,11 +60,15 @@ function Chart({ symbol, iv, orders, alerts }: { symbol: string; iv: Iv; orders:
       candle.createPriceLine({ price: a.price, color: col.warn, lineWidth: 1, lineStyle: 2, axisLabelVisible: true,
         title: `${a.op === "below" ? "↓" : "↑"} ${a.source === "ai" ? "AI" : "提醒"}` });
     }
+    for (const l of limits.filter((x) => x.symbol === symbol)) {
+      candle.createPriceLine({ price: l.price, color: l.side === "BUY" ? col.up : col.down, lineWidth: 1, lineStyle: l.order ? 0 : 2,
+        axisLabelVisible: true, title: `${l.side === "BUY" ? "挂买" : "挂卖"} ${usd(l.quote_usd, 0)}${l.order ? "" : " 待批准"}` });
+    }
     c.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 120), to: data.length + 4 });
     return () => {
       try { c.removeSeries(candle); c.removeSeries(vol); } catch { /* chart disposed */ }
     };
-  }, [data, orders, symbol, alerts, col]);
+  }, [data, orders, symbol, alerts, limits, col]);
 
   return <div ref={el} className="h-[420px] w-full md:h-[520px]" />;
 }
@@ -71,6 +77,7 @@ export default function Trade() {
   const ov = useApi<Overview>("/overview", { poll: 60000 });
   const orders = useApi<Order[]>("/orders?limit=500", { kinds: ["order"] });
   const approvals = useApi<Approval[]>("/approvals?limit=200", { kinds: ["approval", "approval_created"] });
+  const open = useApi<LimitOrder[]>("/limit-orders?status=open", { kinds: ["limit_order", "approval"], poll: 30000 });
   const alerts = useApi<PriceAlert[]>("/alerts", { kinds: ["alerts", "price_alert", "cycle"] });
   const tick = useTicker();
   const toast = useToast();
@@ -80,7 +87,27 @@ export default function Trade() {
   const symbols = Object.keys(ov.data?.market ?? {}).map((t) => `${t}USDT`);
   const sym = params.get("s") ?? "BTCUSDT";
   const [iv, setIv] = useState<Iv>("4h");
-  const [tab, setTab] = useState<"orders" | "approvals">("orders");
+  const [tab, setTab] = useState<"limits" | "orders" | "approvals">("limits");
+  const [busy, setBusy] = useState("");
+  const resting: Resting[] = [
+    ...(approvals.data ?? []).filter((a) => a.status === "pending" && a.payload?.order === "limit")
+      .map((a) => ({ id: a.id, created: a.created, expires: a.expires, symbol: a.symbol, side: a.side, quote_usd: a.quote_usd, price: a.payload?.price ?? 0, approval: a })),
+    ...(open.data ?? []).map((o) => ({ ...o, order: o })),
+  ].sort((a, b) => b.created - a.created);
+
+  async function act(path: string, key: string) {
+    setBusy(key);
+    try {
+      const r = await post<{ ok: boolean; message: string }>(path);
+      toast(r.message, r.ok ? "ok" : "err");
+    } catch (e) {
+      toast((e as Error).message, "err");
+    } finally {
+      setBusy("");
+      open.reload();
+      approvals.reload();
+    }
+  }
   const t = tick[sym];
   const mine = (orders.data ?? []).filter((o) => o.symbol === sym);
 
@@ -111,7 +138,7 @@ export default function Trade() {
       <section className="grid min-w-0 gap-6 lg:grid-cols-[1fr_300px]">
         <div className="min-w-0">
           <div className="mb-2"><Seg id="iv" items={IV.map((x) => ({ k: x.k, label: x.label }))} value={iv} onChange={setIv} /></div>
-          <Chart symbol={sym} iv={iv} orders={orders.data ?? []} alerts={alerts.data ?? []} />
+          <Chart symbol={sym} iv={iv} orders={orders.data ?? []} alerts={alerts.data ?? []} limits={resting} />
         </div>
         <aside>
           <p className="border-b border-line pb-2.5 text-[14px] font-semibold">AI 成交</p>
@@ -152,9 +179,44 @@ export default function Trade() {
 
       {/* history */}
       <section>
-        <Tabs id="hist" value={tab} onChange={setTab} items={[{ k: "orders", label: "成交记录" }, { k: "approvals", label: "审批记录" }]} />
+        <Tabs id="hist" value={tab} onChange={setTab} items={[
+          { k: "limits", label: <>挂单{!!resting.length && <span className="num ml-1 text-warn">{resting.length}</span>}</> },
+          { k: "orders", label: "成交记录" }, { k: "approvals", label: "审批记录" }]} />
         <div className="overflow-x-auto">
-          {tab === "orders" ? (
+          {tab === "limits" ? (
+            resting.length ? (
+              <table className="w-full min-w-[760px]">
+                <thead><tr className="border-b border-line">
+                  <th className="th">时间</th><th className="th">交易对</th><th className="th">方向</th><th className="th text-right">金额</th>
+                  <th className="th text-right">挂单价</th><th className="th text-right">现价</th><th className="th pl-6">状态</th><th className="th">到期</th><th className="th" />
+                </tr></thead>
+                <tbody>
+                  {resting.map((l) => (
+                    <tr key={l.id} className="border-b border-line">
+                      <td className="td num text-fg-2">{clock(l.created)}</td>
+                      <td className="td font-semibold"><button className="hover:underline" onClick={() => setParams({ s: l.symbol })}>{token(l.symbol)}/USDT</button></td>
+                      <td className="td"><Side side={l.side} /></td>
+                      <td className="td num text-right">{usd(l.quote_usd)}</td>
+                      <td className="td num text-right">{l.side === "BUY" ? "≤ " : "≥ "}{fmtPrice(l.price)}</td>
+                      <td className="td num text-right text-fg-2">{fmtPrice(tick[l.symbol]?.price)}</td>
+                      <td className={`td pl-6 ${l.order ? "text-warn" : "text-fg-2"}`}>{l.order ? "挂单中" : "待批准"}</td>
+                      <td className="td num text-fg-3">{clock(l.expires)}</td>
+                      <td className="td">
+                        <span className="flex justify-end gap-2">
+                          {l.order ? (
+                            <button className="btn-secondary btn-sm" disabled={!!busy} onClick={() => act(`/limit-orders/${l.id}/cancel`, l.id)}>{busy === l.id ? "…" : "撤单"}</button>
+                          ) : (<>
+                            <button className="btn-secondary btn-sm" disabled={!!busy} onClick={() => act(`/approvals/${l.id}/reject`, l.id + "r")}>{busy === l.id + "r" ? "…" : "拒绝"}</button>
+                            <button className={`${l.side === "BUY" ? "btn-up" : "btn-down"} btn-sm`} disabled={!!busy} onClick={() => act(`/approvals/${l.id}/approve`, l.id + "a")}>{busy === l.id + "a" ? "…" : "批准挂单"}</button>
+                          </>)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <Empty text="暂无挂单" />
+          ) : tab === "orders" ? (
             orders.data?.length ? (
               <table className="w-full min-w-[720px]">
                 <thead><tr className="border-b border-line">
@@ -192,7 +254,7 @@ export default function Trade() {
                     <td className={`td pl-6 ${{ approved: "text-up", rejected: "text-fg-2", expired: "text-fg-3", failed: "text-down", pending: "text-warn" }[a.status]}`}>
                       {{ approved: "已批准", rejected: "已拒绝", expired: "已过期", failed: "未执行", pending: "待处理" }[a.status]}
                     </td>
-                    <td className="td text-fg-3">{{ web: "网页", telegram: "Telegram", system: "系统" }[a.resolved_by] ?? "—"}</td>
+                    <td className="td text-fg-3">{{ web: "网页", telegram: "Telegram", system: "系统", ai: "AI" }[a.resolved_by] ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>

@@ -67,7 +67,7 @@ export default function Approvals() {
                   <td className="td font-semibold">{token(a.symbol)}/USDT</td>
                   <td className="td"><Side side={a.side} /></td>
                   <td className="td num text-right">{usd(a.quote_usd, 0)}</td>
-                  <td className={`td pl-6 ${STATUS[a.status]?.[1]}`}>{STATUS[a.status]?.[0] ?? a.status}</td>
+                  <td className={`td pl-6 ${STATUS[a.status]?.[1]}`}>{a.resolved_by === "ai" && a.status === "rejected" ? "AI 撤回" : STATUS[a.status]?.[0] ?? a.status}</td>
                   <td className="td max-w-[320px] truncate text-[13px] text-fg-3" title={a.result}>{a.result}</td>
                 </tr>
               ))}
