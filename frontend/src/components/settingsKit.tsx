@@ -55,10 +55,10 @@ export interface DebateCfg { enabled: boolean; rounds: number; bull: SeatModel; 
 const SEAT0: SeatModel = { provider: "", model: "", base_url: "" };
 export const DEBATE_DEFAULT: DebateCfg = { enabled: false, rounds: 1, bull: SEAT0, bear: SEAT0, risk: SEAT0, judge: SEAT0 };
 export interface NewsCfg {
-  enabled: boolean; source: "auto" | "model" | "feeds"; refresh_minutes: number; lookback_hours: number; max_items: number;
+  enabled: boolean; source: "web" | "feeds"; refresh_minutes: number; lookback_hours: number; max_items: number;
   topics: string[]; feeds: string[];
 }
-export const NEWS_DEFAULT: NewsCfg = { enabled: true, source: "auto", refresh_minutes: 60, lookback_hours: 24, max_items: 8, topics: [], feeds: [] };
+export const NEWS_DEFAULT: NewsCfg = { enabled: true, source: "web", refresh_minutes: 60, lookback_hours: 24, max_items: 8, topics: [], feeds: [] };
 export interface Routing { enabled: boolean; tasks: Record<string, Tier>; models: Record<string, Partial<Record<"fast" | "strong", string>>> }
 export interface Questions { enabled: boolean; question_timeout_minutes: number; on_timeout: "skip" | "auto" }
 export const QUESTIONS_DEFAULT: Questions = { enabled: true, question_timeout_minutes: 120, on_timeout: "skip" };

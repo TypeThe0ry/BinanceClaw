@@ -21,7 +21,7 @@ function deviceName(ua: string) {
 
 const TIER_LABEL: Record<Tier, string> = { fast: "轻量", strong: "决策", main: "主模型" };
 const PROVIDER: Record<string, string> = { claude_code: "Claude 订阅", openai: "OpenAI", openai_compat: "OpenAI 兼容", anthropic_api: "Anthropic API" };
-const NEWS_SOURCE: Record<NewsCfg["source"], string> = { auto: "自动", model: "模型联网搜索", feeds: "新闻源" };
+const NEWS_SOURCE: Record<NewsCfg["source"], string> = { web: "模型联网搜索", feeds: "新闻源" };
 const SEATS: [Seat, string][] = [["bull", "多头"], ["bear", "空头"], ["risk", "风控"], ["judge", "决策"]];
 
 /** 设置: system-level settings. Investment/AI decision config lives on the 配置 page (Config.tsx). */
@@ -62,7 +62,7 @@ export default function Settings() {
     setSearching(true);
     try {
       const r = await post<{ items: unknown[]; source: string; errors?: string[] }>("/news/refresh");
-      toast(r.items.length ? `${r.items.length} 条 · ${NEWS_SOURCE[r.source as NewsCfg["source"]] ?? r.source}` : (r.errors?.[0] ?? "0 条"), r.items.length ? "ok" : "err");
+      toast(r.items.length ? `${r.items.length} 条 · ${(r.source === "model" ? NEWS_SOURCE.web : NEWS_SOURCE.feeds)}` : (r.errors?.[0] ?? "0 条"), r.items.length ? "ok" : "err");
     } catch (e) { toast((e as Error).message, "err"); }
     setSearching(false);
   }
@@ -214,7 +214,7 @@ export default function Settings() {
                 items={(Object.keys(NEWS_SOURCE) as NewsCfg["source"][]).map((k) => ({ k, label: NEWS_SOURCE[k] }))} />
             </Row>
             {nw.source !== "feeds" && !webOk && (
-              <Row label="状态"><span className="text-[13px] text-warn">{PROVIDER[pname] ?? pname} 不支持联网搜索{nw.source === "auto" ? "，使用新闻源" : ""}</span></Row>
+              <Row label="状态"><span className="text-[13px] text-warn">{PROVIDER[pname] ?? pname} 不支持联网搜索，使用新闻源</span></Row>
             )}
             <Row label="刷新间隔"><Num unit="分钟" value={nw.refresh_minutes} min={b.refresh_minutes?.[0]} max={b.refresh_minutes?.[1]} onChange={(x) => setNw({ refresh_minutes: x })} /></Row>
             <Row label="时间范围"><Num unit="小时" value={nw.lookback_hours} min={b.lookback_hours?.[0]} max={b.lookback_hours?.[1]} onChange={(x) => setNw({ lookback_hours: x })} /></Row>
@@ -223,7 +223,7 @@ export default function Settings() {
               <input className="input h-9 w-72" aria-label="关注话题" value={nw.topics.join("，")} placeholder="美联储，ETF"
                 onChange={(e) => setNw({ topics: e.target.value.split(/[,，、]/) })} />
             </Row>
-            {nw.source !== "model" && (
+            {(nw.source === "feeds" || !webOk) && (
               <Row label="新闻源">
                 <textarea className="input min-h-[96px] w-80 py-2 text-[13px]" aria-label="新闻源" value={nw.feeds.join("\n")}
                   onChange={(e) => setNw({ feeds: e.target.value.split("\n") })} />
