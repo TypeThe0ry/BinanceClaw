@@ -33,7 +33,7 @@ function PlanCard({ a, onDone }: { a: ChatPlan; onDone: () => void }) {
     }
   }
 
-  const [label, color] = DONE[state] ?? [state, "text-fg-2"];
+  const [label, color] = a.resolved_by === "ai" && state === "rejected" ? ["已撤回", "text-fg-2"] : DONE[state] ?? [state, "text-fg-2"];
   return (
     <div className="mt-2 rounded-xl border border-line px-4 py-3" data-testid="plan">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">

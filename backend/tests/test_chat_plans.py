@@ -3,7 +3,7 @@ import json
 
 from sqlmodel import select
 
-from binanceclaw.db import ChatMessage, LimitOrder, Order
+from binanceclaw.db import Approval, ChatMessage, LimitOrder, Order
 
 from .conftest import use
 
@@ -136,3 +136,27 @@ def test_telegram_shows_limit_price():
     assert TelegramBot._ap_title(a) == "BUY ETHUSDT  $60  挂单 ≤ 2400（12 小时）"
     a.payload = {"source": "chat", "order": "market"}
     assert TelegramBot._ap_title(a) == "BUY ETHUSDT  $60  市价"
+
+
+def test_ai_withdraws_a_plan_not_yet_approved(svc):
+    use(svc, say(side="BUY", symbol="ETH", usd=60, type="limit", price=2400))
+    svc.chat("ETH 跌到 2400 买 60")
+    a = svc.db.pending_approvals()[0]
+    p = use(svc, f"好的，撤掉。\n撤回：{a.id}")
+    reply = svc.chat("算了，不挂了")
+    assert "↩️ 已撤回：买入 ETH $60.00，挂单 ≤ 2400" in reply and "撤回：" + a.id not in reply
+    assert any(x["id"] == a.id for x in json.loads(p.calls[-1][0].split("<data>\n")[1].split("\n</data>")[0])["pending_plans"])
+    a = svc.db.get(Approval, a.id)
+    assert (a.status, a.resolved_by, a.result) == ("rejected", "ai", "AI 已撤回")
+    assert svc.resolve_approval(a.id, True, "web")[0] is False         # cannot be approved afterwards
+    assert not svc.open_limit_orders() and not orders(svc)
+
+
+def test_ai_cannot_withdraw_an_approved_limit_order(svc):
+    use(svc, say(side="BUY", symbol="ETH", usd=60, type="limit", price=2400))
+    svc.chat("挂单")
+    a = svc.db.pending_approvals()[0]
+    svc.resolve_approval(a.id, True, "web")
+    use(svc, f"撤回：{a.id}")
+    assert "撤回失败" in svc.chat("撤掉")
+    assert len(svc.open_limit_orders()) == 1

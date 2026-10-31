@@ -1724,6 +1724,11 @@ class Service:
                                                   "category_weights", "targets", "today", "btc_change_7d", "pending_approvals")}
             slim["recent_decisions"] = self.recent_decisions(3)
             slim["memory"] = self.settings.memory
+            slim["pending_plans"] = [
+                {"id": a.id, "side": a.side, "symbol": a.symbol, "usd": round(a.quote_usd, 2),
+                 "type": (a.payload or {}).get("order", "market"), "price": (a.payload or {}).get("price"),
+                 "from": "chat" if (a.payload or {}).get("source") == "chat" else "decision", "expires": a.expires}
+                for a in self.db.pending_approvals() if a.kind == "spot"]
             news = self.latest_news()
             if news and news["items"] and self.settings.news.enabled:
                 slim["news"] = self.news_context(news)
@@ -1733,7 +1738,7 @@ class Service:
             approvals: list[str] = []
             try:
                 comp = self.complete(system, msgs, task="chat")
-                reply, approvals = self._chat_plans(self._learn(comp.text.strip()))
+                reply, approvals = self._chat_plans(self._chat_withdraw(self._learn(comp.text.strip())))
                 reply = reply or "（空回复）"
             except ProviderError as e:
                 reply = f"模型调用失败：{e}"
@@ -1782,6 +1787,24 @@ class Service:
             except (ValueError, TypeError, ExchangeError) as e:
                 lines[m.start()] = f"⚠️ 方案未提交：{e}"
         return self._PLAN.sub(lambda m: lines[m.start()], reply), ids
+
+    _WITHDRAW = re.compile(r"^[ \t]*(?:↩️?[ \t]*)?撤回[：:][ \t]*([0-9a-f]{12})[ \t]*$", re.M)
+
+    def _chat_withdraw(self, reply: str) -> str:
+        """Lines the chat model marked 撤回：<id> withdraw a plan the owner has not approved yet."""
+        return self._WITHDRAW.sub(lambda m: self.withdraw_approval(m.group(1))[1], reply)
+
+    def withdraw_approval(self, aid: str) -> tuple[bool, str]:
+        a = self.db.get(Approval, aid)
+        if not a or a.kind != "spot" or not self.db.claim_approval(aid, "rejected", "ai"):
+            return False, f"⚠️ 撤回失败：{aid} 已处理或不存在"
+        self.db.update(Approval, aid, result="AI 已撤回")
+        self.events.emit("approval", {"id": aid, "status": "rejected", "by": "ai"})
+        p = a.payload or {}
+        what = f"{'买入' if a.side == 'BUY' else '卖出'} {a.symbol[: -len(self.settings.quote)]} ${a.quote_usd:,.2f}"
+        if p.get("order") == "limit":
+            what += f"，挂单 {'≤' if a.side == 'BUY' else '≥'} {p.get('price'):g}"
+        return True, f"↩️ 已撤回：{what}"
 
     def _chat_plan(self, d: dict) -> tuple[str, str]:
         s = self.settings

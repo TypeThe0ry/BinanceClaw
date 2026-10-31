@@ -65,4 +65,12 @@ describe("Chat trade plans", () => {
     await userEvent.click(within(card).getByRole("button", { name: "撤单" }));
     await waitFor(() => expect(api.find("POST", "/limit-orders/l1/cancel")).toHaveLength(1));
   });
+
+  it("shows a plan the AI withdrew", async () => {
+    mockApi({ "GET /chat?limit=200": history(plan({ status: "rejected", resolved_by: "ai", result: "AI 已撤回" })) });
+    renderPage(<Chat />);
+    const card = await screen.findByTestId("plan");
+    expect(within(card).getByText("已撤回")).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "批准挂单" })).toBeNull();
+  });
 });
