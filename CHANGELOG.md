@@ -3,7 +3,7 @@
 ## 未发布
 
 ### 新增
-- **联网新闻**：每轮决策前搜集最新新闻，和行情、指标一起交给 AI 判断。Claude 订阅用 Claude Code 内置的 WebSearch / WebFetch（只开这两个工具），Anthropic API 用服务端 web_search，OpenAI 用 Responses API 的 web_search，OpenAI 兼容接口读 RSS 新闻源（默认 CoinDesk、Cointelegraph、Decrypt）；可选来源、刷新间隔、时间范围、条数、关注话题和新闻源。新闻默认每 60 分钟刷新、用轻量模型搜索；决策详情页显示每轮用到的新闻。风控不变。
+- **联网新闻**：每轮决策前搜集最新新闻，和行情、指标一起交给 AI 判断。Claude 订阅用 Claude Code 内置的 WebSearch / WebFetch（只开这两个工具），Anthropic API 用服务端 web_search，OpenAI 用 Responses API 的 web_search，OpenAI 兼容接口读 RSS 新闻源（默认 CoinDesk、Cointelegraph、Decrypt）；默认优先让模型联网搜索、不限来源，模型不能联网时才读新闻源；可选来源、刷新间隔、时间范围、条数、关注话题和新闻源。新闻默认每 60 分钟刷新、用轻量模型搜索；决策详情页显示每轮用到的新闻。风控不变。
 - **绩效页**：夏普 / 索提诺 / 卡玛比率、最大回撤与回撤曲线、年化收益与波动、同期 BTC 对比；已平仓交易的胜率、盈亏比、每笔期望、连胜连亏，按币种汇总。AI 每轮也会看到近 30 天的绩效并据此调整仓位。
 - **更多技术指标**：AI 的行情数据新增日线 / 4 小时 MACD（金叉死叉、柱状图强弱）、日线布林带（%B、带宽）、日线 / 4 小时量比；合约另有持仓量 4 小时 / 24 小时变化、持仓价值、近 3 次资金费率均值和连续正费率次数。
 - **模型竞技场**：多个模型（Claude / OpenAI / 兼容接口 / Anthropic API 任意组合）各自管理一个虚拟账户，同一时刻拿同一份行情和盘口并行决策，按收益率排名，对比 BTC 持有基准；展示最大回撤、胜率、手续费和 Token 用量，每轮所有模型的决策可并排对比。完全不碰真实账户。
