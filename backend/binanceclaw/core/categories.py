@@ -4,8 +4,11 @@ Risk grouping is unrelated: that comes from the owner's target categories (confi
 A coin can carry several tags; ``primary()`` picks the one used to group it in the portfolio."""
 from __future__ import annotations
 
+STOCK = "tokenized_stock"     # our own, from exchangeInfo (exchange.binance_spot.is_stock_token)
+
 # Binance's tag ids -> the names binance.com uses in Chinese. Unknown tags are shown as they come.
 LABELS: dict[str, str] = {
+    STOCK: "股票代币",
     "Layer1_Layer2": "Layer 1 / Layer 2",
     "Meme": "Meme",
     "AI": "AI",
@@ -35,7 +38,7 @@ LABELS: dict[str, str] = {
 }
 
 # Order used to pick a coin's primary category: what the coin is before where it lives or how it launched.
-PRIORITY = ["Layer1_Layer2", "Meme", "AI", "RWA", "defi", "Gaming", "Metaverse", "Infrastructure", "Storage", "Payments",
+PRIORITY = [STOCK, "Layer1_Layer2", "Meme", "AI", "RWA", "defi", "Gaming", "Metaverse", "Infrastructure", "Storage", "Payments",
             "NFT", "liquid_staking", "fan_token", "pow", "pos", "BSC", "bnbchain", "Solana", "Polkadot",
             "Launchpool", "Launchpad", "Megadrop", "HODLer_Airdrops", "Seed", "Monitoring"]
 

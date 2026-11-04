@@ -63,7 +63,8 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "max_items": (1, 20),
 }
 
-# Suggestions for the asset picker (any TRADING <TOKEN>USDT spot pair can also be typed in).
+# Suggestions for the asset picker (any TRADING <TOKEN>USDT spot pair can also be typed in). The API adds
+# the most traded tokenized stocks discovered from exchangeInfo (Service.stock_tokens).
 CANDIDATE_TOKENS = ["BTC", "ETH", "BNB", "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "TRX", "TON",
                     "QQQB", "NVDAB"]
 

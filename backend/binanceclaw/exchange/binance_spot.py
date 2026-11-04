@@ -37,6 +37,25 @@ class SymbolRules:
     quote_precision: int
 
 
+def is_stock_token(sym: dict) -> bool:
+    """Binance's tokenized stocks and ETFs (QQQB, NVDAB, AVGOB, SMHB ...) from an exchangeInfo symbol.
+
+    exchangeInfo has no explicit flag. What they share: the ticker plus a trailing "B", and a price
+    band tighter than crypto pairs get (PERCENT_PRICE_BY_SIDE bidMultiplierUp 1.1 vs 1.2+). Checked
+    against every *B<quote> pair listed on 2026-11-04: all 105 stock tokens match, no coin does
+    (BNB, ARB, SHIB, CKB, TRB, DGB, BB, YB all have the wider band)."""
+    base = sym.get("baseAsset") or ""
+    if len(base) < 2 or not base.endswith("B"):
+        return False
+    for f in sym.get("filters") or []:
+        if f.get("filterType") == "PERCENT_PRICE_BY_SIDE":
+            try:
+                return float(f.get("bidMultiplierUp")) <= 1.1 + 1e-9
+            except (TypeError, ValueError):
+                return False
+    return False
+
+
 def _f(x) -> float:
     return float(x) if x not in (None, "") else 0.0
 
@@ -99,7 +118,8 @@ class BinanceSpot:
         Status is kept rather than filtered: Binance marks a pair BREAK while trading is suspended
         (TON was, for example), and such assets must still be findable and selectable."""
         info = self._request("GET", "/api/v3/exchangeInfo", {"permissions": "SPOT"})
-        return [{"symbol": s["symbol"], "base": s["baseAsset"], "quote": s["quoteAsset"], "status": s["status"]}
+        return [{"symbol": s["symbol"], "base": s["baseAsset"], "quote": s["quoteAsset"], "status": s["status"],
+                 "stock": is_stock_token(s)}
                 for s in info["symbols"] if s.get("isSpotTradingAllowed", True)]
 
     def asset_tags(self) -> dict[str, list[str]]:

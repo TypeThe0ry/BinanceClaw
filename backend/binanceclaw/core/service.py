@@ -277,11 +277,11 @@ class Service:
         return out
 
     def market_scan(self, s, exclude, n: int = 40) -> dict[str, dict]:
-        """A cheap overview (24 h stats only, no klines) of the most-traded spot assets the AI is not
-        working with yet, so it can choose what to add to its focus."""
+        """A cheap overview (24 h stats only, no klines) of the most-traded spot coins the AI is not
+        working with yet, so it can choose what to add to its focus. Tokenized stocks: stock_scan."""
         try:
             tickers = self._tickers_24h()
-            pairs = {m["base"]: m.get("status") for m in self._spot_markets() if m["quote"] == s.quote}
+            pairs = {m["base"]: m.get("status") for m in self._spot_markets() if m["quote"] == s.quote and not m.get("stock")}
         except ExchangeError:
             return {}
         skip = set(s.stables) | {s.quote} | set(s.allocation.blocked) | set(exclude)
@@ -480,7 +480,11 @@ class Service:
         return {x[: -len(q)]: p for x, p in got.items()}
 
     def token_tags(self) -> dict[str, list[str]]:
-        """Binance's categories per asset (cached 6 h). Empty when binance.com is unreachable."""
+        """Binance's categories per asset (cached 6 h), plus 股票代币 for tokenized stocks."""
+        return self._with_stock_tag(self._binance_tags())
+
+    def _binance_tags(self) -> dict[str, list[str]]:
+        """Binance's own categories (empty when binance.com is unreachable)."""
         cached = getattr(self, "_tags", None)
         if cached and time.time() - cached[0] < 6 * 3600:
             return cached[1]
@@ -493,6 +497,49 @@ class Service:
             return data
         self._tags = (time.time(), data)
         return data
+
+    def _with_stock_tag(self, tags: dict[str, list[str]]) -> dict[str, list[str]]:
+        try:
+            stocks = {m["base"] for m in self._spot_markets() if m.get("stock")}
+        except ExchangeError:
+            return tags
+        if not stocks:
+            return tags
+        out = dict(tags)
+        for b in stocks:
+            if cats.STOCK not in out.get(b, ()):
+                out[b] = [cats.STOCK, *out.get(b, [])]
+        return out
+
+    def stock_tokens(self, quote: str | None = None) -> list[str]:
+        """Every tokenized stock / ETF with a TRADING <TOKEN><quote> pair, most traded first.
+        Discovered from exchangeInfo, so new listings show up without a code change."""
+        quote = quote or self.settings_store.get().quote
+        try:
+            bases = {m["base"] for m in self._spot_markets()
+                     if m.get("stock") and m["quote"] == quote and m.get("status", "TRADING") == "TRADING"}
+            tickers = self._tickers_24h()
+        except ExchangeError as e:
+            log.warning("stock tokens unavailable: %s", e)
+            return []
+        return sorted(bases, key=lambda b: (-((tickers.get(f"{b}{quote}") or {}).get("quote_volume") or 0), b))
+
+    def stock_scan(self, s, exclude) -> dict[str, dict]:
+        """24 h overview of every tokenized stock the AI is not working with yet. They trade far less
+        than coins, so the volume-ranked market_scan would never show them."""
+        try:
+            tickers = self._tickers_24h()
+        except ExchangeError:
+            return {}
+        skip = set(s.allocation.blocked) | set(exclude)
+        out = {}
+        for b in self.stock_tokens(s.quote):
+            if b in skip:
+                continue
+            t = tickers.get(f"{b}{s.quote}") or {}
+            out[b] = {"price": t.get("price"), "change_24h": t.get("change_pct"),
+                      "quote_volume_24h": round(t.get("quote_volume") or 0)}
+        return out
 
     def tags_of(self, token: str) -> list[str]:
         return cats.tags_for(token, self.token_tags(), self.settings.stables)
@@ -779,6 +826,7 @@ class Service:
         if s.allocation.mode == "ai" and s.allocation.universe != "whitelist":
             context["allocation"]["focus"] = self.ai_focus()
             context["allocation"]["market_scan"] = self.market_scan(s, s.tradable_tokens())
+            context["allocation"]["stock_tokens"] = self.stock_scan(s, s.tradable_tokens())
         if st.halted:
             context["halted"] = {"symbols": st.halted, "note": "这些交易对币安目前暂停交易，本轮不要对它们提出买卖"}
         fv = None
@@ -1724,6 +1772,8 @@ class Service:
                                                   "category_weights", "targets", "today", "btc_change_7d", "pending_approvals")}
             slim["recent_decisions"] = self.recent_decisions(3)
             slim["memory"] = self.settings.memory
+            slim["tradable"] = self.settings.tradable_tokens()
+            slim["stock_tokens"] = self.stock_tokens()
             slim["pending_plans"] = [
                 {"id": a.id, "side": a.side, "symbol": a.symbol, "usd": round(a.quote_usd, 2),
                  "type": (a.payload or {}).get("order", "market"), "price": (a.payload or {}).get("price"),
@@ -1924,7 +1974,7 @@ class Service:
             top = [r["token"] for r in sorted(index.values(), key=lambda r: -(r["quote_volume"] or 0))
                    if r["trading"] and r["selectable"]][:40]
             cands = {}
-            for tok in list(dict.fromkeys([*sorted(keep), *top])):
+            for tok in list(dict.fromkeys([*sorted(keep), *top, *self.stock_tokens(s.quote)])):
                 r = index.get(tok)
                 if r and r["selectable"]:
                     cands[tok] = {"price": r["price"], "change_24h": r["change_pct"],
