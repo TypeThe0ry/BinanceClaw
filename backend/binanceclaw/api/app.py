@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
 import queue
+import re
 import secrets as pysecrets
 import threading
 import time
@@ -241,7 +243,8 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         with attempts_lock:   # success: clear this source's failures and the reserved slot
             failures.pop(ip, None)
         release(ip, now)
-        secure = request.url.scheme == "https"
+        # behind an HTTPS reverse proxy the app itself sees http: BINANCECLAW_COOKIE_SECURE=1 forces Secure
+        secure = request.url.scheme == "https" or os.environ.get("BINANCECLAW_COOKIE_SECURE", "") in ("1", "true", "yes")
         did = register_device(request, device_id)
         response.set_cookie(COOKIE, signer.sign(f"owner:{did}:{pw_fingerprint()}").decode(), max_age=SESSION_DAYS * 86400,
                             httponly=True, samesite="strict", secure=secure)
@@ -803,6 +806,16 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
                 return FileResponse(f)
             return FileResponse(static_dir / "index.html")
 
+    # XSS backstop: only this server's own scripts (plus the inline theme script in index.html, by hash)
+    inline = []
+    index = static_dir / "index.html" if static_dir else None
+    if index and index.is_file():
+        for m in re.finditer(r"<script>(.*?)</script>", index.read_text(encoding="utf-8"), re.S):
+            inline.append("'sha256-" + base64.b64encode(hashlib.sha256(m.group(1).encode()).digest()).decode() + "'")
+    csp = ("default-src 'self'; script-src 'self' " + " ".join(inline)).strip() + (
+        "; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; "
+        "connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         # CSRF backstop on top of the SameSite=Strict cookie: browsers mark every request with
@@ -814,6 +827,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        resp.headers.setdefault("Content-Security-Policy", csp)
         return resp
 
     return app

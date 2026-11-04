@@ -55,7 +55,10 @@ carry those powers. Withdrawals, the IP whitelist, reading and spot trading can 
 The container listens on `127.0.0.1` by default. Prefer Tailscale for remote access. The dashboard uses
 a single argon2-hashed password, a signed httpOnly `SameSite=Strict` cookie, login rate-limiting, and refuses writes a browser marks as
 cross-site (`Sec-Fetch-Site`); pending approvals are voided when switching between paper and live;
-if you expose it beyond a trusted network, put it behind HTTPS.
+if you expose it beyond a trusted network, put it behind HTTPS. Behind an HTTPS reverse proxy set
+`BINANCECLAW_COOKIE_SECURE=1` so the session cookies carry `Secure`. Responses send a `Content-Security-Policy`
+that only allows the dashboard's own scripts. Changing a model API address (`provider.base_url`, debate seats)
+needs the same second confirmation as other dangerous settings, since the API key is sent there.
 
 ## Reporting
 

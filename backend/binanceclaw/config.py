@@ -736,6 +736,12 @@ DANGEROUS: dict[str, str] = {
     "approval_free.end": "免审批结束时间",
     "approval_free.include_sell": "免审批包含卖出",
     "approval_free.include_futures": "免审批包含合约开仓",
+    # the OpenAI-compatible API key is sent to these addresses
+    "provider.base_url": "模型接口地址",
+    "debate.bull.base_url": "多头角色接口地址",
+    "debate.bear.base_url": "空头角色接口地址",
+    "debate.risk.base_url": "风控角色接口地址",
+    "debate.judge.base_url": "决策角色接口地址",
 }
 
 
