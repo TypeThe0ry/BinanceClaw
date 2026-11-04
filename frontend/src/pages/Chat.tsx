@@ -1,6 +1,6 @@
 import { ArrowUp, TelegramLogo } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
-import { post, type ChatMsg, type ChatPlan } from "../api";
+import { ApiError, post, type ChatMsg, type ChatPlan } from "../api";
 import { Countdown, useNow } from "../components/ApprovalRow";
 import { Md } from "../components/Md";
 import { DocLink, Page, Side, Spinner } from "../components/ui";
@@ -23,7 +23,15 @@ function PlanCard({ a, onDone }: { a: ChatPlan; onDone: () => void }) {
   async function act(path: string, kind: string) {
     setBusy(kind);
     try {
-      const r = await post<{ ok: boolean; message: string }>(path);
+      let r: { ok: boolean; message: string };
+      try {
+        r = await post(path);
+      } catch (e) {
+        // approve / reject / cancel are claimed atomically on the server, so one retry after a dropped connection is safe
+        if (!(e instanceof ApiError && e.status === 0)) throw e;
+        await new Promise((ok) => setTimeout(ok, 600));
+        r = await post(path);
+      }
       toast(r.message, r.ok ? "ok" : "err");
     } catch (e) {
       toast((e as Error).message, "err");

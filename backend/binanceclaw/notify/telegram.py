@@ -46,7 +46,7 @@ HELP = """BinanceClaw 指令
 /flat yes 平掉 BinanceClaw 的全部合约仓位
 /notify  推送设置：/notify 查看；/notify instant 或 /notify digest 60；/notify quiet 23:00-08:00 或 /notify quiet off；/notify off earn、/notify on earn
 /new     开始新的对话
-其他文字：直接和当前模型对话（只读，不能下单）"""
+其他文字：直接发到「对话」，和网页共用同一段对话；AI 提的交易方案批准后才执行"""
 
 
 def fmt_setting(v) -> str:
@@ -607,7 +607,15 @@ class TelegramBot:
         elif cmd.startswith("/"):
             self.send("未知指令\n\n" + HELP)
         else:
-            threading.Thread(target=self._safe, args=(lambda: self.send(svc.chat(text, "telegram")),), daemon=True).start()
+            threading.Thread(target=self._safe, args=(lambda: self._chat(text),), daemon=True).start()
+
+    def _chat(self, text: str):
+        """Plain Telegram text goes to the same conversation as the web 对话 page; the reply comes back here."""
+        try:
+            self.http.post(f"{self.api}/sendChatAction", json={"chat_id": self.chat_id, "action": "typing"}, timeout=5)
+        except Exception:
+            pass
+        self.send(self.svc.chat(text, "telegram"))
 
     def _intervene(self, cmd: str, args: list[str]):
         svc = self.svc
