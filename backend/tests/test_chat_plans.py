@@ -122,6 +122,7 @@ def test_chat_history_returns_plan_state(tmp_path):
     plan = r["plans"][a.id]
     assert plan["status"] == "approved" and plan["limit"]["status"] == "open"
     assert r["messages"][-1]["approvals"] == [a.id] and r["messages"][0]["approvals"] == []
+    assert r["messages"][-1]["sources"] == []
     lid = plan["limit"]["id"]
     assert c.post(f"/api/limit-orders/{lid}/cancel").json()["ok"]
     assert not c.post(f"/api/limit-orders/{lid}/cancel").json()["ok"]

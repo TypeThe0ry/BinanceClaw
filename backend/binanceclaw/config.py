@@ -228,6 +228,7 @@ class News(BaseModel):
     max_items: int = 8
     topics: list[str] = Field(default_factory=list)     # extra things to watch, e.g. "美联储", "ETF"
     feeds: list[str] = Field(default_factory=lambda: list(DEFAULT_FEEDS))
+    chat: bool = True                  # chat replies search the web themselves when the model can (independent of enabled)
 
     @field_validator("source", mode="before")
     @classmethod

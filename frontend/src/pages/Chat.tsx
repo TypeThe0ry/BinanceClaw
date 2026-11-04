@@ -1,15 +1,32 @@
 import { ArrowUp, TelegramLogo } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, post, type ChatMsg, type ChatPlan } from "../api";
+import { ApiError, post, type ChatMsg, type ChatPlan, type ChatSource } from "../api";
 import { Countdown, useNow } from "../components/ApprovalRow";
 import { Md } from "../components/Md";
-import { DocLink, Page, Side, Spinner } from "../components/ui";
+import { Credibility, DocLink, Page, Side, Spinner } from "../components/ui";
 import { ago, fmtPrice, token, usd, useApi, useToast } from "../lib";
 
 const DONE: Record<string, [string, string]> = {
   rejected: ["已拒绝", "text-fg-2"], expired: ["已过期", "text-fg-3"], failed: ["未执行", "text-down"], approved: ["已成交", "text-up"],
   open: ["挂单中", "text-warn"], placing: ["下单中", "text-warn"], filled: ["已成交", "text-up"], cancelled: ["已撤单", "text-fg-2"],
 };
+
+function Sources({ list }: { list: ChatSource[] }) {
+  return (
+    <ol className="mt-2 space-y-1 border-t border-line pt-2 text-[12.5px]" aria-label="来源">
+      {list.map((s) => (
+        <li key={s.n} className="flex flex-wrap items-baseline gap-x-2" data-testid="chat-source">
+          <span className="num text-fg-3">[{s.n}]</span>
+          {s.url ? <a href={s.url} target="_blank" rel="noreferrer noopener" className="text-fg-2 hover:underline">{s.name}</a>
+            : <span className="text-fg-2">{s.name}</span>}
+          {s.title && <span className="text-fg-3">{s.title}</span>}
+          {s.time && <span className="text-fg-3">{s.time}</span>}
+          {s.credibility != null && <Credibility v={s.credibility} />}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 function PlanCard({ a, onDone }: { a: ChatPlan; onDone: () => void }) {
   const toast = useToast();
@@ -115,6 +132,7 @@ export default function Chat() {
         ) : (
           <div key={m.id} className="max-w-[92%]">
             <Md text={m.text} compact />
+            {!!m.sources?.length && <Sources list={m.sources} />}
             {(m.approvals ?? []).map((id) => data?.plans?.[id] && <PlanCard key={id} a={data.plans[id]} onDone={reload} />)}
             <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-fg-3">{m.channel === "telegram" && <TelegramLogo size={12} />}{ago(m.ts)}</p>
           </div>

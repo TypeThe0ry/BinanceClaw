@@ -1,8 +1,8 @@
 """Model providers behind one interface.
 
 * claude_code   — Claude subscription via the Claude Code CLI (``claude -p``), no API key.
-                  Runs with **all tools disabled** and no MCP servers; the news step (``research``)
-                  enables only WebSearch and WebFetch.
+                  Runs with **all tools disabled** and no MCP servers; web search (``search`` /
+                  ``research``: the news step and chat) enables only WebSearch and WebFetch.
 * openai        — OpenAI Chat Completions (API key).
 * openai_compat — any OpenAI-compatible endpoint (DeepSeek, Qwen, Ollama, OpenRouter...).
 * anthropic_api — Anthropic Messages API (API key).
@@ -57,9 +57,13 @@ class Provider:
     # 联网新闻: providers that can search the web themselves (see brain/news.py)
     web_search = False
 
+    def search(self, system: str, messages: list[Message]) -> Completion:
+        """``complete`` with the model's own web search on (chat and the news step)."""
+        raise ProviderError(f"{self.name} 不支持联网搜索")
+
     def research(self, system: str, prompt: str) -> Completion:
         """One call with web search on; the reply is the model's news digest."""
-        raise ProviderError(f"{self.name} 不支持联网搜索")
+        return self.search(system, [{"role": "user", "content": prompt}])
 
     def with_model(self, model: str) -> Provider:
         """This provider calling ``model`` instead ("" or the same model = this provider)."""
@@ -90,18 +94,20 @@ class ClaudeCodeProvider(Provider):
     web_search = True
     WEB_TOOLS = "WebSearch,WebFetch"
 
-    def complete(self, system, messages, json_mode=False):
+    @staticmethod
+    def _prompt(messages) -> str:
         # Claude Code -p takes a single prompt: flatten multi-turn chat into a transcript.
         if len(messages) == 1:
-            prompt = messages[0]["content"]
-        else:
-            lines = [("用户" if m["role"] == "user" else "助理") + "：" + m["content"] for m in messages[:-1]]
-            prompt = "【之前的对话】\n" + "\n\n".join(lines) + "\n\n【当前问题】\n" + messages[-1]["content"]
-        return self._run(system, prompt, ["--tools", ""])
+            return messages[0]["content"]
+        lines = [("用户" if m["role"] == "user" else "助理") + "：" + m["content"] for m in messages[:-1]]
+        return "【之前的对话】\n" + "\n\n".join(lines) + "\n\n【当前问题】\n" + messages[-1]["content"]
 
-    def research(self, system, prompt):
+    def complete(self, system, messages, json_mode=False):
+        return self._run(system, self._prompt(messages), ["--tools", ""])
+
+    def search(self, system, messages):
         # Only the two web tools, pre-approved so -p never waits for a permission prompt
-        return self._run(system, prompt, ["--tools", self.WEB_TOOLS, "--allowedTools", self.WEB_TOOLS])
+        return self._run(system, self._prompt(messages), ["--tools", self.WEB_TOOLS, "--allowedTools", self.WEB_TOOLS])
 
     def _run(self, system: str, prompt: str, tools: list[str]) -> Completion:
         ok, b = self.available()
@@ -178,12 +184,13 @@ class OpenAIProvider(Provider):
 
     web_search = True
 
-    def research(self, system, prompt):
+    def search(self, system, messages):
         """Responses API with the hosted web search tool."""
         key = self._key()
         if not key:
             raise ProviderError("未配置 OPENAI_API_KEY")
-        body = {"model": self.model, "instructions": system, "input": prompt, "tools": [{"type": "web_search"}]}
+        body = {"model": self.model, "instructions": system, "tools": [{"type": "web_search"}],
+                "input": [{"role": m["role"], "content": m["content"]} for m in messages]}
         t0 = time.time()
         try:
             r = httpx.post(self._base().rstrip("/") + "/responses", json=body, headers={"Authorization": f"Bearer {key}"},
@@ -203,8 +210,8 @@ class OpenAICompatProvider(OpenAIProvider):
     default_model = "deepseek-chat"
     web_search = False      # endpoints differ; news comes from the RSS feeds instead
 
-    def research(self, system, prompt):
-        return Provider.research(self, system, prompt)
+    def search(self, system, messages):
+        return Provider.search(self, system, messages)
 
     def _key(self):
         return self.secrets.openai_compat_api_key
@@ -263,12 +270,12 @@ class AnthropicAPIProvider(Provider):
         kind = "web_search_20260209" if self._DYNAMIC.match(self.model or "") else "web_search_20250305"
         return {"type": kind, "name": "web_search", "max_uses": 10}   # any site: no allowed/blocked domains
 
-    def research(self, system, prompt):
+    def search(self, system, messages):
         """Messages API with the server-side web search tool. A long search may pause the turn
         (stop_reason pause_turn): send the partial reply back so the server continues it."""
         if not self.secrets.anthropic_api_key:
             raise ProviderError("未配置 ANTHROPIC_API_KEY")
-        messages: list = [{"role": "user", "content": prompt}]
+        messages = list(messages)
         body = {"model": self.model, "max_tokens": 8000, "system": system, "tools": [self.search_tool()]}
         t0 = time.time()
         usage: dict = {}

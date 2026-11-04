@@ -177,7 +177,7 @@ export interface CycleFull extends CycleRow {
   debate?: Partial<DebateLog>;
 }
 
-export interface NewsItem { title: string; source?: string; url?: string; time?: string; assets?: string[]; impact?: "bullish" | "bearish" | "neutral"; summary?: string }
+export interface NewsItem { title: string; source?: string; url?: string; time?: string; assets?: string[]; impact?: "bullish" | "bearish" | "neutral"; credibility?: number; summary?: string }
 export interface NewsCtx { source: "model" | "feeds"; fetched_at: string; overview?: string; items: NewsItem[] }
 
 export type DebateRole = "bull" | "bear" | "risk";
@@ -279,7 +279,8 @@ export interface Order {
   cycle_id: string;
 }
 
-export interface ChatMsg { id: number; ts: number; channel: string; role: "user" | "assistant"; text: string; approvals?: string[] }
+export interface ChatSource { n: number; name: string; title?: string; url?: string; time?: string; credibility?: number }
+export interface ChatMsg { id: number; ts: number; channel: string; role: "user" | "assistant"; text: string; approvals?: string[]; sources?: ChatSource[] }
 export interface Report { day: string; ts: number; text: string }
 export interface Kline { t: number; o: number; h: number; l: number; c: number; v: number }
 

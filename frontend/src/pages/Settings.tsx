@@ -207,6 +207,10 @@ export default function Settings() {
           <input type="checkbox" className="h-4 w-4 accent-white" checked={nw.enabled} aria-label="开启联网新闻"
             onChange={(e) => setNw({ enabled: e.target.checked })} />
         </Row>
+        <Row label="对话联网">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={nw.chat} aria-label="对话联网"
+            onChange={(e) => setNw({ chat: e.target.checked })} />
+        </Row>
         {nw.enabled && (
           <>
             <Row label="来源">
