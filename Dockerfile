@@ -2,7 +2,7 @@
 FROM node:22-bookworm-slim AS web
 WORKDIR /web/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 COPY docs/ /web/docs/
 COPY SECURITY.md CHANGELOG.md /web/
 COPY frontend/ ./
