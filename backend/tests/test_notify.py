@@ -169,3 +169,20 @@ def test_api_round_trip(client):  # noqa: F811
     r = client.put("/api/settings", json={"notify": {"mode": "digest", "types": {"trade": False}}})
     assert r.status_code == 200 and r.json()["rerun"] == []
     assert r.json()["notify"]["mode"] == "digest" and r.json()["notify"]["types"]["trade"] is False
+
+
+def test_plain_telegram_text_goes_to_the_shared_chat(svc):
+    from sqlmodel import select
+
+    from binanceclaw.db import ChatMessage
+    bot, sent = _bot(svc)
+    bot.chat_id, bot.api = 1, "x"
+    bot.http = type("H", (), {"post": lambda *a, **k: None})()
+    use(svc, "BTC 现在 80000。")
+    seen = []
+    svc.events.on(lambda k, d: seen.append((k, d.get("role"))))
+    bot._chat("BTC 多少钱")
+    assert sent[-1][0] == "BTC 现在 80000。"
+    msgs = svc.db.all(select(ChatMessage))
+    assert [(m.channel, m.role) for m in msgs] == [("telegram", "user"), ("telegram", "assistant")]
+    assert ("chat", "user") in seen                              # the web 对话 page shows the question right away

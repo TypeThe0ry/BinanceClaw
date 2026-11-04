@@ -1764,6 +1764,7 @@ class Service:
     def chat(self, text: str, channel: str = "web") -> str:
         with self._chat_lock:
             self.db.add(ChatMessage(channel=channel, role="user", text=text))
+            self.events.emit("chat", {"channel": channel, "role": "user"})   # shows up on the web chat right away
             cut = self.db.kv_get("chat_cut_ts", 0)
             hist = list(reversed(self.db.all(select(ChatMessage).where(ChatMessage.ts > cut)
                                              .order_by(desc(ChatMessage.ts)).limit(20))))
