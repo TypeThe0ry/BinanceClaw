@@ -407,6 +407,7 @@ class Service:
             if self.db.claim_approval(a.id, "rejected", by):
                 self.db.update(Approval, a.id, result="紧急停止，已作废")
                 self.events.emit("approval", {"id": a.id, "status": "rejected"})
+        self.cancel_limit_orders("紧急停止，已撤单", by)
         self.cancel_questions(by)
 
     def next_cycle_at(self) -> float:
@@ -1703,6 +1704,8 @@ class Service:
             if self.db.claim_approval(a.id, "rejected", "system"):
                 self.db.update(Approval, a.id, result=why)
                 self.events.emit("approval", {"id": a.id, "status": "rejected"})
+        # approved chat limit plans waiting for their price too: a paper limit must never fill live
+        self.cancel_limit_orders(why.replace("已作废", "已撤单"), "system")
 
     def set_mode(self, mode: str, confirm: str = "", by: str = "web") -> tuple[bool, str]:
         if mode == "paper":
@@ -1998,12 +2001,20 @@ class Service:
     def open_limit_orders(self) -> list[LimitOrder]:
         return self.db.all(select(LimitOrder).where(LimitOrder.status == "open").order_by(LimitOrder.created))
 
-    def cancel_limit_order(self, lid: str, by: str = "web") -> bool:
+    def cancel_limit_order(self, lid: str, by: str = "web", why: str = "") -> bool:
         if not self.db.claim_limit_order(lid, "cancelled"):
             return False
-        self.db.update(LimitOrder, lid, result=f"已撤单（{by}）", done_at=time.time())
-        self.events.emit("limit_order", {"id": lid, "status": "cancelled"})
+        self.db.update(LimitOrder, lid, result=why or f"已撤单（{by}）", done_at=time.time())
+        ev = {"id": lid, "status": "cancelled", "by": by}
+        lo = self.db.get(LimitOrder, lid) if why else None
+        if lo:
+            ev["text"] = f"{why}：{self.limit_title(lo)}"
+        self.events.emit("limit_order", ev)
         return True
+
+    def cancel_limit_orders(self, why: str, by: str = "system") -> int:
+        """Withdraw every open limit plan (mode switch, kill switch)."""
+        return sum(self.cancel_limit_order(lo.id, by, why) for lo in self.open_limit_orders())
 
     def check_limit_orders(self) -> int:
         """Place approved chat limit plans whose price has been reached; expire the stale ones."""
@@ -2018,8 +2029,8 @@ class Service:
                                                      "text": f"挂单已过期：{self.limit_title(lo)}"})
             else:
                 live.append(lo)
-        if not live:
-            return 0
+        if not live or self.paused()[0]:
+            return 0                                    # paused: keep waiting, they trigger again after /resume
         try:
             px = self.client.prices(sorted({lo.symbol for lo in live}))
         except ExchangeError:
