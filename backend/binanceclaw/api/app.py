@@ -577,7 +577,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             avail[name] = {"ok": ok, "message": msg if not ok else "", "default_model": cls.default_model,
                            "web_search": cls.web_search}
         return {"settings": s.model_dump(), "secrets": svc.secrets.configured(), "providers": avail,
-                "presets": RISK_PRESETS, "candidates": CANDIDATE_TOKENS, "deployed_usd": round(svc.deployed_usd(), 2),
+                "presets": RISK_PRESETS, "candidates": list(dict.fromkeys([*CANDIDATE_TOKENS, *svc.stock_tokens(s.quote)[:20]])), "deployed_usd": round(svc.deployed_usd(), 2),
                 "bounds": HARD_BOUNDS, "confirm_phrase": CONFIRM_PHRASE,
                 "model_tasks": MODEL_TASKS, "tier_models": TIER_MODELS,
                 "telegram": bool(svc.secrets.telegram_bot_token and svc.secrets.telegram_chat_id),

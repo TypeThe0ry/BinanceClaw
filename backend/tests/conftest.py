@@ -7,6 +7,7 @@ from binanceclaw.brain.providers import Completion, Provider, ProviderError
 from binanceclaw.config import Secrets
 from binanceclaw.exchange.binance_spot import SymbolRules
 
+STOCKS = {"QQQBUSDT", "NVDABUSDT"}
 PRICES = {"BTCUSDT": 80000.0, "ETHUSDT": 2500.0, "QQQBUSDT": 700.0, "NVDABUSDT": 200.0, "SOLUSDT": 150.0, "TONUSDT": 1.6}
 HALTED = {"TONUSDT": "BREAK"}          # listed but suspended, like TON on Binance in October 2026
 
@@ -40,7 +41,8 @@ class FakeSpot:
         return {s: self.prices_map[s] for s in symbols if s in self.prices_map}
 
     def spot_markets(self):
-        return ([{"symbol": s, "base": s[:-4], "quote": "USDT", "status": HALTED.get(s, "TRADING")} for s in PRICES]
+        return ([{"symbol": s, "base": s[:-4], "quote": "USDT", "status": HALTED.get(s, "TRADING"), "stock": s in STOCKS}
+                 for s in PRICES]
                 + [{"symbol": "XYZBTC", "base": "XYZ", "quote": "BTC", "status": "TRADING"}])
 
     def all_tickers_24h(self):
