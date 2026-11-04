@@ -1164,6 +1164,8 @@ class Service:
             act["fraction"] = v.fraction
         return act
 
+    STALE_DATA = "未执行：获取最新数据失败："
+
     def execute_futures(self, action: dict, via: str, cycle_id: str = "") -> tuple[bool, str]:
         """Re-check on fresh data, then act. Approved opens may shrink but never grow."""
         with self._exec_lock:
@@ -1174,7 +1176,7 @@ class Service:
                 st = self.risk_state(btc_change, anomaly)
                 fv = self.futures_view(pf, st, fresh=True)
             except ExchangeError as e:
-                return False, f"未执行：获取最新数据失败：{e}"
+                return False, f"{self.STALE_DATA}{e}"
             v = evaluate_futures([action], fv)[0]
             allowed = v.decision == "execute" or (v.decision == "approve" and via in ("approved", "manual"))
             if not allowed:
@@ -1229,17 +1231,23 @@ class Service:
         act = {"op": "CLOSE" if fraction >= 1 else "REDUCE", "symbol": p.symbol, "fraction": fraction,
                "reason": f"{by} 手动平仓", "invalidation": "-"}
         # closing is allowed even when futures is switched off, so the owner can always get out
-        if not self.settings.futures.enabled:
-            with self._exec_lock:
-                try:
-                    fill = self.fbroker.close(p, fraction, "手动平仓")
-                except ExchangeError as e:
-                    return False, f"平仓失败：{e}"
-                self._ftrade(act["op"], p.symbol, p.id, fill.qty, fill.price, 0, fill.pnl, fill.fee, "manual", "", "", fill.raw)
-                msg = f"平仓 {p.symbol} {fill.qty:g} @ {fill.price:,.4g}，盈亏 ${fill.pnl:+,.2f}"
-                self.events.emit("futures", {"symbol": p.symbol, "op": "CLOSE", "ok": True, "text": msg, "via": "manual"})
-                return True, msg
-        return self.execute_futures(act, via="manual")
+        if self.settings.futures.enabled:
+            ok, msg = self.execute_futures(act, via="manual")
+            if ok or not msg.startswith(self.STALE_DATA):
+                return ok, msg
+            # spot market data unavailable: closing needs no risk check, so close directly
+        with self._exec_lock:
+            p = self.db.get(FuturesPosition, pid)
+            if not p or p.status != "open":
+                return False, "仓位不存在或已平仓"
+            try:
+                fill = self.fbroker.close(p, fraction, "手动平仓")
+            except ExchangeError as e:
+                return False, f"平仓失败：{e}"
+            self._ftrade(act["op"], p.symbol, p.id, fill.qty, fill.price, 0, fill.pnl, fill.fee, "manual", "", "", fill.raw)
+            msg = f"平仓 {p.symbol} {fill.qty:g} @ {fill.price:,.4g}，盈亏 ${fill.pnl:+,.2f}"
+            self.events.emit("futures", {"symbol": p.symbol, "op": "CLOSE", "ok": True, "text": msg, "via": "manual"})
+            return True, msg
 
     def flatten_futures(self, by: str = "web") -> list[str]:
         return [self.close_position(p.id, by)[1] for p in self.fbroker.open_rows() if p.status == "open"]
