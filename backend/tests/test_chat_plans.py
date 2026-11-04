@@ -161,3 +161,47 @@ def test_ai_cannot_withdraw_an_approved_limit_order(svc):
     use(svc, f"撤回：{a.id}")
     assert "撤回失败" in svc.chat("撤掉")
     assert len(svc.open_limit_orders()) == 1
+
+
+def _open_limit(svc, **plan):
+    use(svc, say(**{"side": "BUY", "symbol": "ETH", "usd": 60, "type": "limit", "price": 2400, **plan}))
+    svc.chat("挂单")
+    assert svc.resolve_approval(svc.db.pending_approvals()[0].id, True, "web")[0]
+    return svc.open_limit_orders()[-1]
+
+
+def test_mode_switch_cancels_open_limit_orders(svc):
+    from binanceclaw.risk import gate
+    lo = _open_limit(svc)                                             # approved while on paper
+    assert svc.set_mode("live", gate.CONFIRM_PHRASE)[0]
+    assert svc.db.get(LimitOrder, lo.id).status == "cancelled"        # never fills with real money
+    assert "实盘" in svc.db.get(LimitOrder, lo.id).result
+    svc.client.prices_map["ETHUSDT"] = 2300.0
+    assert svc.check_limit_orders() == 0 and not orders(svc)
+
+
+def test_kill_switch_cancels_open_limit_orders(svc):
+    lo = _open_limit(svc)
+    svc.kill_switch()
+    assert svc.db.get(LimitOrder, lo.id).status == "cancelled"
+    svc.resume()
+    svc.client.prices_map["ETHUSDT"] = 2300.0
+    assert svc.check_limit_orders() == 0 and not orders(svc)
+
+
+def test_limit_order_waits_while_paused(svc):
+    lo = _open_limit(svc)
+    svc.pause("测试暂停")
+    svc.client.prices_map["ETHUSDT"] = 2300.0
+    assert svc.check_limit_orders() == 0
+    assert svc.db.get(LimitOrder, lo.id).status == "open"             # not burned as 未执行
+    svc.resume()
+    assert svc.check_limit_orders() == 1
+    assert svc.db.get(LimitOrder, lo.id).status == "filled"
+
+
+def test_earn_sweep_keeps_cash_for_open_limit_buys(svc):
+    _open_limit(svc, usd=300)
+    svc.earn.sweep()
+    keep = svc.settings.earn.keep_liquid_usd
+    assert svc.broker.balances()["USDT"] >= keep + 300 - 0.01

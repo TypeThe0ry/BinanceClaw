@@ -201,7 +201,7 @@ class TelegramBot:
                 by = {"web": "（网页）", "telegram": "（Telegram）", "ai": "（AI 撤回）"}.get(a.resolved_by, "")
                 self.edit(a.tg_message_id, f"{icon} {self._ap_title(a)} — {a.status}{by}\n{a.result}")
         elif kind == "limit_order" and d.get("text"):
-            icon = {"filled": "📌", "expired": "⌛"}.get(d.get("status"), "⚠️")
+            icon = {"filled": "📌", "expired": "⌛", "cancelled": "↩️"}.get(d.get("status"), "⚠️")
             self.send(f"{icon} [{self.label()}] {d['text']}")
         elif kind == "futures" and d.get("text"):
             icon = "🟢" if d.get("ok") else "⚠️"
