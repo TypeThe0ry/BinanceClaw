@@ -269,3 +269,14 @@ def test_context_survives_missing_open_interest(svc):
     svc.fbroker.client.open_interest_hist = boom
     m = run(svc).context["futures"]["markets"]["BTCUSDT"]
     assert m["funding_rate_8h"] == 0.0001 and "oi_change_24h" not in m
+
+
+def test_manual_close_works_when_spot_data_is_down(svc):
+    on(svc, auto_open=True, auto_open_max_margin_usd=200)
+    run(svc, long_btc(margin=100))
+    (p,) = svc.fbroker.open_rows()
+    svc.client.fail = True                       # spot API down: closing needs no risk check
+    ok, msg = svc.close_position(p.id, "web")
+    assert ok, msg
+    assert not svc.fbroker.open_rows()
+    assert not svc.close_position(p.id, "web")[0]

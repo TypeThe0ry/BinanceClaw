@@ -205,3 +205,20 @@ def test_earn_sweep_keeps_cash_for_open_limit_buys(svc):
     svc.earn.sweep()
     keep = svc.settings.earn.keep_liquid_usd
     assert svc.broker.balances()["USDT"] >= keep + 300 - 0.01
+def test_telegram_lists_and_cancels_open_limit_orders(svc):
+    from .test_notify import _bot
+    bot, sent = _bot(svc)
+    bot.edit = lambda mid, text: sent.append((text, None))
+    bot.handle_text("/orders")
+    assert sent[-1][0] == "没有挂单中的单子"
+    use(svc, say(side="BUY", symbol="ETH", usd=60, type="limit", price=2400))
+    svc.chat("挂单")
+    svc.resolve_approval(svc.db.pending_approvals()[0].id, True, "web")
+    lo = svc.open_limit_orders()[0]
+    bot.handle_text("/orders")
+    text, buttons = sent[-1]
+    assert "买入 ETH $60.00，价格 ≤ 2400" in text and buttons == [[("↩️ 撤单", f"lo_cx:{lo.id}")]]
+    bot.cancel_limit(lo.id, 1)
+    assert svc.db.get(LimitOrder, lo.id).status == "cancelled" and sent[-1][0].startswith("↩️ 已撤单")
+    bot.cancel_limit(lo.id, 1)
+    assert sent[-1][0].startswith("⚠️")
