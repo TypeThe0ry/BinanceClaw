@@ -152,3 +152,9 @@ export function Band({ w, lo, hi, target, color }: { w: number; lo: number; hi: 
     </div>
   );
 }
+
+/** A source's credibility (0–100 %), coloured by how far it can be trusted. */
+export function Credibility({ v }: { v: number }) {
+  const cls = v >= 80 ? "text-up" : v >= 50 ? "text-warn" : "text-down";
+  return <span className={`num text-[12px] ${cls}`} data-testid="credibility">可信度 {v}%</span>;
+}

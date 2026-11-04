@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { CycleFull, CycleRow, DebateLog, DebateTurn, NewsCtx, TrackRecord, WinStat } from "../api";
-import { Decision, DocLink, Empty, Page, RiskChecks, SectionHead, Side, Skeleton, Tabs } from "../components/ui";
+import { Credibility, Decision, DocLink, Empty, Page, RiskChecks, SectionHead, Side, Skeleton, Tabs } from "../components/ui";
 import { clock, pct, token, usd, useApi, fmtPrice } from "../lib";
 
 type F = "all" | "trade" | "none" | "issue";
@@ -131,6 +131,7 @@ function News({ n }: { n: NewsCtx }) {
                   {it.url ? <a href={it.url} target="_blank" rel="noreferrer noopener" className="font-medium hover:underline">{it.title}</a>
                     : <span className="font-medium">{it.title}</span>}
                   <span className={`text-[12.5px] ${cls}`}>{label}</span>
+                  {it.credibility != null && <Credibility v={it.credibility} />}
                   <span className="ml-auto text-[12px] text-fg-3">{[it.assets?.join(" "), it.source, it.time].filter(Boolean).join(" · ")}</span>
                 </div>
                 {it.summary && <p className="mt-1 text-[13.5px] leading-relaxed text-fg-2">{it.summary}</p>}

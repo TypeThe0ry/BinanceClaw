@@ -20,7 +20,7 @@ from ..brain import allocation as alloc
 from ..brain import debate as deb
 from ..brain import indicators as ta
 from ..brain import news as nws
-from ..brain.prompt import CHAT_PLANS, CHAT_SYSTEM, SYSTEM, build_context, build_user_prompt
+from ..brain.prompt import CHAT_OFFLINE, CHAT_PLANS, CHAT_SOURCES, CHAT_SYSTEM, CHAT_WEB, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
 from ..brain.schema import PlanError, parse_plan
 from ..config import (
@@ -132,18 +132,23 @@ class Service:
         r = self.settings_store.get().model_routing
         return p.with_model(r.model_for(p.name, p.model, task))
 
-    def complete(self, system: str, messages: list[dict], json_mode: bool = False, task: str = "chat"):
+    def complete(self, system: str, messages: list[dict], json_mode: bool = False, task: str = "chat", web: bool = False):
         """Primary model, then the fallback model if one is configured. Raises if both fail.
 
-        ``task`` (a config.MODEL_TASKS key) picks the model: decisions on the strong one, summaries on the fast one."""
+        ``task`` (a config.MODEL_TASKS key) picks the model: decisions on the strong one, summaries on the fast one.
+        ``web``: the model may search the web itself (Provider.search) when it can."""
+        def call(p):
+            if web and p.web_search:
+                return p.search(system, messages)
+            return p.complete(system, messages, json_mode=json_mode)
         try:
-            return self.routed(task).complete(system, messages, json_mode=json_mode)
+            return call(self.routed(task))
         except ProviderError as e:
             if not self.fallback:
                 raise
             log.warning("primary model failed, using fallback: %s", e)
             try:
-                comp = self.routed(task, self.fallback).complete(system, messages, json_mode=json_mode)
+                comp = call(self.routed(task, self.fallback))
             except ProviderError as e2:
                 raise ProviderError(f"主模型失败：{e}；备用模型也失败：{e2}") from e2
             comp.usage = {**(comp.usage or {}), "fallback": True, "primary_error": str(e)[:300]}
@@ -1006,7 +1011,8 @@ class Service:
         """The digest as the decision model sees it."""
         out = {"note": nws.NOTE, "source": digest["source"],
                "fetched_at": dt.datetime.fromtimestamp(digest["fetched_at"], dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-               "items": [{k: it[k] for k in ("title", "source", "time", "assets", "impact", "summary", "url") if it.get(k)}
+               "items": [{k: it[k] for k in ("title", "source", "time", "assets", "impact", "credibility", "summary", "url")
+                          if it.get(k) is not None and it.get(k) != "" and it.get(k) != []}
                          for it in digest["items"]]}
         if digest.get("overview"):
             out["overview"] = digest["overview"]
@@ -1784,19 +1790,77 @@ class Service:
             if news and news["items"] and self.settings.news.enabled:
                 slim["news"] = self.news_context(news)
             import json as _json
-            system = CHAT_SYSTEM + CHAT_PLANS + "\n<data>\n" + _json.dumps(slim, ensure_ascii=False, default=str) + "\n</data>"
-            msgs = [{"role": m.role, "content": m.text} for m in hist]
+            slim["now_utc"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+            data = "\n<data>\n" + _json.dumps(slim, ensure_ascii=False, default=str) + "\n</data>"
+            web = self.settings.news.chat and self.chat_can_search()
+            msgs = [{"role": m.role, "content": m.text + (("\n\n" + self.format_sources(m.sources)) if m.sources else "")}
+                    for m in hist]
             approvals: list[str] = []
+            sources: list[dict] = []
             try:
-                comp = self.complete(system, msgs, task="chat")
-                reply, approvals = self._chat_plans(self._chat_withdraw(self._learn(comp.text.strip())))
+                try:
+                    comp = self.complete(CHAT_SYSTEM + (CHAT_WEB if web else CHAT_OFFLINE) + CHAT_SOURCES + CHAT_PLANS + data,
+                                         msgs, task="chat", web=web)
+                except ProviderError as e:
+                    if not web:
+                        raise
+                    log.warning("chat web search failed, answering without it: %s", e)
+                    comp = self.complete(CHAT_SYSTEM + CHAT_OFFLINE + CHAT_SOURCES + CHAT_PLANS + data, msgs, task="chat")
+                text, sources = self._chat_sources(comp.text.strip())
+                reply, approvals = self._chat_plans(self._chat_withdraw(self._learn(text)))
                 reply = reply or "（空回复）"
             except ProviderError as e:
                 reply = f"模型调用失败：{e}"
             self.db.add(ChatMessage(channel=channel, role="assistant", text=reply, provider=self.provider.name,
-                                    approvals=approvals))
+                                    approvals=approvals, sources=sources))
             self.events.emit("chat", {"channel": channel})
-            return reply
+            return reply + ("\n\n" + self.format_sources(sources) if sources else "")
+
+    def chat_can_search(self) -> bool:
+        """Whether the chat model (or the fallback) can search the web itself."""
+        return any(p.web_search for p in [self.routed("chat"), *([self.routed("chat", self.fallback)] if self.fallback else [])])
+
+    # ------------------------------------------------------------------ chat sources
+    _SOURCE = re.compile(r"^[ \t]*(?:📎[ \t]*)?来源[：:][ \t]*(\{.*\})[ \t]*$", re.M)
+    MAX_CHAT_SOURCES = 20
+
+    def _chat_sources(self, reply: str) -> tuple[str, list[dict]]:
+        """Lines the chat model marked 来源：{json} become the reply's source list (name, link, credibility %)."""
+        out: list[dict] = []
+        for m in self._SOURCE.finditer(reply):
+            try:
+                d = json.loads(m.group(1))
+            except ValueError:
+                continue
+            if not isinstance(d, dict) or len(out) >= self.MAX_CHAT_SOURCES:
+                continue
+            name = nws._clip(d.get("name") or d.get("source"), 60)
+            title = nws._clip(d.get("title"), 160)
+            if not (name or title):
+                continue
+            try:
+                n = int(d.get("n"))
+            except (TypeError, ValueError):
+                n = len(out) + 1
+            try:
+                cred = max(0, min(100, round(float(d.get("credibility")))))
+            except (TypeError, ValueError):
+                cred = None
+            src = {"n": n, "name": name or title, "title": title if title != name else "", "url": nws._url(d.get("url")),
+                   "time": nws._clip(d.get("time"), 40), "credibility": cred}
+            out.append({k: v for k, v in src.items() if v not in ("", None)})
+        text = re.sub(r"\n{3,}", "\n\n", self._SOURCE.sub("", reply)).strip()
+        return text, sorted(out, key=lambda s: s["n"])
+
+    @staticmethod
+    def format_sources(sources: list[dict]) -> str:
+        """The source list as plain text (Telegram and the model's own chat history)."""
+        lines = ["📎 来源"]
+        for s in sources:
+            cred = f" · 可信度 {s['credibility']}%" if s.get("credibility") is not None else ""
+            head = f"[{s['n']}] {s['name']}" + (f"《{s['title']}》" if s.get("title") else "") + (f" {s['time']}" if s.get("time") else "")
+            lines.append(head + cred + (f"\n{s['url']}" if s.get("url") else ""))
+        return "\n".join(lines)
 
     _REMEMBER = re.compile(r"^\s*(?:🧠\s*)?记住[：:]\s*(.+?)\s*$", re.M)
 

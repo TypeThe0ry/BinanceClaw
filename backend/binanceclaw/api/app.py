@@ -552,7 +552,8 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
             plans = {a.id: {**a.model_dump(), "limit": limits.get(a.id)}
                      for a in svc.db.all(select(Approval).where(Approval.id.in_(ids)))}
         return {"cut": cut, "plans": plans,
-                "messages": [{**m.model_dump(), "approvals": m.approvals if isinstance(m.approvals, list) else []}
+                "messages": [{**m.model_dump(), "approvals": m.approvals if isinstance(m.approvals, list) else [],
+                              "sources": m.sources if isinstance(m.sources, list) else []}
                              for m in reversed(rows)]}
 
     @app.post("/api/chat", dependencies=auth)

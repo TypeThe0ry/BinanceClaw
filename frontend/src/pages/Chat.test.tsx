@@ -87,4 +87,17 @@ describe("Chat trade plans", () => {
     expect(within(card).getByText("已撤回")).toBeInTheDocument();
     expect(within(card).queryByRole("button", { name: "批准挂单" })).toBeNull();
   });
+
+  it("lists each reply's sources with credibility", async () => {
+    mockApi({ "GET /chat?limit=200": { cut: 0, plans: {}, messages: [
+      { id: 1, ts: now() - 60, channel: "telegram", role: "assistant", text: "BTC 涨了[1]，ETF 流入[2]。", sources: [
+        { n: 1, name: "币安行情", credibility: 100 },
+        { n: 2, name: "Reuters", title: "ETF 资金流入", url: "https://reuters.com/x", time: "2026-11-04", credibility: 45 }] }] } });
+    renderPage(<Chat />);
+    const rows = await screen.findAllByTestId("chat-source");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("可信度 100%")).toHaveClass("text-up");
+    expect(within(rows[1]).getByRole("link", { name: "Reuters" })).toHaveAttribute("href", "https://reuters.com/x");
+    expect(within(rows[1]).getByText("可信度 45%")).toHaveClass("text-down");
+  });
 });

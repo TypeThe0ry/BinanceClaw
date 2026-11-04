@@ -41,7 +41,7 @@ class WebProvider(FakeProvider):
 
 DIGEST = {"overview": "监管消息偏多", "items": [
     {"title": "SEC 批准新的现货 ETF", "source": "Reuters", "url": "https://reuters.com/x", "time": "2026-10-30 08:00",
-     "assets": ["btc", "MARKET"], "impact": "bullish", "summary": "资金流入预期"},
+     "assets": ["btc", "MARKET"], "impact": "bullish", "credibility": 88, "summary": "资金流入预期"},
     {"title": "某交易所被盗", "source": "X", "url": "javascript:alert(1)", "assets": ["ETH"], "impact": "panic", "summary": ""},
     {"title": ""}]}
 
@@ -52,6 +52,7 @@ def test_parse_digest_cleans_and_clips():
     assert len(d["items"]) == 2                                   # the empty title is dropped
     assert d["items"][0]["assets"] == ["BTC", "MARKET"]
     assert d["items"][1]["url"] == "" and d["items"][1]["impact"] == "neutral"
+    assert d["items"][0]["credibility"] == 88 and d["items"][1]["credibility"] is None
     assert len(nws.parse_digest(json.dumps(DIGEST), max_items=1)["items"]) == 1
 
 

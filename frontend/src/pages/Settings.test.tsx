@@ -220,10 +220,11 @@ describe("Settings page (设置)", () => {
     await userEvent.click(within(sec).getByRole("button", { name: "新闻源" }));
     expect(within(sec).getByLabelText("新闻源")).toBeInTheDocument();
     await userEvent.type(within(sec).getByLabelText("关注话题"), "美联储，ETF");
+    await userEvent.click(within(sec).getByLabelText("对话联网"));
     await userEvent.click(within(sec).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(api.find("PUT", "/settings")).toHaveLength(1));
     expect(api.find("PUT", "/settings")[0].body).toEqual({ news: { enabled: true, source: "feeds", refresh_minutes: 60, lookback_hours: 24,
-      max_items: 8, topics: ["美联储", "ETF"], feeds: ["https://a.example/rss"] } });
+      max_items: 8, topics: ["美联储", "ETF"], feeds: ["https://a.example/rss"], chat: false } });
     await userEvent.click(within(sec).getByRole("button", { name: "立即搜索" }));
     await waitFor(() => expect(api.find("POST", "/news/refresh")).toHaveLength(1));
   });

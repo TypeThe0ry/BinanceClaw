@@ -238,6 +238,7 @@ class ChatMessage(SQLModel, table=True):
     text: str
     provider: str = ""
     approvals: list = Field(default_factory=list, sa_column=Column(JSON))   # trade plans proposed in this reply
+    sources: list = Field(default_factory=list, sa_column=Column(JSON))     # 来源：{n,name,title,url,time,credibility}
 
 
 class LimitOrder(SQLModel, table=True):
