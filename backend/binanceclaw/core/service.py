@@ -529,6 +529,29 @@ class Service:
             return []
         return sorted(bases, key=lambda b: (-((tickers.get(f"{b}{quote}") or {}).get("quote_volume") or 0), b))
 
+    def chat_account(self) -> dict:
+        """What the chat model needs to know about where trades go, so it never asks the owner."""
+        s = self.settings
+        return {"exchange": "币安现货（就是主人接入的这个账户，BinanceClaw 直接在这里下单）",
+                "mode": "模拟盘" if s.mode == "paper" else "实盘", "quote": s.quote,
+                "allocation_mode": "AI 自主分配" if s.allocation.mode == "ai" else "手动分配",
+                "universe": s.allocation.universe if s.allocation.mode == "ai" else "targets"}
+
+    def chat_stock_tokens(self, tradable) -> dict[str, dict]:
+        """Every tokenized stock with its live price, and whether a plan for it can go through now.
+        ``ticker`` is the US symbol it tracks (AVGOB -> AVGO), so the model can map the owner's words."""
+        s = self.settings
+        try:
+            tickers = self._tickers_24h()
+        except ExchangeError:
+            tickers = {}
+        ok = set(tradable)
+        out = {}
+        for b in self.stock_tokens(s.quote):
+            t = tickers.get(f"{b}{s.quote}") or {}
+            out[b] = {"ticker": b[:-1], "price": t.get("price"), "change_24h": t.get("change_pct"), "tradable": b in ok}
+        return out
+
     def stock_scan(self, s, exclude) -> dict[str, dict]:
         """24 h overview of every tokenized stock the AI is not working with yet. They trade far less
         than coins, so the volume-ranked market_scan would never show them."""
@@ -1779,8 +1802,9 @@ class Service:
                                                   "category_weights", "targets", "today", "btc_change_7d", "pending_approvals")}
             slim["recent_decisions"] = self.recent_decisions(3)
             slim["memory"] = self.settings.memory
+            slim["account"] = self.chat_account()
             slim["tradable"] = self.settings.tradable_tokens()
-            slim["stock_tokens"] = self.stock_tokens()
+            slim["stock_tokens"] = self.chat_stock_tokens(slim["tradable"])
             slim["pending_plans"] = [
                 {"id": a.id, "side": a.side, "symbol": a.symbol, "usd": round(a.quote_usd, 2),
                  "type": (a.payload or {}).get("order", "market"), "price": (a.payload or {}).get("price"),
