@@ -51,3 +51,19 @@ def test_settings_candidates_include_discovered_stocks(client):  # noqa: F811
     client.post("/api/auth/login", json={"password": "correct-horse-1"})
     cands = client.get("/api/settings").json()["candidates"]
     assert {"AVGOB", "SMHB", "QQQB", "NVDAB", "BTC"} <= set(cands)
+
+
+def test_chat_knows_stock_tokens_and_account(svc):
+    import json
+
+    from .conftest import use
+    _list_avgob(svc)
+    p = use(svc, "好的")
+    svc.chat("帮我买点 AVGO", "telegram")
+    system = p.calls[-1][0]
+    data = json.loads(system.split("<data>\n", 1)[1].rsplit("\n</data>", 1)[0])
+    assert data["account"]["exchange"].startswith("币安现货")
+    st = data["stock_tokens"]
+    assert st["AVGOB"] == {"ticker": "AVGO", "price": 325.0, "change_24h": 0.01, "tradable": False}
+    assert st["QQQB"]["tradable"] is True                     # in the default targets
+    assert "不要问主人用哪个渠道" in system and "子账户" in system
