@@ -15,7 +15,7 @@ from sqlmodel import desc, select
 
 from ..config import NOTIFY_TYPES, STYLES, VIEW_LABELS, ConfirmationRequired
 from ..core.autopilot import TRIGGER_LABELS
-from ..db import AiQuestion, Approval, Cycle, Order
+from ..db import AiQuestion, Approval, Cycle, LimitOrder, Order
 from . import charts, policy
 
 log = logging.getLogger("binanceclaw.telegram")
@@ -26,8 +26,9 @@ HELP = """BinanceClaw 指令
 /run     立即跑一轮 AI 决策
 /pause   暂停自动执行
 /resume  恢复自动执行
-/kill    紧急停止（暂停并作废所有待审批）
+/kill    紧急停止（暂停、作废所有待审批并撤掉挂单）
 /pending 待审批和 AI 提问
+/orders  挂单中的单子，可撤单
 /log     最近 5 轮决策
 /report  立即生成日报
 /chart   K 线图，例：/chart ETH
@@ -513,6 +514,14 @@ class TelegramBot:
                 self._send_approval(a.id)
             for q in qs:
                 self._send_question(q.id)
+        elif cmd == "/orders":
+            los = svc.open_limit_orders()
+            if not los:
+                self.send("没有挂单中的单子")
+            for lo in los:
+                left = max(int((lo.expires - time.time()) / 3600), 0)
+                self.send(f"📌 挂单中 [{self.label()}]\n{svc.limit_title(lo)}\n还有约 {left} 小时到期",
+                          [[("↩️ 撤单", f"lo_cx:{lo.id}")]])
         elif cmd == "/log":
             rows = svc.db.all(select(Cycle).order_by(desc(Cycle.ts)).limit(5))
             out = []
@@ -616,6 +625,13 @@ class TelegramBot:
         except Exception:
             pass
         self.send(self.svc.chat(text, "telegram"))
+
+    def cancel_limit(self, lid: str, mid: int | None):
+        lo = self.svc.db.get(LimitOrder, lid)
+        if lo and self.svc.cancel_limit_order(lid, "telegram"):
+            self.edit(mid, f"↩️ 已撤单：{self.svc.limit_title(lo)}")
+        else:
+            self.send("⚠️ 这笔挂单已成交、过期或撤销")
 
     def _intervene(self, cmd: str, args: list[str]):
         svc = self.svc
@@ -864,6 +880,9 @@ class TelegramBot:
                             ok, msg = self.svc.answer_question(qid, int(idx) if idx.isdigit() else -1, "telegram")
                             if not ok:
                                 self.send(f"⚠️ {msg}")
+                            continue
+                        if kind == "lo_cx":
+                            self.cancel_limit(aid, cq["message"]["message_id"])
                             continue
                         if kind in ("rerun", "rerun_drop"):
                             if kind == "rerun":
