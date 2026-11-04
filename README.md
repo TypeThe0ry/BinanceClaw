@@ -195,7 +195,7 @@ flowchart TD
 
 - **网页仪表盘**：总览、账户估值曲线（1日 / 7日 / 30天 / 90天 / 一年）、AI 决策流、审批、K 线与成交、对话、日报、设置；深色 / 浅色主题跟随系统，桌面和手机都能用，SSE 实时刷新。
 - **盈亏与提醒**：平均成本法计算每个币的盈亏，并与「全买 BTC」对比；价格提醒可手动设，也可由 AI 设置。
-- **Telegram**：审批按钮、成交与暂停通知、每日日报、定时汇总、免打扰，`/status /run /pause /resume /kill`，直接发文字和模型对话（只读），见 [Telegram](docs/telegram.md)。
+- **Telegram**：审批按钮、成交与暂停通知、每日日报、定时汇总、免打扰，`/status /run /pause /resume /kill`，直接发文字进入同一段对话（AI 可提交易方案，批准后执行），见 [Telegram](docs/telegram.md)。
 
 </details>
 

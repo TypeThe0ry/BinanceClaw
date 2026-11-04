@@ -1,3 +1,5 @@
+export const NETWORK_ERROR = "网络连接失败，请重试";
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -24,12 +26,18 @@ export function setRerunOfferer(fn: RerunOfferer | null) {
 
 export async function api<T = unknown>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
-  const res = await fetch(`/api${path}`, {
-    credentials: "same-origin",
-    ...rest,
-    headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...(rest.headers ?? {}) },
-    body: json !== undefined ? JSON.stringify(json) : rest.body,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      credentials: "same-origin",
+      ...rest,
+      headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...(rest.headers ?? {}) },
+      body: json !== undefined ? JSON.stringify(json) : rest.body,
+    });
+  } catch {
+    // the browser could not reach the server (dropped connection, network switch, server restarting)
+    throw new ApiError(0, NETWORK_ERROR);
+  }
   if (res.status === 401 && path !== "/auth/login") {
     window.dispatchEvent(new Event("bclaw:unauthorized"));
   }

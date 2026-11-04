@@ -51,6 +51,20 @@ describe("Chat trade plans", () => {
     await waitFor(() => expect(api.find("POST", "/approvals/a1/reject")).toHaveLength(1));
   });
 
+  it("retries a reject once when the connection drops", async () => {
+    let n = 0;
+    const api = mockApi({
+      "GET /chat?limit=200": history(plan({ payload: { source: "chat", order: "market" } })),
+      "POST /approvals/a1/reject": () => { if (n++ === 0) throw new TypeError("Failed to fetch"); return { ok: true, message: "已拒绝" }; },
+    });
+    renderPage(<Chat />);
+    const card = await screen.findByTestId("plan");
+    await userEvent.click(within(card).getByRole("button", { name: "拒绝" }));
+    await waitFor(() => expect(api.find("POST", "/approvals/a1/reject")).toHaveLength(2));
+    expect(await screen.findByRole("status")).toHaveTextContent("已拒绝");
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
+  });
+
   it("cancels an open limit order", async () => {
     const lo = { id: "l1", created: now(), expires: now() + 3600, approval_id: "a1", symbol: "ETHUSDT", side: "BUY" as const,
       quote_usd: 60, price: 2400, status: "open" as const, result: "", order_id: "", done_at: null };
