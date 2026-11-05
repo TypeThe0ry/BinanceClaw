@@ -2,6 +2,7 @@ import { CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "l
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { post, type FPosition, type FuturesResp, type Kline } from "../api";
+import SymbolSearch from "../components/SymbolSearch";
 import { Empty, Page, SectionHead, Seg, Side, Skeleton, Tabs } from "../components/ui";
 import { candleColors, chartTheme, useColors } from "../theme";
 import { clock, fmtPrice, token, usd, useApi, useToast } from "../lib";
@@ -102,13 +103,14 @@ export default function Futures() {
       <section className="min-w-0">
         <div className="mb-2 flex flex-wrap items-center gap-3">
           <div className="no-scrollbar flex gap-1 overflow-x-auto">
-            {Array.from(new Set([...data.positions.map((p) => p.symbol), ...syms.map((t) => `${t}USDT`)])).map((s) => (
+            {Array.from(new Set([...data.positions.map((p) => p.symbol), ...syms.map((t) => `${t}USDT`), symbol])).map((s) => (
               <button key={s} onClick={() => setSel(s)}
                 className={`shrink-0 rounded-md px-2.5 py-1 text-[14px] font-semibold ${s === symbol ? "bg-hover text-fg" : "text-fg-2 hover:text-fg"}`}>
                 {token(s)}<span className="font-normal text-fg-3">USDT 永续</span>
               </button>
             ))}
           </div>
+          <SymbolSearch endpoint="/futures/markets" placeholder="搜索 USDT 永续" onPick={setSel} />
           <div className="ml-auto"><Seg id="fiv" value={iv} onChange={setIv}
             items={[{ k: "15m" as const, label: "15分" }, { k: "1h" as const, label: "1时" }, { k: "4h" as const, label: "4时" }, { k: "1d" as const, label: "1日" }]} /></div>
         </div>

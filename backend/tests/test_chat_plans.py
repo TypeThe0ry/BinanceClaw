@@ -222,3 +222,14 @@ def test_telegram_lists_and_cancels_open_limit_orders(svc):
     assert svc.db.get(LimitOrder, lo.id).status == "cancelled" and sent[-1][0].startswith("↩️ 已撤单")
     bot.cancel_limit(lo.id, 1)
     assert sent[-1][0].startswith("⚠️")
+
+
+def test_ai_mode_plans_for_any_binance_asset_without_adding_it(svc):
+    svc.update_settings({"allocation": {"mode": "ai", "enabled": ["BTC"]}})
+    assert "SOL" not in svc.settings.tradable_tokens()
+    assert svc.chat_account()["scope"] == "all"
+    use(svc, say(side="BUY", symbol="SOL", usd=50, type="limit", price=140))
+    reply = svc.chat("SOL 挂个单")
+    assert "📝 方案：买入 SOL $50.00" in reply                      # no "加入可交易资产" first
+    a = svc.db.pending_approvals()[0]
+    assert a.symbol == "SOLUSDT" and "SOL" in svc.settings.tradable_tokens()

@@ -2,9 +2,10 @@ import { CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "l
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, post, type Approval, type Kline, type LimitOrder, type Order, type Overview, type PriceAlert } from "../api";
+import SymbolSearch from "../components/SymbolSearch";
 import { Change, Empty, FlashNum, Page, Seg, Side, Tabs } from "../components/ui";
 import { alpha, candleColors, chartTheme, useColors } from "../theme";
-import { clock, fmtPrice, token, usd, useApi, useTicker, useToast } from "../lib";
+import { clock, fmtPrice, token, usd, useApi, useTicker, useToast, type Tick } from "../lib";
 
 type Iv = "15m" | "1h" | "4h" | "1d";
 const IV: { k: Iv; label: string; limit: number }[] = [
@@ -79,7 +80,7 @@ export default function Trade() {
   const approvals = useApi<Approval[]>("/approvals?limit=200", { kinds: ["approval", "approval_created"] });
   const open = useApi<LimitOrder[]>("/limit-orders?status=open", { kinds: ["limit_order", "approval"], poll: 30000 });
   const alerts = useApi<PriceAlert[]>("/alerts", { kinds: ["alerts", "price_alert", "cycle"] });
-  const tick = useTicker();
+  const live = useTicker();
   const toast = useToast();
   const [aop, setAop] = useState<"below" | "above">("below");
   const [apx, setApx] = useState("");
@@ -108,7 +109,11 @@ export default function Trade() {
       approvals.reload();
     }
   }
+  // an asset outside the AI's round (searched): its own ticker, polled while it is open
+  const extra = useApi<Record<string, Tick>>(sym in live ? null : `/ticker?extra=${sym}`, { poll: 4000 });
+  const tick = { ...(extra.data ?? {}), ...live };
   const t = tick[sym];
+  const pairs = (symbols.length ? symbols : ["BTCUSDT"]).includes(sym) ? (symbols.length ? symbols : ["BTCUSDT"]) : [sym, ...symbols];
   const mine = (orders.data ?? []).filter((o) => o.symbol === sym);
 
   return (
@@ -116,13 +121,14 @@ export default function Trade() {
       {/* pair header */}
       <section className="flex min-w-0 flex-wrap items-center gap-x-8 gap-y-3 border-b border-line pb-4">
         <div className="no-scrollbar -mx-1 flex w-full gap-1 overflow-x-auto sm:mx-0 sm:w-auto">
-          {(symbols.length ? symbols : ["BTCUSDT"]).map((s) => (
+          {pairs.map((s) => (
             <button key={s} onClick={() => setParams({ s })}
               className={`shrink-0 rounded-md px-2.5 py-1 text-[14px] font-semibold transition-colors ${s === sym ? "bg-hover text-fg" : "text-fg-2 hover:text-fg"}`}>
               {token(s)}<span className="font-normal text-fg-3">/USDT</span>
             </button>
           ))}
         </div>
+        <SymbolSearch endpoint="/markets" placeholder="搜索币安现货" onPick={(s) => setParams({ s })} />
         <div className="flex items-baseline gap-3">
           <span className={`text-[24px] font-semibold ${t && t.change_pct < 0 ? "text-down" : "text-up"}`}><FlashNum value={t?.price}>{fmtPrice(t?.price)}</FlashNum></span>
           <Change v={t?.change_pct} />

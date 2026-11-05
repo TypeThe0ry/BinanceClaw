@@ -367,7 +367,19 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
     ticker_cache: dict = {"ts": 0.0, "data": {}}
 
     @app.get("/api/ticker", dependencies=auth)
-    def ticker():
+    def ticker(extra: str = ""):
+        # ``extra``: one more spot pair the page is looking at (an asset outside the AI's round)
+        sym = extra.upper()[:20]
+        if sym and sym not in svc.settings.symbols() and svc.is_spot_pair(sym):
+            key = f"x:{sym}"
+            hit = ticker_cache.get(key)
+            if not hit or time.time() - hit[0] > 3:
+                try:
+                    hit = (time.time(), svc.client.ticker_24h([sym]))
+                    ticker_cache[key] = hit
+                except ExchangeError:
+                    hit = hit or (0.0, {})
+            return {**ticker(), **hit[1]}
         if time.time() - ticker_cache["ts"] > 3:
             try:
                 ticker_cache["data"] = svc.client.ticker_24h(svc.settings.symbols())
@@ -533,8 +545,8 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/klines", dependencies=auth)
     def klines(symbol: str, interval: str = "1d", limit: int = 120):
-        if symbol not in svc.settings.symbols():
-            raise HTTPException(400, "symbol not in whitelist")
+        if symbol not in svc.settings.symbols() and not svc.is_spot_pair(symbol):
+            raise HTTPException(400, "unknown spot pair")
         if interval not in ("15m", "1h", "4h", "1d", "1w"):
             raise HTTPException(400, "bad interval")
         try:

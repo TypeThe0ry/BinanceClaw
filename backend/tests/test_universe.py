@@ -19,16 +19,34 @@ def test_ai_mode_defaults_to_every_spot_asset(svc):
     svc.update_settings({"allocation": {"mode": "ai"}})
     # the round starts with the owner's picks and target assets; nothing else is fetched yet
     assert set(svc.settings.tradable_tokens()) == {"BTC", "ETH", "QQQB", "NVDAB"}
-    use(svc, plan(("BUY", "SOLUSDT", 150), focus=["sol", "USDC", "NOTACOIN"]), plan(("BUY", "SOLUSDT", 150)))
+    use(svc, plan(focus=["sol", "USDC", "NOTACOIN"]), plan(("BUY", "SOLUSDT", 150)))
     c = svc.run_cycle("manual")
     assert c.context["allocation"]["scope"].startswith("主人允许交易币安全部现货资产")
     assert "SOL" in c.context["allocation"]["market_scan"] and "BTC" not in c.context["allocation"]["market_scan"]
-    assert c.risk[0]["decision"] == "reject"                       # not chosen yet
     assert svc.ai_focus() == ["SOL"]                               # stables and unknown pairs dropped
     assert "SOL" in svc.settings.tradable_tokens()
     c2 = svc.run_cycle("manual")
     assert c2.risk[0]["decision"] == "execute"
     assert c2.context["allocation"]["focus"] == ["SOL"]
+
+
+def test_any_binance_asset_can_be_bought_without_adding_it_first(svc):
+    svc.update_settings({"allocation": {"mode": "ai", "enabled": ["BTC"]}})
+    assert "SOL" not in svc.settings.tradable_tokens()
+    use(svc, plan(("BUY", "SOLUSDT", 150), ("BUY", "TONUSDT", 150)))
+    c = svc.run_cycle("manual")
+    assert c.risk[0]["decision"] == "execute"                      # joined the round right away
+    assert c.risk[1]["decision"] == "reject"                       # suspended pairs still are not traded
+    assert "SOL" in svc.ai_focus()
+    assert svc.allows(svc.settings, "SOL") and not svc.allows(svc.settings, "NOTACOIN")
+
+
+def test_blacklist_and_whitelist_still_gate_direct_buys(svc):
+    svc.update_settings({"allocation": {"mode": "ai", "universe": "blacklist", "blocked": ["SOL"]}})
+    use(svc, plan(("BUY", "SOLUSDT", 150)))
+    assert svc.run_cycle("manual").risk[0]["decision"] == "reject"
+    svc.update_settings({"allocation": {"universe": "whitelist", "enabled": ["BTC"]}}, guard=False)
+    assert svc.admit(["ETH"]) == [] and not svc.allows(svc.settings, "ETH")
 
 
 def test_holdings_and_owner_picks_always_in_the_round(svc, monkeypatch):
