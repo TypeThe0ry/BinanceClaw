@@ -455,8 +455,11 @@ class TelegramBot:
     # ------------------------------------------------------------------ commands
     def status_text(self) -> str:
         ov = self.svc.overview()
-        lines = [f"[{self.label()}] 总资产 ${ov.get('total', 0):,.2f}",
+        total = ov.get("account_total", ov.get("total"))
+        lines = [f"[{self.label()}] 总资产 " + (f"${total:,.2f}" if total is not None else f"读取失败（{ov.get('error') or '未知错误'}）"),
                  f"模型：{ov['provider']['name']} {ov['provider']['model'] or ''}".strip()]
+        if ov.get("total") is not None and total is not None and abs(total - ov["total"]) > 0.01:
+            lines.insert(1, f"其中 AI 管理 ${ov['total']:,.2f}")
         for cat, w in (ov.get("category_weights") or {}).items():
             spec = ov["targets"].get(cat, {})
             tv = [v for v in spec.get("tokens", {}).values() if v is not None]
