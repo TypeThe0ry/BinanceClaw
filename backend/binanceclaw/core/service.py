@@ -2157,18 +2157,80 @@ class Service:
         self.events.emit("allocation", {"id": pid, "status": p["status"]})
         return p
 
+    REPORT_RETRIES = 3
+
+    def report_overview(self) -> dict:
+        """Overview for the daily report: a transient exchange error is retried with fresh data, and if
+        market data still fails the account is valued from the all-prices ticker alone, so a glitch at
+        report time never shows up as 总资产 0."""
+        ov = self.overview()
+        for i in range(self.REPORT_RETRIES - 1):
+            if not ov.get("error"):
+                return ov
+            time.sleep(2 * (i + 1))
+            self._mkt_cache = None
+            ov = self.overview()
+        if ov.get("error") and ov.get("account_total") is None:
+            try:
+                acct = self.account_portfolio({})
+                ov.update(account_balances=acct.balances, account_values=acct.values(), account_total=acct.total())
+            except ExchangeError as e:
+                ov["error"] = f"{ov['error']}；{e}"
+        return ov
+
+    def report_status_lines(self, ov: dict) -> list[str]:
+        """Total, allocation vs targets and distance to every pause condition, as report lines."""
+        s = self.settings
+        usd = lambda v: f"${v:,.2f}"  # noqa: E731
+        total = ov.get("account_total", ov.get("total"))
+        lines = [("总资产 " + (usd(total) if total is not None else "读取失败"))
+                 + ("  ⏸ 已暂停" if ov["paused"] else "")]
+        if ov.get("total") is not None and total is not None and abs(total - ov["total"]) > 0.01:
+            lines.append(f"其中 AI 管理 {usd(ov['total'])}")
+        if ov.get("error"):
+            lines.append(f"⚠️ 行情或余额读取失败：{ov['error']}")
+        values = ov.get("account_values") or ov.get("values") or {}
+        if values:
+            top = sorted(values.items(), key=lambda kv: -kv[1])[:8]
+            lines.append("持仓：" + "，".join(f"{a} {usd(v)}" for a, v in top))
+        weights = ov.get("category_weights") or {}
+        if s.allocation.mode == "ai":
+            stable = weights.get("STABLE")
+            lines.append("配置：AI 自主分配，稳定币下限 " + f"{s.limits.stable_floor:.0%}"
+                         + (f"，当前 {stable:.1%}" if stable is not None else ""))
+            for tok, w in sorted(weights.items(), key=lambda kv: -kv[1]):
+                if tok != "STABLE" and w >= 0.005:
+                    lines.append(f"· {tok} {w:.1%}")
+        elif not ov["targets"]:
+            lines.append("配置：手动分配，未设置目标")
+        else:
+            lines.append("配置：手动分配" + (f"，偏离 {s.allocation.rebalance_drift:.0%} 自动再平衡"
+                                           if s.allocation.auto_rebalance else ""))
+            for cat, spec in ov["targets"].items():
+                tv = [v for v in spec.get("tokens", {}).values() if v is not None]
+                lo, hi = spec.get("band", [0, 0])
+                cur = f"{weights[cat]:.1%}" if cat in weights else "—"
+                lines.append(f"· {cat} 当前 {cur}（目标 {sum(tv):.0%}，区间 {lo:.0%}–{hi:.0%}）")
+        lim = s.limits
+        btc = ov.get("btc_change_7d")
+        lines.append("暂停条件：")
+        lines.append(f"· BTC 7 日 {btc:+.1%}，跌到 -{lim.btc_7d_drop_pause:.0%} 暂停" if btc is not None
+                     else f"· BTC 7 日 —，跌到 -{lim.btc_7d_drop_pause:.0%} 暂停")
+        lines.append(f"· 连续异常 {self.db.kv_get('anomaly_count', 0)}/{lim.anomaly_failures_to_pause} 次暂停"
+                     + (f"（当前：{ov['anomaly']}）" if ov.get("anomaly") else ""))
+        t = ov["today"]
+        lines.append(f"· 今日买入 {t['orders']}/{t['max_orders']} 笔，{usd(t['notional'])}/{usd(t['max_notional'])}")
+        if ov["paused"]:
+            lines.append(f"· 当前已暂停：{ov['pause_reason']}")
+        return lines
+
     def daily_report(self) -> Report:
         s = self.settings
-        ov = self.overview()
+        ov = self.report_overview()
         since = time.time() - 86400
         orders = self.db.all(select(Order).where(Order.ts >= since).order_by(Order.ts))
         lines = [f"📊 BinanceClaw 日报 {self.today()}（{'模拟盘' if s.mode == 'paper' else '实盘'}）",
-                 f"总资产 ${ov.get('total', 0):,.2f}" + ("  ⏸ 已暂停" if ov["paused"] else "")]
-        for cat, w in (ov.get("category_weights") or {}).items():
-            band = ov["targets"].get(cat, {}).get("band", [0, 0])
-            lines.append(f"· {cat} {w:.1%}（区间 {band[0]:.0%}–{band[1]:.0%}）")
-        if ov.get("btc_change_7d") is not None:
-            lines.append(f"BTC 7 日 {ov['btc_change_7d']:+.1%}")
+                 *self.report_status_lines(ov)]
         if s.futures.enabled or self.fbroker.open_rows():
             try:
                 for p in self.fbroker.snapshot():
@@ -2176,14 +2238,15 @@ class Service:
                                  f"保证金 ${p['margin']:,.0f} 浮盈 ${p['upnl']:+,.2f} 止损 {p['stop']:g}")
             except ExchangeError:
                 pass
-        lines.append(f"过去 24 小时成交 {len([o for o in orders if o.status in ('filled', 'submitted')])} 笔：")
+        lines.append(f"过去 24 小时成交 {len([o for o in orders if o.status in ('filled', 'submitted')])} 笔" + ("：" if orders else ""))
         for o in orders:
             lines.append(f"  · {dt.datetime.fromtimestamp(o.ts, self.tz()):%m-%d %H:%M} {o.side} {o.symbol} ${o.quote_usd:,.2f} {o.status}")
         body = "\n".join(lines)
         try:
             comp = self.complete(CHAT_SYSTEM, [{"role": "user", "content":
-                "根据以下数据写今日点评（不超过 300 字）：当前配置偏离、过去 24 小时决策是否合理、"
-                "距离暂停条件多远、需要我关注的事（每条写理由和判断错了的信号）。\n<data>\n" + body + "\n</data>"}], task="report")
+                "根据以下数据写今日点评（不超过 300 字）：当前配置偏离（对照「配置」里的目标和区间）、过去 24 小时决策是否合理、"
+                "距离暂停条件多远（对照「暂停条件」）、需要我关注的事（每条写理由和判断错了的信号）。"
+                "总资产是整个账户的估值，「其中 AI 管理」是 AI 可动用的部分；写着读取失败时是数据问题，不是资产为 0。\n<data>\n" + body + "\n</data>"}], task="report")
             body += "\n\n— AI 点评 —\n" + comp.text.strip()
         except ProviderError as e:
             body += f"\n\n（AI 点评失败：{e}）"
