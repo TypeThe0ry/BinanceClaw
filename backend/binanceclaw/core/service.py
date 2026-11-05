@@ -281,6 +281,38 @@ class Service:
         self.db.kv_set("ai_focus", out)
         return out
 
+    def open_range(self, s) -> bool:
+        """AI 自主分配 over all assets / a blacklist: every Binance spot asset may be traded."""
+        return s.allocation.mode == "ai" and s.allocation.universe != "whitelist"
+
+    def allows(self, s, token: str) -> bool:
+        """Whether a plan for ``token`` can go through: in this round's universe, or (AI 自主分配 over
+        all assets / a blacklist) any Binance spot asset with a TRADING <TOKEN><quote> pair."""
+        if token in s.tradable_tokens():
+            return True
+        if not self.open_range(s) or token in set(s.stables) | {s.quote} | set(s.allocation.blocked):
+            return False
+        try:
+            return any(m["base"] == token and m["quote"] == s.quote and m.get("status", "TRADING") == "TRADING"
+                       for m in self._spot_markets())
+        except ExchangeError:
+            return False
+
+    def admit(self, tokens) -> list[str]:
+        """Bring allowed assets that are outside this round's universe into it (front of the AI's
+        focus), so a plan for any Binance asset can be evaluated and traded right away instead of
+        waiting a round. Returns the assets added."""
+        s = self.settings
+        if not self.open_range(s):
+            return []
+        have = set(s.tradable_tokens())
+        new = [t for t in dict.fromkeys(tokens) if t not in have and self.allows(s, t)]
+        if not new:
+            return []
+        self.set_focus([*new, *(t for t in self.ai_focus() if t not in new)])
+        self._mkt_cache = None
+        return new
+
     def market_scan(self, s, exclude, n: int = 40) -> dict[str, dict]:
         """A cheap overview (24 h stats only, no klines) of the most-traded spot coins the AI is not
         working with yet, so it can choose what to add to its focus. Tokenized stocks: stock_scan."""
@@ -536,7 +568,8 @@ class Service:
         return {"exchange": "币安现货（就是主人接入的这个账户，BinanceClaw 直接在这里下单）",
                 "mode": "模拟盘" if s.mode == "paper" else "实盘", "quote": s.quote,
                 "allocation_mode": "AI 自主分配" if s.allocation.mode == "ai" else "手动分配",
-                "universe": s.allocation.universe if s.allocation.mode == "ai" else "targets"}
+                "universe": s.allocation.universe if s.allocation.mode == "ai" else "targets",
+                "scope": "all" if self.open_range(s) else "listed"}
 
     def chat_stock_tokens(self, tradable) -> dict[str, dict]:
         """Every tokenized stock with its live price, and whether a plan for it can go through now.
@@ -550,7 +583,8 @@ class Service:
         out = {}
         for b in self.stock_tokens(s.quote):
             t = tickers.get(f"{b}{s.quote}") or {}
-            out[b] = {"ticker": b[:-1], "price": t.get("price"), "change_24h": t.get("change_pct"), "tradable": b in ok}
+            out[b] = {"ticker": b[:-1], "price": t.get("price"), "change_24h": t.get("change_pct"),
+                      "tradable": b in ok or self.allows(s, b)}
         return out
 
     def stock_scan(self, s, exclude) -> dict[str, dict]:
@@ -586,6 +620,12 @@ class Service:
                 counts[t] = counts.get(t, 0) + 1
         return [{"tag": t, "label": cats.label(t), "count": n}
                 for t, n in sorted(counts.items(), key=lambda kv: (cats.rank(kv[0]), -kv[1], kv[0])) if t != cats.STABLE]
+
+    def is_spot_pair(self, symbol: str) -> bool:
+        try:
+            return any(m["symbol"] == symbol for m in self._spot_markets())
+        except ExchangeError:
+            return False
 
     def _spot_markets(self) -> list[dict]:
         mk = getattr(self, "_markets", None)
@@ -944,6 +984,12 @@ class Service:
             self.events.emit("alert", {"text": f"模型输出不合规，本轮不交易：{e}"})
             return finish(status="error", error=f"输出校验失败：{e}")
 
+        if self.admit([normalize_symbol(a.symbol, s.quote)[: -len(s.quote)] for a in plan.actions]):
+            try:
+                prices, market, btc_change, anomaly = self.market_snapshot(max_age=0)
+                pf = self.portfolio(prices)
+            except ExchangeError as e:
+                log.warning("market data for newly added assets unavailable: %s", e)
         actions, superseded = self._with_rebalance([a.model_dump() for a in plan.actions], pf)
         verdicts = evaluate(actions, pf, st)
         risk = []
@@ -1449,8 +1495,8 @@ class Service:
             raise ValueError("op 只能是 below 或 above")
         if not (price > 0):
             raise ValueError("价格必须为正数")
-        if sym[: -len(s.quote)] not in set(s.tradable_tokens()) | {"BTC"}:
-            raise ValueError(f"{sym} 不在可交易资产中")
+        if sym[: -len(s.quote)] not in set(s.tradable_tokens()) | {"BTC"} and not self.is_spot_pair(sym):
+            raise ValueError(f"{sym} 不是币安现货交易对")
         if len(self.db.all(select(PriceAlert).where(PriceAlert.status == "active"))) >= 50:
             raise ValueError("提醒太多了（最多 50 个），先删掉一些")
         a = self.db.add(PriceAlert(symbol=sym, op=op, price=float(price), note=note[:200], source=source))
@@ -1963,6 +2009,8 @@ class Service:
             raise ValueError("方向只能是 BUY 或 SELL")
         symbol = normalize_symbol(str(d.get("symbol", "")), s.quote)
         token = symbol[: -len(s.quote)]
+        if self.admit([token]):
+            s = self.settings
         usd = float(d.get("usd") or d.get("quote_usd") or 0)
         if not usd > 0:
             raise ValueError("金额必须为正数")

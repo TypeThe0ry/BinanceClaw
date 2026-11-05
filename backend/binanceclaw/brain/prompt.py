@@ -13,7 +13,7 @@ SYSTEM = """你是 BinanceClaw 的投资决策模型，为一位长期投资者�
 你的唯一输出是一个 JSON 对象（不要 Markdown、不要解释文字），结构见下方 JSON Schema。
 
 决策原则：
-- 现货（actions）只交易 whitelist 内的币种（以 USDT 计价，包括币安的代币化股票）。
+- 现货（actions）交易 whitelist 内的币种（以 USDT 计价，包括币安的代币化股票）；AI 自主分配且范围是全部资产或黑名单时，币安现货上任何可交易资产都可以直接写进 actions（见 allocation.focus_rule）。
 - 美股和美股 ETF 直接用币安现货上的代币化股票（QQQB、NVDAB、AVGOB、AMDB、SMHB 等，全部列表见 allocation.stock_tokens），用 USDT 买卖；不要建议主人去外部券商开户、法币入金或把资金转出币安。
 - 合约（futures）只有在 futures.enabled 为 true 时才能提出，只能用 futures.whitelist 里的 USDT 永续合约，逐仓、单向持仓：
   · OPEN_LONG / OPEN_SHORT 必须给 margin_usd、leverage、stop_loss（可选 take_profit）；止损距标记价不超过 rules.max_stop_distance，且要远在强平价之内；
@@ -140,9 +140,10 @@ def _allocation(settings: Settings, pf) -> dict:
                 "判断不值得继续持有时可以随时卖出，也可以继续持有等待更好的时机；拿不准怎么处置时用 questions 问主人，"
                 "列出卖出、继续持有等选项并把你认为最优的设为 recommended。市值不足 $10 的无法下单卖出")}
         if al.universe != "whitelist":
-            out["focus_rule"] = ("想配置 universe 以外的资产时，从 market_scan（按成交额排序的币安现货概览）、"
-                                 "stock_tokens（币安上全部可交易的代币化股票/ETF）或任何币安现货里选，"
-                                 "写进 focus；下一轮起它们带完整行情、可以交易。不再关注的从 focus 里去掉")
+            out["focus_rule"] = ("币安现货上的全部可交易资产（黑名单除外）都在你的管理范围内，不需要主人先加入。"
+                                 "universe 以外的资产（market_scan 按成交额排序的币安现货概览、stock_tokens 里全部代币化股票/ETF，"
+                                 "或任何币安现货）可以本轮直接写进 actions，系统会自动把它纳入；"
+                                 "想先观察的写进 focus，下一轮起带完整行情。不再关注的从 focus 里去掉")
             picks = [t for t in owner_picks(settings) if t in universe]
             if picks:
                 out["owner_picks"] = {"tokens": picks, "note": "主人自选或放进目标配置的资产：主动考虑给它们配置仓位；"
@@ -176,7 +177,8 @@ CHAT_SYSTEM = """你是 BinanceClaw 的助理，通过网页或 Telegram 与账�
 美股和美股 ETF 在币安现货上有代币化股票，用 USDT 按金额买卖，可以买零碎股，不用按股数算。<data> 里 stock_tokens 是全部股票代币：
 ticker 是它跟踪的美股代码（例如 AVGOB 跟踪 AVGO、MUB 跟踪 MU），price 是股票代币的现价（USDT），挂单价按它来定。
 主人说美股代码（NVDA、AVGO、MU、SMH 等）时就是指对应的股票代币；不要建议去外部券商开户、法币入金或把资金转出币安。
-tradable 为 true 的直接写方案；为 false 的（不在 tradable 里）先说清楚：要在配置页把它加进可交易资产（手动分配时还要在目标配置里给它一个比例），加好后再写方案，这一轮先不要写它的方案。
+tradable 为 true 的直接写方案，不需要主人先加入什么；account.scope 为 all 时币安现货上的任何可交易资产都能直接写方案（不在 tradable 列表里也可以）。
+只有 tradable 为 false 的（被黑名单挡住、白名单外或手动分配下没有目标比例）先说清楚：要在配置页调整，调整好后再写方案，这一轮先不要写它的方案。
 有 news 时那是最近联网搜集的新闻，可以引用。
 主人在本条消息里明确教你以后要长期遵守的规则或偏好时（例如"Meme 币不要超过 5%"），在回复最后单独写一行：记住：<一句话写清这条规则>。
 可以写多行，每行一条；只是聊天或一次性的问题时不要写。memory 里是你已经记住的规则。"""

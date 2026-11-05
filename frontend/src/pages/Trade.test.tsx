@@ -43,4 +43,18 @@ describe("Spot page limit orders", () => {
     await userEvent.click(within(row).getByRole("button", { name: "批准挂单" }));
     await waitFor(() => expect(api.find("POST", "/approvals/a1/approve")).toHaveLength(1));
   });
+
+  it("searches every Binance spot pair and opens one outside the AI's round", async () => {
+    mockApi({
+      "GET /overview": null, "GET /orders?limit=500": [], "GET /alerts": [], "GET /approvals?limit=200": [], "GET /limit-orders?status=open": [],
+      "GET /klines?symbol=BTCUSDT&interval=4h&limit=300": [], "GET /klines?symbol=AMDBUSDT&interval=4h&limit=300": [],
+      "GET /ticker?extra=BTCUSDT": {}, "GET /ticker?extra=AMDBUSDT": { AMDBUSDT: { price: 475.62, change_pct: 0.01, high: 480, low: 470, quote_volume: 2e6 } },
+      "GET /markets?q=AMD&limit=30": [{ token: "AMDB", symbol: "AMDBUSDT", price: 475.62, change_pct: 0.01, quote_volume: 2e6, held: false, enabled: false, selectable: true, trading: true }],
+    });
+    renderPage(<Trade />);
+    await userEvent.type(screen.getByPlaceholderText("搜索币安现货"), "AMD");
+    await userEvent.click(await screen.findByRole("option", { name: /AMDB/ }));
+    await waitFor(() => expect(screen.getByText("475.62")).toBeInTheDocument());
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toContain("AMDB/USDT");
+  });
 });
