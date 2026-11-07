@@ -1892,9 +1892,20 @@ class Service:
 
     # ------------------------------------------------------------------ chat & reports
     def chat(self, text: str, channel: str = "web") -> str:
+        m = self.chat_message(text, channel)
+        return m.text + ("\n\n" + self.format_sources(m.sources) if m.sources else "")
+
+    def chat_new(self, channel: str = "web"):
+        """Start a new conversation; the other side (web / Telegram) follows."""
+        self.db.kv_set("chat_cut_ts", time.time())
+        self.events.emit("chat", {"channel": channel, "new": True})
+
+    def chat_message(self, text: str, channel: str = "web") -> ChatMessage:
+        """One turn of the shared conversation. Both messages are announced with a "chat" event, so the web
+        page and Telegram each show what was said on the other side."""
         with self._chat_lock:
-            self.db.add(ChatMessage(channel=channel, role="user", text=text))
-            self.events.emit("chat", {"channel": channel, "role": "user"})   # shows up on the web chat right away
+            q = self.db.add(ChatMessage(channel=channel, role="user", text=text))
+            self.events.emit("chat", {"channel": channel, "role": "user", "id": q.id})   # shows up on the other side right away
             cut = self.db.kv_get("chat_cut_ts", 0)
             hist = list(reversed(self.db.all(select(ChatMessage).where(ChatMessage.ts > cut)
                                              .order_by(desc(ChatMessage.ts)).limit(20))))
@@ -1946,10 +1957,10 @@ class Service:
                 reply = reply or "（空回复）"
             except ProviderError as e:
                 reply = f"模型调用失败：{e}"
-            self.db.add(ChatMessage(channel=channel, role="assistant", text=reply, provider=self.provider.name,
-                                    approvals=approvals, sources=sources))
-            self.events.emit("chat", {"channel": channel})
-            return reply + ("\n\n" + self.format_sources(sources) if sources else "")
+            m = self.db.add(ChatMessage(channel=channel, role="assistant", text=reply, provider=self.provider.name,
+                                        approvals=approvals, sources=sources))
+            self.events.emit("chat", {"channel": channel, "role": "assistant", "id": m.id})
+            return m
 
     def chat_recent_orders(self, days: float = 14, n: int = 10) -> list[dict]:
         """BinanceClaw's own orders in the current mode (newest first), including limit plans that triggered."""

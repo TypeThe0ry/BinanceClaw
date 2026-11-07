@@ -579,7 +579,7 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/chat/new", dependencies=auth)
     def chat_new():
-        svc.db.kv_set("chat_cut_ts", time.time())
+        svc.chat_new("web")
         return {"ok": True}
 
     # ------------------------------------------------------------------ settings & mode

@@ -16,7 +16,7 @@ from .test_api import client  # noqa: F401  (fixture)
 def _bot(svc):
     bot = TelegramBot.__new__(TelegramBot)
     bot.svc, bot._confirms, sent = svc, {}, []
-    bot.send = lambda text, buttons=None: sent.append((text, buttons)) or len(sent)
+    bot.send = lambda text, buttons=None, html=False: sent.append((text, buttons)) or len(sent)
     bot.photo = lambda png, caption="", buttons=None: bot.send(caption, buttons)
     bot.chart_png = lambda *a, **k: None
     bot.futures_chart = lambda *a, **k: None
