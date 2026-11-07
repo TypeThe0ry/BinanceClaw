@@ -87,6 +87,7 @@ class RiskState:
 
 
 UNATTENDED = "免审批时段，风控限额内直接执行"
+AUTONOMOUS = "AI 全自主，风控限额内直接执行"
 
 
 def pause_trigger(settings: Settings, st: RiskState) -> str | None:
@@ -167,7 +168,7 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
         token = symbol[: -len(s.quote)]
 
         if side == "SELL":
-            if not lim.allow_sell:
+            if not s.sells_allowed():
                 fail("只买不卖", "规则禁止卖出；如需卖出请你手动操作或在设置中开启（开启后也必须人工批准）")
                 continue
             held = tok_val.get(token, 0.0)
@@ -177,13 +178,13 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
                 continue
             v.approved_usd = float(amt)
             tok_val[token] = held - amt          # a second sell in the same plan sees what is left
-            if st.unattended and s.approval_free.include_sell:
+            if st.unattended and (s.approval_free.include_sell or s.autonomy.full):
                 if sells_left > 0 and amt <= sell_usd_left:
                     sells_left -= 1
                     sell_usd_left -= amt
                     v.decision = "execute"
-                    v.checks.append(Check("免审批", True, "主人开启了免审批（包含卖出）"))
-                    v.reason = f"卖出：{UNATTENDED}"
+                    v.checks.append(Check("免审批", True, "AI 全自主" if s.autonomy.full else "主人开启了免审批（包含卖出）"))
+                    v.reason = f"卖出：{AUTONOMOUS if s.autonomy.full else UNATTENDED}"
                     continue
                 v.checks.append(Check("免审批卖出额度", False,
                                       f"今日免审批卖出已达 {lim.max_orders_per_day} 笔或 ${lim.max_daily_notional_usd:g}"))
@@ -244,7 +245,7 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
         if v.decision == "approve" and st.unattended:
             v.decision = "execute"
             v.checks.append(Check("免审批", True, v.reason.replace("，需要你批准", "") + "，本应等待批准"))
-            v.reason = UNATTENDED
+            v.reason = AUTONOMOUS if s.autonomy.full else UNATTENDED
         # apply to simulated state
         orders_left -= 1
         notional_left -= amt

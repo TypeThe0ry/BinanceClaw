@@ -182,6 +182,24 @@ describe("Config page (配置)", () => {
       approval_free: { mode: "window", start: "23:30", end: "08:00", include_sell: true, include_futures: false } }));
   });
 
+  it("turns AI 全自主 on together with AI allocation, and hides the approval switches it replaces", async () => {
+    const api = mockSettings();
+    renderPage(<Config />);
+    await screen.findByText("AI 全自主", { selector: "h2" });
+    expect(screen.getByText("免审批", { selector: "h2" })).toBeInTheDocument();
+    await userEvent.click(within(section("AI 全自主")).getByRole("button", { name: "开启" }));
+    await waitFor(() => expect(api.find("PUT", "/settings")[0]?.body).toEqual({
+      autonomy: { full: true }, allocation: { mode: "ai" } }));
+  });
+
+  it("hides 免审批 and the timeout fallback while AI 全自主 is on", async () => {
+    mockSettings({ settings: { autonomy: { full: true, question_timeout_minutes: 30 } } });
+    renderPage(<Config />);
+    await screen.findByText("AI 全自主", { selector: "h2" });
+    expect(screen.queryByText("免审批", { selector: "h2" })).not.toBeInTheDocument();
+    expect(screen.queryByText("超时未回答时")).not.toBeInTheDocument();
+  });
+
   it("saves trading style and the owner's views", async () => {
     const api = mockSettings();
     renderPage(<Config />);

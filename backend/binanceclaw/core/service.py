@@ -740,8 +740,10 @@ class Service:
                          halted=self.halted_symbols(), unattended=self.approval_free_active())
 
     def approval_free_active(self) -> bool:
-        """免审批 right now (always on, or inside the owner's window in schedule.timezone)."""
-        return self.settings.approval_free.active(self.now())
+        """Nothing waits for approval right now: AI 全自主, or 免审批 (always on / inside the owner's window
+        in schedule.timezone)."""
+        s = self.settings
+        return s.autonomy.full or s.approval_free.active(self.now())
 
     def halted_symbols(self) -> dict[str, str]:
         """Whitelisted pairs Binance is not trading right now ({symbol: status}). On a lookup
@@ -929,7 +931,14 @@ class Service:
             log.exception("performance analytics unavailable")
         if self.autopilot.auto:
             context["autonomy"] = self.autopilot.context(trigger, why)
-        if st.unattended:
+        if s.autonomy.full:
+            context["approval"] = {
+                "unattended": True, "autonomous": True,
+                "covers": ["现货买入", "卖出", "合约开仓", "挂单改价和撤单"],
+                "note": "AI 全自主：主人把决策交给你，风控限额内的交易全部直接执行，没有人逐笔复核。"
+                        "自己判断、自己执行，不要把常规决策交给主人；只有主人的偏好才能决定的事才提问，"
+                        "提问不会阻塞太久，超时按你推荐的选项执行"}
+        elif st.unattended:
             af = s.approval_free
             context["approval"] = {
                 "unattended": True,
@@ -1635,7 +1644,7 @@ class Service:
             if topic.lower() in topics or len(pending) + len(out) >= MAX_PENDING_QUESTIONS:
                 continue
             topics.add(topic.lower())
-            q = self.db.add(AiQuestion(expires=time.time() + qs.question_timeout_minutes * 60, cycle_id=cycle_id,
+            q = self.db.add(AiQuestion(expires=time.time() + self.settings.question_timeout() * 60, cycle_id=cycle_id,
                                        topic=topic, text=sp.text, options=[o.model_dump() for o in sp.options],
                                        recommended=sp.recommended))
             self.events.emit("question_created", {"id": q.id})
@@ -1658,7 +1667,7 @@ class Service:
         return True, f"已回答「{label}」，AI 马上按你的回答重新决策"
 
     def expire_questions(self):
-        auto = self.settings.questions.on_timeout == "auto"
+        auto = self.settings.question_fallback() == "auto"
         now = time.time()
         for q in self.db.pending_questions():
             if q.expires < now and self.db.claim_question(q.id, "expired", "timeout", q.recommended if auto else None):
@@ -1690,9 +1699,10 @@ class Service:
         if not qs.enabled:
             out["note"] = "主人关闭了提问功能，本轮不要提出 questions，按你的判断在风控内决策"
             return out, []
-        out["on_timeout"] = qs.on_timeout
-        out["timeout_minutes"] = qs.question_timeout_minutes
-        out["note"] = ("主人超时未回答时：" + ("采用你推荐的选项（recommended）" if qs.on_timeout == "auto"
+        fallback = self.settings.question_fallback()
+        out["on_timeout"] = fallback
+        out["timeout_minutes"] = self.settings.question_timeout()
+        out["note"] = ("主人超时未回答时：" + ("采用你推荐的选项（recommended）" if fallback == "auto"
                                               else "这件事不操作、维持现状") + "。")
         pending = self.db.pending_questions()
         if pending:
@@ -1816,6 +1826,7 @@ class Service:
                         "deployed_usd": round(self.deployed_usd(), 2)},
             "risk_preset": s.risk_preset,
             "approval_free": {**s.approval_free.model_dump(), "active": st.unattended},
+            "autonomy": s.autonomy.full,
             "strategy": s.strategy.style,
             "outlook": s.outlook.model_dump(),
             "limits": s.limits.model_dump(),
@@ -1888,6 +1899,8 @@ class Service:
                  "expires": lo.expires, **({"approved_price": lo.origin_price} if lo.origin_price else {}),
                  **({"ai_review": lo.review} if lo.review else {})} for lo in self.open_limit_orders()]
             slim["recent_orders"] = self.chat_recent_orders()
+            if self.settings.autonomy.full:
+                slim["autonomous"] = True
             news = self.latest_news()
             if news and news["items"] and self.settings.news.enabled:
                 slim["news"] = self.news_context(news)
@@ -1992,7 +2005,8 @@ class Service:
     MAX_LIMIT_HOURS = 168
 
     def _chat_plans(self, reply: str) -> tuple[str, list[str]]:
-        """Lines the chat model marked 方案：{json} become pending approvals; nothing trades until the owner approves."""
+        """Lines the chat model marked 方案：{json} become pending approvals; nothing trades until the owner
+        approves, except under AI 全自主, where a plan inside the hard limits executes at once."""
         found = list(self._PLAN.finditer(reply))
         if not found:
             return reply, []
@@ -2069,6 +2083,10 @@ class Service:
             what += "，市价"
         a = self.create_approval("", side, symbol, amount, str(d.get("reason", ""))[:1500],
                                  str(d.get("invalidation", ""))[:800], payload=payload)
+        if s.autonomy.full and v.decision == "execute":
+            # AI 全自主: a plan that passes the risk engine runs now (the approval path re-checks it)
+            ok, msg = self.resolve_approval(a.id, True, "auto")
+            return f"{'✅' if ok else '⚠️'} 方案：{what}（{'已执行' if ok else '未执行'}：{msg}）", a.id
         return f"📝 方案：{what}（待批准）", a.id
 
     def place_limit(self, a: Approval) -> tuple[bool, str]:
@@ -2275,7 +2293,7 @@ class Service:
         if v["action"] == "keep":
             return "keep"
         if v["action"] == "cancel":
-            if cfg.require_approval:
+            if cfg.require_approval and not self.settings.autonomy.full:
                 return self._limit_change_approval(lo, "cancel", None, why)
             self.cancel_limit_order(lo.id, "ai", f"AI 撤单（{why}）")
             self._limit_note(lo.id, {"ts": time.time(), "action": "cancel", "from": lo.price, "reason": why, "by": "ai"})
@@ -2288,7 +2306,8 @@ class Service:
         if abs(price / now_px - 1) > 0.5:
             return "rejected: too far"
         safer = price < lo.price if lo.side == "BUY" else price > lo.price
-        if not safer or cfg.require_approval:
+        full = self.settings.autonomy.full
+        if not full and (not safer or cfg.require_approval):
             return self._limit_change_approval(lo, "reprice", price, why)
         return "repriced" if self.reprice_limit_order(lo.id, price, why, "ai") else "gone"
 
