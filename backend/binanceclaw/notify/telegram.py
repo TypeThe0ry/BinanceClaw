@@ -202,7 +202,7 @@ class TelegramBot:
                 by = {"web": "（网页）", "telegram": "（Telegram）", "ai": "（AI 撤回）"}.get(a.resolved_by, "")
                 self.edit(a.tg_message_id, f"{icon} {self._ap_title(a)} — {a.status}{by}\n{a.result}")
         elif kind == "limit_order" and d.get("text"):
-            icon = {"filled": "📌", "expired": "⌛", "cancelled": "↩️"}.get(d.get("status"), "⚠️")
+            icon = {"filled": "📌", "expired": "⌛", "cancelled": "↩️", "repriced": "✏️"}.get(d.get("status"), "⚠️")
             self.send(f"{icon} [{self.label()}] {d['text']}")
         elif kind == "futures" and d.get("text"):
             icon = "🟢" if d.get("ok") else "⚠️"
@@ -358,6 +358,12 @@ class TelegramBot:
 
     @staticmethod
     def _ap_title(a) -> str:
+        if a.kind == "limit":
+            p = a.payload or {}
+            tok = f"{'买入' if a.side == 'BUY' else '卖出'} {a.symbol}  ${a.quote_usd:,.0f}"
+            if p.get("op") == "cancel":
+                return f"AI 建议撤单：{tok}  挂单 {p.get('old_price'):g}"
+            return f"AI 建议改价：{tok}  挂单 {p.get('old_price'):g} → {p.get('price'):g}"
         if a.kind != "futures":
             p = a.payload or {}
             if p.get("order") == "limit":
