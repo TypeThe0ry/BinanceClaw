@@ -203,9 +203,11 @@ export default function Trade() {
                       <td className="td font-semibold"><button className="hover:underline" onClick={() => setParams({ s: l.symbol })}>{token(l.symbol)}/USDT</button></td>
                       <td className="td"><Side side={l.side} /></td>
                       <td className="td num text-right">{usd(l.quote_usd)}</td>
-                      <td className="td num text-right">{l.side === "BUY" ? "≤ " : "≥ "}{fmtPrice(l.price)}</td>
+                      <td className="td num text-right">{l.side === "BUY" ? "≤ " : "≥ "}{fmtPrice(l.price)}
+                        {!!l.order?.origin_price && l.order.origin_price !== l.price && <div className="text-[12px] text-fg-3 line-through">{fmtPrice(l.order.origin_price)}</div>}</td>
                       <td className="td num text-right text-fg-2">{fmtPrice(tick[l.symbol]?.price)}</td>
-                      <td className={`td pl-6 ${l.order ? "text-warn" : "text-fg-2"}`}>{l.order ? "挂单中" : "待批准"}</td>
+                      <td className={`td pl-6 ${l.order ? "text-warn" : "text-fg-2"}`} title={l.order?.review || undefined}>{l.order ? "挂单中" : "待批准"}
+                        {!!l.order?.reviewed_at && <div className="text-[12px] text-fg-3">AI 已检查 {clock(l.order.reviewed_at)}</div>}</td>
                       <td className="td num text-fg-3">{clock(l.expires)}</td>
                       <td className="td">
                         <span className="flex justify-end gap-2">

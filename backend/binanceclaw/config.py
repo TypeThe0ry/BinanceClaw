@@ -143,10 +143,12 @@ MODEL_TASKS: dict[str, str] = {
     "report": "日报点评",
     "debate": "多空辩论",
     "news": "新闻搜索",
+    "limit_watch": "挂单盯盘",
 }
 MODEL_TIERS = ("fast", "strong", "main")          # main = the provider's own model setting
 DEFAULT_TASK_TIERS: dict[str, str] = {"decision": "strong", "allocation": "strong", "chat": "strong", "report": "fast",
-                                      "debate": "strong", "news": "fast"}
+                                      "debate": "strong", "news": "fast",
+                                      "limit_watch": "strong"}
 # Built-in tier models per provider; providers without an entry use their main model for every tier.
 TIER_MODELS: dict[str, dict[str, str]] = {
     "claude_code": {"fast": "claude-haiku-5-5", "strong": "claude-opus-5-5"},
@@ -373,6 +375,16 @@ class Questions(BaseModel):
     on_timeout: Literal["skip", "auto"] = "skip"
 
 
+class LimitWatch(BaseModel):
+    """挂单盯盘: while an approved limit plan waits for its price, the AI re-checks it against the plan's
+    reason and invalidation, prices and news. It may cancel the plan, or move its price in the safer
+    direction (buy lower / sell higher) at the same amount. A price that fills sooner always needs approval."""
+    enabled: bool = True
+    interval_minutes: int = Field(default=30, ge=5, le=240)     # regular review of each open plan
+    move_pct: float = Field(default=3.0, ge=0.5, le=20)          # a move this large since the last review: review now
+    require_approval: bool = False                                # True: the AI's cancels / safer reprices also wait for the owner
+
+
 # Telegram message types: key -> (label, can be muted). Event kinds map onto these in notify/policy.py.
 # Approval requests, the AI's questions and critical risk alerts can never be muted or delayed.
 NOTIFY_TYPES: dict[str, tuple[str, bool]] = {
@@ -534,6 +546,7 @@ class Settings(BaseModel):
     futures: Futures = Field(default_factory=Futures)
     earn: Earn = Field(default_factory=Earn)
     questions: Questions = Field(default_factory=Questions)
+    limit_watch: LimitWatch = Field(default_factory=LimitWatch)
     notify: Notify = Field(default_factory=Notify)
     approval_free: ApprovalFree = Field(default_factory=ApprovalFree)
     strategy: Strategy = Field(default_factory=Strategy)

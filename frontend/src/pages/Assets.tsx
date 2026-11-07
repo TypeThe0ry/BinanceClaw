@@ -159,19 +159,17 @@ export default function Assets() {
   // then everything else grouped by Binance's categories (display only; risk bands follow the target categories)
   const bcat = (t: string) => o?.binance_categories?.[t]?.primary ?? (isStable(t) ? "稳定币" : "未分类");
   const acctTotal = Object.values(acct).reduce((x, y) => x + y, 0);
-  // nothing held and not an investment target: hidden unless asked for
+  // nothing held: never listed; dust (< 1 USDT) hidden on request, like Binance's own asset page
   const inTargets = (t: string) => Object.values(s).some((c) => t in c.tokens);
   const empty = (r: (typeof rows)[number]) => r.qty <= 0 && r.value < 0.01 && !r.locked && !o?.earn?.positions?.[r.t]?.amount;
-  const [showEmpty, setShowEmpty] = useState(() => {
-    try { return localStorage.getItem("bclaw:assets-show-empty") === "1"; } catch { return false; }
+  const [hideSmall, setHideSmall] = useState(() => {
+    try { return localStorage.getItem("bclaw:assets-hide-small") === "1"; } catch { return false; }
   });
-  function toggleEmpty() {
-    setShowEmpty(!showEmpty);
-    try { localStorage.setItem("bclaw:assets-show-empty", showEmpty ? "0" : "1"); } catch { /* private mode */ }
+  function toggleSmall() {
+    setHideSmall(!hideSmall);
+    try { localStorage.setItem("bclaw:assets-hide-small", hideSmall ? "0" : "1"); } catch { /* private mode */ }
   }
-  const allSpot = rows.filter((r) => r.t !== "FUTURES");
-  const hiddenN = allSpot.filter((r) => empty(r) && !inTargets(r.t)).length;
-  const spotRows = showEmpty ? allSpot : allSpot.filter((r) => !empty(r) || inTargets(r.t));
+  const spotRows = rows.filter((r) => r.t !== "FUTURES" && !empty(r) && !(hideSmall && r.value < 1));
   const picked = (r: (typeof rows)[number]) => !isStable(r.t) && bcat(r.t) !== "稳定币"
     && ((o?.values?.[r.t] ?? 0) >= 1 || inTargets(r.t));
   const spotSections = sectionsOf(spotRows, picked, (r) => bcat(r.t), (r) => r.value);
@@ -263,10 +261,15 @@ export default function Assets() {
 
       {/* assets */}
       <section className="min-w-0 lg:col-span-12 min-[1440px]:col-span-8 min-[1440px]:col-start-1 min-[1440px]:row-span-2">
-        <SectionHead title="资产" doc="dashboard" right={
+        <SectionHead title="资产" doc="dashboard" right={<span className="flex items-center gap-4">
+          {view === "spot" && (
+            <label className="flex cursor-pointer select-none items-center gap-1.5 text-[13px] text-fg-2 hover:text-fg">
+              <input type="checkbox" className="accent-current" checked={hideSmall} onChange={toggleSmall} />隐藏 &lt; 1 USDT
+            </label>
+          )}
           <Seg id="assets-view" value={view} onChange={pickView}
             items={[{ k: "spot" as const, label: "现货" }, { k: "futures" as const, label: <>合约{!!o?.futures?.open && <span className="num ml-1 text-fg-3">{o.futures.open}</span>}</> }]} />
-        } />
+        </span>} />
         {view === "spot" ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px]">
@@ -313,11 +316,6 @@ export default function Assets() {
             </tbody>
             ))}
           </table>
-          {hiddenN > 0 && (
-            <button className="mt-2 text-[13px] text-fg-3 hover:text-fg" onClick={toggleEmpty}>
-              {showEmpty ? "隐藏零余额资产" : `显示 ${hiddenN} 个零余额资产（不在投资目标里）`}
-            </button>
-          )}
         </div>
         ) : <FuturesAssets o={o} bcat={bcat} collapsed={collapsed} fold={fold} />}
         {!o && <Skeleton className="mt-3 h-40" />}

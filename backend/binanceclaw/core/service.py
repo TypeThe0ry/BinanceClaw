@@ -19,6 +19,7 @@ from sqlmodel import desc, select
 from ..brain import allocation as alloc
 from ..brain import debate as deb
 from ..brain import indicators as ta
+from ..brain import limit_watch as lw
 from ..brain import news as nws
 from ..brain.prompt import CHAT_OFFLINE, CHAT_PLANS, CHAT_SOURCES, CHAT_SYSTEM, CHAT_WEB, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
@@ -1643,6 +1644,8 @@ class Service:
             return False, "这笔已处理"
         if a.kind == "futures":
             ok, msg = self.execute_futures(a.payload or {}, via="approved", cycle_id=a.cycle_id)
+        elif a.kind == "limit":
+            ok, msg = self.apply_limit_change(a)
         elif (a.payload or {}).get("order") == "limit":
             ok, msg = self.place_limit(a)
         else:
@@ -1915,7 +1918,8 @@ class Service:
             # already bought, or why today's order count and the balances disagree
             slim["open_limit_orders"] = [
                 {"id": lo.id, "side": lo.side, "symbol": lo.symbol, "usd": round(lo.quote_usd, 2), "price": lo.price,
-                 "expires": lo.expires} for lo in self.open_limit_orders()]
+                 "expires": lo.expires, **({"approved_price": lo.origin_price} if lo.origin_price else {}),
+                 **({"ai_review": lo.review} if lo.review else {})} for lo in self.open_limit_orders()]
             slim["recent_orders"] = self.chat_recent_orders()
             news = self.latest_news()
             if news and news["items"] and self.settings.news.enabled:
@@ -2102,8 +2106,13 @@ class Service:
 
     def place_limit(self, a: Approval) -> tuple[bool, str]:
         p = a.payload or {}
+        try:
+            ref = self.client.prices([a.symbol]).get(a.symbol) or 0.0
+        except ExchangeError:
+            ref = 0.0
         lo = self.db.add(LimitOrder(expires=time.time() + float(p.get("hours") or 24) * 3600, approval_id=a.id,
-                                    symbol=a.symbol, side=a.side, quote_usd=a.quote_usd, price=float(p["price"])))
+                                    symbol=a.symbol, side=a.side, quote_usd=a.quote_usd, price=float(p["price"]),
+                                    review_price=ref))
         self.events.emit("limit_order", {"id": lo.id, "status": "open"})
         return True, f"已挂单：{self.limit_title(lo)}"
 
@@ -2124,7 +2133,15 @@ class Service:
         if lo:
             ev["text"] = f"{why}：{self.limit_title(lo)}"
         self.events.emit("limit_order", ev)
+        self._void_limit_changes(lid)
         return True
+
+    def _void_limit_changes(self, lid: str):
+        """The plan is no longer open: AI change requests for it are moot."""
+        for a in self.db.pending_approvals():
+            if a.kind == "limit" and (a.payload or {}).get("limit_id") == lid and self.db.claim_approval(a.id, "expired", "system"):
+                self.db.update(Approval, a.id, result="挂单已结束")
+                self.events.emit("approval", {"id": a.id, "status": "expired"})
 
     def cancel_limit_orders(self, why: str, by: str = "system") -> int:
         """Withdraw every open limit plan (mode switch, kill switch)."""
@@ -2141,6 +2158,7 @@ class Service:
                     self.db.update(LimitOrder, lo.id, result="超时未成交", done_at=now)
                     self.events.emit("limit_order", {"id": lo.id, "status": "expired",
                                                      "text": f"挂单已过期：{self.limit_title(lo)}"})
+                    self._void_limit_changes(lo.id)
             else:
                 live.append(lo)
         if not live or self.paused()[0]:
@@ -2165,8 +2183,208 @@ class Service:
                            done_at=time.time())
             self.events.emit("limit_order", {"id": lo.id, "status": "filled" if ok else "failed", "ok": ok,
                                              "text": f"挂单{'成交' if ok else '未执行'}：{self.limit_title(lo)}\n{msg}"})
+            self._void_limit_changes(lo.id)
             done += 1
         return done
+
+    # ------------------------------------------------------------------ 挂单盯盘
+    LIMIT_MIN_CHANGE = 0.001        # reprices smaller than 0.1% are noise
+
+    def limit_watch_due(self, now: float | None = None) -> list[LimitOrder]:
+        """Open plans due for an AI review: the regular interval passed, or the price moved sharply since the last one."""
+        cfg = self.settings.limit_watch
+        rows = self.open_limit_orders()
+        if not cfg.enabled or not rows or self.paused()[0]:
+            return []
+        now = now or time.time()
+        try:
+            px = self.client.prices(sorted({lo.symbol for lo in rows}))
+        except ExchangeError:
+            return []
+        due = []
+        for lo in rows:
+            p = px.get(lo.symbol)
+            if p is None:
+                continue
+            moved = lo.review_price and abs(p / lo.review_price - 1) * 100 >= cfg.move_pct
+            if now - (lo.reviewed_at or lo.created) >= cfg.interval_minutes * 60 or moved:
+                due.append(lo)
+        return due
+
+    def _limit_watch_tick(self):
+        """Scheduler hook: the review calls a model, so it runs off the loop (fills are checked every 10 s)."""
+        if getattr(self, "_lw_busy", False) or not self.limit_watch_due():
+            return
+        self._lw_busy = True
+
+        def run():
+            try:
+                self.watch_limit_orders()
+            except Exception:
+                log.exception("limit watch failed")
+            finally:
+                self._lw_busy = False
+        threading.Thread(target=run, name="limit-watch", daemon=True).start()
+
+    def _limit_context(self, rows: list[LimitOrder], px: dict[str, float]) -> dict:
+        s = self.settings
+        q = s.quote
+        out = []
+        for lo in rows:
+            a = self.db.get(Approval, lo.approval_id) if lo.approval_id else None
+            tok, p = lo.symbol[: -len(q)], px[lo.symbol]
+            row = {"id": lo.id, "side": lo.side, "symbol": lo.symbol, "usd": round(lo.quote_usd, 2),
+                   "limit_price": lo.price, "approved_price": lo.origin_price or lo.price, "now": p,
+                   "distance_pct": round((lo.price / p - 1) * 100, 2),
+                   "placed": self._ago(lo.created), "expires_in_hours": round((lo.expires - time.time()) / 3600, 1),
+                   "reason": a.reason if a else "", "invalidation": a.invalidation if a else "",
+                   "history": [{k: h.get(k) for k in ("action", "from", "to", "reason")} for h in (lo.history or [])][-5:]}
+            if lo.review:
+                row["last_review"] = {"at": self._ago(lo.reviewed_at), "price": lo.review_price, "verdict": lo.review}
+            try:
+                row["market"] = asset_snapshot(p, self._klines(lo.symbol, "1d", 60), self._klines(lo.symbol, "4h", 60))
+            except ExchangeError:
+                pass
+            out.append({k: v for k, v in row.items() if v not in ("", None, [])} | {"token": tok})
+        ctx: dict = {"now_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M"), "orders": out}
+        if "BTC" not in {r["token"] for r in out}:
+            try:
+                bp = self.client.prices([f"BTC{q}"]).get(f"BTC{q}")
+                if bp:
+                    ctx["btc"] = asset_snapshot(bp, self._klines(f"BTC{q}", "1d", 60), self._klines(f"BTC{q}", "4h", 60))
+            except ExchangeError:
+                pass
+        if s.news.enabled:
+            try:
+                digest = self.news_digest(list(dict.fromkeys(["BTC", *(r["token"] for r in out)])))
+            except Exception as e:                       # news must never stop the review
+                log.warning("limit watch news failed: %s", e)
+                digest = None
+            if digest:
+                ctx["news"] = self.news_context(digest)
+        if s.memory:
+            ctx["memory"] = s.memory
+        return ctx
+
+    def watch_limit_orders(self, force: bool = False) -> list[dict]:
+        """Ask the model about each due plan, then apply its verdicts (see brain/limit_watch.py for the rules)."""
+        rows = self.open_limit_orders() if force else self.limit_watch_due()
+        if not rows:
+            return []
+        try:
+            px = self.client.prices(sorted({lo.symbol for lo in rows}))
+        except ExchangeError:
+            return []
+        rows = [lo for lo in rows if px.get(lo.symbol)]
+        if not rows:
+            return []
+        ctx = self._limit_context(rows, px)
+        now = time.time()
+        try:
+            comp = self.complete(lw.SYSTEM, [{"role": "user", "content": lw.build_prompt(ctx)}], json_mode=True,
+                                 task="limit_watch")
+            verdicts = lw.parse(comp.text, {lo.id for lo in rows})
+        except (ProviderError, PlanError) as e:
+            log.warning("limit watch model failed: %s", e)
+            for lo in rows:                              # try again next interval, not every minute
+                self.db.update(LimitOrder, lo.id, reviewed_at=now, review_price=px[lo.symbol])
+            return []
+        by_id = {v["id"]: v for v in verdicts}
+        results = []
+        for lo in rows:
+            v = by_id.get(lo.id) or {"id": lo.id, "action": "keep", "reason": ""}
+            fresh = self.db.get(LimitOrder, lo.id)
+            if not fresh or fresh.status != "open":
+                continue
+            verb = {"keep": "继续挂", "cancel": "撤单", "reprice": f"改价 {v.get('price', 0):g}"}[v["action"]]
+            self.db.update(LimitOrder, lo.id, reviewed_at=now, review_price=px[lo.symbol],
+                           review=f"{verb}：{v['reason']}" if v["reason"] else verb)
+            results.append({**v, "result": self._apply_limit_verdict(fresh, v, px[lo.symbol])})
+        return results
+
+    def _apply_limit_verdict(self, lo: LimitOrder, v: dict, now_px: float) -> str:
+        cfg = self.settings.limit_watch
+        why = v["reason"] or "AI 判断"
+        if v["action"] == "keep":
+            return "keep"
+        if v["action"] == "cancel":
+            if cfg.require_approval:
+                return self._limit_change_approval(lo, "cancel", None, why)
+            self.cancel_limit_order(lo.id, "ai", f"AI 撤单（{why}）")
+            self._limit_note(lo.id, {"ts": time.time(), "action": "cancel", "from": lo.price, "reason": why, "by": "ai"})
+            return "cancelled"
+        price = v["price"]
+        if abs(price / lo.price - 1) < self.LIMIT_MIN_CHANGE:
+            return "keep"
+        if (lo.side == "BUY" and price >= now_px) or (lo.side == "SELL" and price <= now_px):
+            return "rejected: crosses market"
+        if abs(price / now_px - 1) > 0.5:
+            return "rejected: too far"
+        safer = price < lo.price if lo.side == "BUY" else price > lo.price
+        if not safer or cfg.require_approval:
+            return self._limit_change_approval(lo, "reprice", price, why)
+        return "repriced" if self.reprice_limit_order(lo.id, price, why, "ai") else "gone"
+
+    def _limit_note(self, lid: str, note: dict):
+        lo = self.db.get(LimitOrder, lid)
+        if lo:
+            self.db.update(LimitOrder, lid, history=[*(lo.history or []), note][-20:])
+
+    def reprice_limit_order(self, lid: str, price: float, why: str, by: str) -> bool:
+        lo = self.db.get(LimitOrder, lid)
+        if not lo:
+            return False
+        old = lo.price
+        if not self.db.reprice_limit_order(lid, price, {"ts": time.time(), "action": "reprice", "from": old, "to": price,
+                                                         "reason": why, "by": by}):
+            return False
+        lo = self.db.get(LimitOrder, lid)
+        who = "AI 改价" if by == "ai" else "已改价"
+        self.events.emit("limit_order", {"id": lid, "status": "repriced", "by": by,
+                                         "text": f"{who} {old:g} → {price:g}：{self.limit_title(lo)}\n{why}"})
+        return True
+
+    def _limit_change_approval(self, lo: LimitOrder, op: str, price: float | None, why: str) -> str:
+        """A change the AI may not make alone: ask the owner (one open request per plan)."""
+        for a in self.db.pending_approvals():
+            if a.kind == "limit" and (a.payload or {}).get("limit_id") == lo.id:
+                if (a.payload or {}).get("op") == op and (a.payload or {}).get("price") == price:
+                    return "already pending"
+                self.db.claim_approval(a.id, "rejected", "ai")
+                self.db.update(Approval, a.id, result="AI 已换成新的建议")
+                self.events.emit("approval", {"id": a.id, "status": "rejected", "by": "ai"})
+        src = self.db.get(Approval, lo.approval_id) if lo.approval_id else None
+        payload = {"source": "limit_watch", "op": op, "limit_id": lo.id, "old_price": lo.price}
+        if price is not None:
+            payload["price"] = price
+        self.create_approval("", lo.side, lo.symbol, lo.quote_usd, why[:1500], src.invalidation if src else "",
+                             kind="limit", payload=payload)
+        return "approval"
+
+    def apply_limit_change(self, a: Approval) -> tuple[bool, str]:
+        """The owner approved an AI change to an open plan."""
+        p = a.payload or {}
+        lo = self.db.get(LimitOrder, p.get("limit_id", ""))
+        if not lo or lo.status != "open":
+            return False, "挂单已成交、过期或撤销"
+        if p.get("op") == "cancel":
+            ok = self.cancel_limit_order(lo.id, "ai", f"AI 撤单（{a.reason}）")
+            if ok:
+                self._limit_note(lo.id, {"ts": time.time(), "action": "cancel", "from": lo.price, "reason": a.reason,
+                                         "by": "approved"})
+            return ok, f"已撤单：{self.limit_title(lo)}" if ok else "挂单已成交、过期或撤销"
+        price = float(p.get("price") or 0)
+        try:
+            now_px = self.client.prices([lo.symbol]).get(lo.symbol)
+        except ExchangeError as e:
+            return False, f"取不到现价：{e}"
+        if not price > 0 or not now_px or abs(price / now_px - 1) > 0.5:
+            return False, "新价格无效或离现价太远"
+        if (lo.side == "BUY" and price >= now_px) or (lo.side == "SELL" and price <= now_px):
+            return False, f"新价格 {price:g} 已越过现价 {now_px:g}"
+        if not self.reprice_limit_order(lo.id, price, a.reason, "approved"):
+            return False, "挂单已成交、过期或撤销"
+        return True, f"已改价 {lo.price:g} → {price:g}"
 
     # ------------------------------------------------------------------ allocation proposals
     PROPOSAL_TTL = 86400
@@ -2452,6 +2670,7 @@ class Service:
                 self._every("reconcile", 60, self.reconcile_orders)
                 self._every("alerts", 30, self.check_alerts)
                 self._every("limit_orders", 10, self.check_limit_orders)
+                self._every("limit_watch", 60, self._limit_watch_tick)
                 self._every("futures", 10, self.futures_watch)
                 self._every("earn", 600, self.earn.sweep)
                 self._every("watchdog", 300, self.watchdog)

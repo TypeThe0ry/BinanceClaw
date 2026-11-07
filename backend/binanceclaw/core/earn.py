@@ -236,7 +236,8 @@ class EarnManager:
         if not self.cfg.enabled:
             return []
         s = self.svc.settings_store.get()
-        pending = sum(a.quote_usd for a in self.svc.db.pending_approvals() if a.side in ("BUY", "OPEN_LONG", "OPEN_SHORT"))
+        pending = sum(a.quote_usd for a in self.svc.db.pending_approvals()
+                      if a.side in ("BUY", "OPEN_LONG", "OPEN_SHORT") and a.kind != "limit")
         # approved limit buys still waiting for their price spend the quote the moment they trigger
         pending += sum(lo.quote_usd for lo in self.svc.open_limit_orders() if lo.side == "BUY")
         assets = self.candidates()

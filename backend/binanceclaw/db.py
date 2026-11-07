@@ -256,6 +256,12 @@ class LimitOrder(SQLModel, table=True):
     result: str = ""
     order_id: str = ""
     done_at: Optional[float] = None
+    # 挂单盯盘 (Service.watch_limit_orders): the approved price, the last AI review and what the AI changed
+    origin_price: float = 0                   # price the owner approved (0 = never repriced)
+    reviewed_at: float = 0
+    review_price: float = 0                   # market price at the last review
+    review: str = ""                          # the AI's latest verdict, one line
+    history: list = Field(default_factory=list, sa_column=Column(JSON))   # [{ts, action, from, to, reason, by}]
 
 
 class Report(SQLModel, table=True):
@@ -350,6 +356,19 @@ class Database:
             if not lo or lo.status != "open":
                 return False
             lo.status = new_status
+            s.add(lo)
+            s.commit()
+            return True
+
+    def reprice_limit_order(self, lid: str, price: float, note: dict) -> bool:
+        """Change an open plan's price (same amount), recording the change. False once it left "open"."""
+        with self.write_lock, self.session() as s:
+            lo = s.get(LimitOrder, lid)
+            if not lo or lo.status != "open":
+                return False
+            lo.origin_price = lo.origin_price or lo.price
+            lo.price = price
+            lo.history = [*(lo.history or []), note][-20:]
             s.add(lo)
             s.commit()
             return True
