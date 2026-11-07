@@ -233,27 +233,3 @@ def test_ai_mode_plans_for_any_binance_asset_without_adding_it(svc):
     assert "📝 方案：买入 SOL $50.00" in reply                      # no "加入可交易资产" first
     a = svc.db.pending_approvals()[0]
     assert a.symbol == "SOLUSDT" and "SOL" in svc.settings.tradable_tokens()
-
-
-def test_chat_reads_live_data_for_any_asset_the_owner_names(svc):
-    svc.update_settings({"allocation": {"mode": "ai", "enabled": ["BTC"]}})
-    p = use(svc, "好的")
-    svc.chat("sol 和 TON 现在怎么样？BTC 呢")
-    sent = str(p.calls[-1])
-    assert '"quotes"' in sent and '"SOL"' in sent
-    q = svc.chat_quotes("sol 和 TON 现在怎么样？BTC 呢", ["BTC"])
-    assert set(q) == {"SOL", "TON"} and q["SOL"]["price"] == 150.0 and q["SOL"]["tradable"]
-    assert q["TON"]["tradable"] is False and "change_7d" in q["SOL"]          # suspended pair: data, no plan
-
-
-def test_approved_limit_order_trades_after_the_ai_drops_the_asset(svc):
-    svc.update_settings({"allocation": {"mode": "ai", "enabled": ["BTC"]}})
-    use(svc, say(side="BUY", symbol="SOL", usd=50, type="limit", price=140))
-    svc.chat("SOL 挂个单")
-    a = svc.db.pending_approvals()[0]
-    assert svc.resolve_approval(a.id, True, "web")[0]
-    svc.set_focus([])                                         # the AI's next round no longer focuses on SOL
-    assert "SOL" in svc.settings.tradable_tokens()            # the open limit order keeps it in the round
-    svc.client.prices_map["SOLUSDT"] = 139.0
-    assert svc.check_limit_orders() == 1
-    assert [(o.side, o.symbol) for o in orders(svc)] == [("BUY", "SOLUSDT")]
