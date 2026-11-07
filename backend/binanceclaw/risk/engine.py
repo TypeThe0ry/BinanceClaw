@@ -113,7 +113,8 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
     s = pf.settings
     lim = s.limits
     total = pf.total()
-    quote_bal = float(pf.balances.get(s.quote, 0.0))
+    # Every stablecoin can pay for a buy: USDC/FDUSD are converted into the quote right before the
+    # order (Service.execute -> EarnManager.ensure_quote), so only the floor and the fee buffer limit spending.
     stable_val = pf.stable_value()
     tok_val = dict(pf.values())
     cat_w = pf.category_weights()
@@ -207,7 +208,7 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
         if amt > notional_left:
             caps.append(f"每日总额剩余 ${max(notional_left, 0):,.0f}")
             amt = notional_left
-        spendable = min(quote_bal, stable_val - lim.stable_floor * total) - total * lim.fee_buffer_ratio
+        spendable = stable_val - lim.stable_floor * total - total * lim.fee_buffer_ratio
         if amt > spendable:
             caps.append(f"稳定币下限 {lim.stable_floor:.0%}（可用 ${max(spendable, 0):,.0f}）")
             amt = spendable
@@ -248,7 +249,6 @@ def evaluate(actions: list[dict], pf: Portfolio, st: RiskState) -> list[Verdict]
         orders_left -= 1
         notional_left -= amt
         budget_left -= amt
-        quote_bal -= amt
         stable_val -= amt
         tok_val[token] = tok_val.get(token, 0.0) + amt
         cat_w[cat] = cat_w.get(cat, 0.0) + (amt / total if total else 0)
