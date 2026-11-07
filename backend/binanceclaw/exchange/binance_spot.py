@@ -140,6 +140,7 @@ class BinanceSpot:
     def all_tickers_24h(self) -> dict[str, dict]:
         rows = self._request("GET", "/api/v3/ticker/24hr")
         return {d["symbol"]: {"price": float(d["lastPrice"]), "change_pct": float(d["priceChangePercent"]) / 100,
+                              "high": float(d.get("highPrice") or 0), "low": float(d.get("lowPrice") or 0),
                               "quote_volume": float(d["quoteVolume"])} for d in rows}
 
     def all_prices(self) -> dict[str, float]:
