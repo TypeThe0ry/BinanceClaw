@@ -101,3 +101,14 @@ describe("Chat trade plans", () => {
     expect(within(rows[1]).getByText("可信度 45%")).toHaveClass("text-down");
   });
 });
+
+describe("Chat synced with Telegram", () => {
+  beforeAll(() => { Element.prototype.scrollIntoView = () => {}; });
+
+  it("marks a question asked in Telegram and waits for its answer", async () => {
+    mockApi({ "GET /chat?limit=200": { cut: 0, plans: {}, messages: [{ id: 1, ts: now() - 5, channel: "telegram", role: "user", text: "BTC 多少钱" }] } });
+    renderPage(<Chat />);
+    expect(await screen.findByText("BTC 多少钱")).toBeInTheDocument();
+    expect(screen.getByTestId("from-telegram")).toBeInTheDocument();
+  });
+});

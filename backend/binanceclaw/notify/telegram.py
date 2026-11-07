@@ -15,8 +15,8 @@ from sqlmodel import desc, select
 
 from ..config import NOTIFY_TYPES, STYLES, VIEW_LABELS, ConfirmationRequired
 from ..core.autopilot import TRIGGER_LABELS
-from ..db import AiQuestion, Approval, Cycle, LimitOrder, Order
-from . import charts, policy
+from ..db import AiQuestion, Approval, ChatMessage, Cycle, LimitOrder, Order
+from . import charts, policy, tgformat
 
 log = logging.getLogger("binanceclaw.telegram")
 MAX = 4000
@@ -47,7 +47,7 @@ HELP = """BinanceClaw 指令
 /flat yes 平掉 BinanceClaw 的全部合约仓位
 /notify  推送设置：/notify 查看；/notify instant 或 /notify digest 60；/notify quiet 23:00-08:00 或 /notify quiet off；/notify off earn、/notify on earn
 /new     开始新的对话
-其他文字：直接发到「对话」，和网页共用同一段对话；AI 提的交易方案批准后才执行"""
+其他文字：直接发到「对话」，和网页共用同一段对话（网页上的问答也会同步到这里）；AI 提的交易方案批准后才执行"""
 
 
 def fmt_setting(v) -> str:
@@ -109,18 +109,33 @@ class TelegramBot:
             raise RuntimeError(f"telegram {method}: {body.get('description')}")
         raise RuntimeError(f"telegram {method}: {type(last).__name__}")
 
-    def send(self, text: str, buttons=None) -> int | None:
-        text = text.replace("**", "")   # Telegram plain text: drop Markdown bold markers
-        chunks = [text[i:i + MAX] for i in range(0, len(text), MAX)] or [""]
+    def send(self, text: str, buttons=None, html: bool = False) -> int | None:
+        """Plain text, or Telegram HTML (``html=True``) that falls back to plain text if Telegram rejects the markup."""
+        if html:
+            chunks = tgformat.split(text, MAX) or [""]
+        else:
+            text = text.replace("**", "")   # Telegram plain text: drop Markdown bold markers
+            chunks = [text[i:i + MAX] for i in range(0, len(text), MAX)] or [""]
         mid = None
         for i, ch in enumerate(chunks):
             p = {"chat_id": self.chat_id, "text": ch, "disable_web_page_preview": True}
+            if html:
+                p["parse_mode"] = "HTML"
             if buttons and i == len(chunks) - 1:
                 p["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in buttons]}
             try:
                 mid = self._call("sendMessage", p)["message_id"]
             except Exception as e:
-                log.warning("send failed: %s", e)
+                if not html:
+                    log.warning("send failed: %s", e)
+                    continue
+                log.warning("send HTML failed, sending plain text: %s", e)
+                p.pop("parse_mode")
+                p["text"] = tgformat.strip(ch)[:MAX]
+                try:
+                    mid = self._call("sendMessage", p)["message_id"]
+                except Exception as e2:
+                    log.warning("send failed: %s", e2)
         return mid
 
     def photo(self, png: bytes, caption: str = "", buttons=None) -> int | None:
@@ -184,7 +199,12 @@ class TelegramBot:
         elif kind == "order" and d.get("status") == "failed":
             self.send("⚠️ 下单失败，详见网页「交易」页")
         elif kind == "approval_created":
+            a = self.svc.db.get(Approval, d["id"])
+            if a and (a.payload or {}).get("source") == "chat":
+                return      # a chat plan goes out right under its reply (see send_chat_reply), like the card on the web
             self._send_approval(d["id"])
+        elif kind == "chat":
+            self._chat_event(d)
         elif kind == "question_created":
             self._send_question(d["id"])
         elif kind == "question":
@@ -366,10 +386,11 @@ class TelegramBot:
             return f"AI 建议改价：{tok}  挂单 {p.get('old_price'):g} → {p.get('price'):g}"
         if a.kind != "futures":
             p = a.payload or {}
+            side = "🟢 买入" if a.side == "BUY" else "🔴 卖出"      # green / red, like the web's buy / sell badge
             if p.get("order") == "limit":
-                return (f"{a.side} {a.symbol}  ${a.quote_usd:,.0f}  挂单 {'≤' if a.side == 'BUY' else '≥'} {p.get('price'):g}"
+                return (f"{side} {a.symbol}  ${a.quote_usd:,.0f}  挂单 {'≤' if a.side == 'BUY' else '≥'} {p.get('price'):g}"
                         f"（{p.get('hours', 24):g} 小时）")
-            return f"{a.side} {a.symbol}  ${a.quote_usd:,.0f}" + ("  市价" if p.get("source") == "chat" else "")
+            return f"{side} {a.symbol}  ${a.quote_usd:,.0f}" + ("  市价" if p.get("source") == "chat" else "")
         p = a.payload or {}
         name = {"OPEN_LONG": "合约开多", "OPEN_SHORT": "合约开空"}.get(a.side, a.side)
         out = f"{name} {a.symbol}  保证金 ${a.quote_usd:,.0f} × {p.get('leverage')}x\n止损 {p.get('stop_loss')}"
@@ -620,7 +641,7 @@ class TelegramBot:
         elif cmd == "/notify":
             self._notify_cmd(text.split()[1:])
         elif cmd == "/new":
-            svc.db.kv_set("chat_cut_ts", time.time())
+            svc.chat_new("telegram")
             self.send("已开始新的对话。")
         elif cmd.startswith("/"):
             self.send("未知指令\n\n" + HELP)
@@ -629,11 +650,41 @@ class TelegramBot:
 
     def _chat(self, text: str):
         """Plain Telegram text goes to the same conversation as the web 对话 page; the reply comes back here."""
+        self._typing()
+        self.send_chat_reply(self.svc.chat_message(text, "telegram"))
+
+    def _typing(self):
         try:
             self.http.post(f"{self.api}/sendChatAction", json={"chat_id": self.chat_id, "action": "typing"}, timeout=5)
         except Exception:
             pass
-        self.send(self.svc.chat(text, "telegram"))
+
+    def send_chat_reply(self, m: ChatMessage):
+        """An assistant reply formatted like the web 对话 page: Markdown, sources with credibility, then its plan cards."""
+        body = tgformat.md_to_html(m.text)
+        if m.sources:
+            body += "\n\n" + tgformat.sources_html(m.sources)
+        self.send(body, html=True)
+        for aid in m.approvals or []:
+            a = self.svc.db.get(Approval, aid)
+            if a and a.status == "pending" and a.tg_message_id is None:
+                self._send_approval(aid)
+
+    def _chat_event(self, d: dict):
+        """Mirror the web 对话 page: what the owner asked there and the AI's answer (Telegram's own turns are sent by _chat)."""
+        if d.get("channel") != "web":
+            return
+        if d.get("new"):
+            self.send("🆕 网页上开始了新的对话")
+            return
+        m = self.svc.db.get(ChatMessage, d.get("id")) if d.get("id") else None
+        if not m:
+            return
+        if m.role == "user":
+            self.send(f"🖥 <b>网页</b>\n<blockquote>{tgformat.esc(m.text)}</blockquote>", html=True)
+            self._typing()
+        else:
+            self.send_chat_reply(m)
 
     def cancel_limit(self, lid: str, mid: int | None):
         lo = self.svc.db.get(LimitOrder, lid)

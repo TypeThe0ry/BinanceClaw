@@ -99,8 +99,11 @@ export default function Chat() {
   const end = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const msgs = (data?.messages ?? []).filter((m) => m.ts > (data?.cut ?? 0));
+  const last = msgs[msgs.length - 1];
+  // a question asked in Telegram shows here right away; keep the spinner until its answer arrives
+  const waiting = busy || (last?.role === "user" && last.channel === "telegram" && Date.now() / 1000 - last.ts < 300);
 
-  useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [msgs.length, busy]);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [msgs.length, waiting]);
 
   async function send(t = text) {
     const q = t.trim();
@@ -124,10 +127,11 @@ export default function Chat() {
           </div>
         )}
         {msgs.map((m) => m.role === "user" ? (
-          <div key={m.id} className="flex justify-end">
+          <div key={m.id} className="flex flex-col items-end">
             <div className="max-w-[80%] rounded-2xl rounded-br-md bg-hover px-4 py-2.5 text-[14.5px] leading-relaxed">
               <p className="whitespace-pre-wrap break-words">{m.text}</p>
             </div>
+            {m.channel === "telegram" && <p className="mt-1 flex items-center gap-1 text-[11.5px] text-fg-3" data-testid="from-telegram"><TelegramLogo size={12} />{ago(m.ts)}</p>}
           </div>
         ) : (
           <div key={m.id} className="max-w-[92%]">
@@ -137,7 +141,7 @@ export default function Chat() {
             <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-fg-3">{m.channel === "telegram" && <TelegramLogo size={12} />}{ago(m.ts)}</p>
           </div>
         ))}
-        {busy && <Spinner />}
+        {waiting && <Spinner />}
         <div ref={end} />
       </div>
       <form className="flex items-center gap-2 rounded-xl bg-field p-1.5 pl-3" onSubmit={(e) => { e.preventDefault(); send(); }}>

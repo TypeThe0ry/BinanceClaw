@@ -134,9 +134,9 @@ def test_telegram_shows_limit_price():
     from binanceclaw.notify.telegram import TelegramBot
     a = Approval(expires=0, symbol="ETHUSDT", side="BUY", quote_usd=60,
                  payload={"source": "chat", "order": "limit", "price": 2400, "hours": 12})
-    assert TelegramBot._ap_title(a) == "BUY ETHUSDT  $60  挂单 ≤ 2400（12 小时）"
+    assert TelegramBot._ap_title(a) == "🟢 买入 ETHUSDT  $60  挂单 ≤ 2400（12 小时）"
     a.payload = {"source": "chat", "order": "market"}
-    assert TelegramBot._ap_title(a) == "BUY ETHUSDT  $60  市价"
+    assert TelegramBot._ap_title(a) == "🟢 买入 ETHUSDT  $60  市价"
 
 
 def test_ai_withdraws_a_plan_not_yet_approved(svc):
