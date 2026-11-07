@@ -35,6 +35,7 @@ export interface SettingsResp {
     strategy: { style: Style };
     outlook: Outlook;
     questions?: Questions;
+    limit_watch?: LimitWatch;
   };
   presets: Record<string, unknown>;
   candidates: string[];
@@ -62,6 +63,8 @@ export const NEWS_DEFAULT: NewsCfg = { enabled: true, source: "web", refresh_min
 export interface Routing { enabled: boolean; tasks: Record<string, Tier>; models: Record<string, Partial<Record<"fast" | "strong", string>>> }
 export interface Questions { enabled: boolean; question_timeout_minutes: number; on_timeout: "skip" | "auto" }
 export const QUESTIONS_DEFAULT: Questions = { enabled: true, question_timeout_minutes: 120, on_timeout: "skip" };
+export interface LimitWatch { enabled: boolean; interval_minutes: number; move_pct: number; require_approval: boolean }
+export const LIMIT_WATCH_DEFAULT: LimitWatch = { enabled: true, interval_minutes: 30, move_pct: 3, require_approval: false };
 export interface NotifyCfg {
   types: Record<string, boolean>; mode: "instant" | "digest"; digest_minutes: number;
   quiet: { enabled: boolean; start: string; end: string };

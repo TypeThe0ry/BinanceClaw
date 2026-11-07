@@ -213,9 +213,10 @@ export interface Approval {
   status: "pending" | "approved" | "rejected" | "expired" | "failed";
   resolved_by: string;
   result: string;
-  kind?: "spot" | "futures";
+  kind?: "spot" | "futures" | "limit";
   payload?: { leverage?: number; stop_loss?: number; take_profit?: number | null; margin_usd?: number;
-    source?: "chat"; order?: "market" | "limit"; price?: number; hours?: number };
+    source?: "chat" | "limit_watch"; order?: "market" | "limit"; price?: number; hours?: number;
+    op?: "cancel" | "reprice"; limit_id?: string; old_price?: number };
 }
 
 export interface LimitOrder {
@@ -231,6 +232,10 @@ export interface LimitOrder {
   result: string;
   order_id: string;
   done_at: number | null;
+  origin_price?: number;
+  reviewed_at?: number;
+  review?: string;
+  history?: { ts: number; action: "cancel" | "reprice"; from?: number; to?: number; reason: string; by: string }[];
 }
 
 export type ChatPlan = Approval & { limit: LimitOrder | null };

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { post } from "../api";
 import AllocationEditor from "../components/AllocationEditor";
-import { type ApprovalFree, type FuturesCfg, Num, type Outlook, QUESTIONS_DEFAULT, type Questions, Row, SettingsNav,
+import { type ApprovalFree, type FuturesCfg, LIMIT_WATCH_DEFAULT, type LimitWatch, Num, type Outlook, QUESTIONS_DEFAULT, type Questions, Row, SettingsNav,
   useSettingsDraft } from "../components/settingsKit";
 import TokenPicker from "../components/TokenPicker";
 import { Page, Seg, SectionHead, Skeleton } from "../components/ui";
@@ -77,6 +77,8 @@ export default function Config() {
   const setOl = (patch: Partial<Outlook>) => setD({ ...d, outlook: { ...ol, ...patch } });
   const q = d.questions ?? QUESTIONS_DEFAULT;
   const setQ = (patch: Partial<Questions>) => setD({ ...d, questions: { ...q, ...patch } });
+  const lw = d.limit_watch ?? LIMIT_WATCH_DEFAULT;
+  const setLw = (patch: Partial<LimitWatch>) => setD({ ...d, limit_watch: { ...lw, ...patch } });
 
   return (
     <Page className="mx-auto flex max-w-[820px] flex-col gap-10">
@@ -269,6 +271,29 @@ export default function Config() {
           </>
         )}
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ approval_free: d.approval_free })}>保存</button></div>
+      </section>
+
+      <section id="limit-watch">
+        <SectionHead title="挂单盯盘" doc="approvals" />
+        <Row label="AI 盯挂单">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={lw.enabled} aria-label="AI 盯挂单"
+            onChange={(e) => setLw({ enabled: e.target.checked })} />
+        </Row>
+        {lw.enabled && (
+          <>
+            <Row label="检查间隔">
+              <Num unit="分钟" value={lw.interval_minutes} min={5} max={240} step={5} onChange={(x) => setLw({ interval_minutes: x })} />
+            </Row>
+            <Row label="异动立即检查">
+              <Num unit="%" value={lw.move_pct} min={0.5} max={20} step={0.5} onChange={(x) => setLw({ move_pct: x })} />
+            </Row>
+            <Row label="撤单 / 降价需审批">
+              <input type="checkbox" className="h-4 w-4 accent-white" checked={lw.require_approval} aria-label="撤单 / 降价需审批"
+                onChange={(e) => setLw({ require_approval: e.target.checked })} />
+            </Row>
+          </>
+        )}
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ limit_watch: lw })}>保存</button></div>
       </section>
 
       <section id="memory">
