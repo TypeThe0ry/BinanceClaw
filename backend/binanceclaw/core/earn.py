@@ -5,7 +5,8 @@
   stablecoins. Stablecoins keep ``keep_liquid_usd`` (plus what pending approvals may need) in spot;
   locked amounts are never moved;
 * ensure_liquid(): right before a buy, a sell or a futures margin transfer, the shortfall is
-  redeemed back to spot. For the risk engine and the AI, balances in Earn count as available.
+  redeemed back to spot. ensure_quote() also converts other stablecoins (USDC -> USDT) when the
+  quote asset alone is short. For the risk engine and the AI, balances in Earn count as available.
 
 Paper mode keeps Earn balances in the paper ledger under ``EARN:<ASSET>`` (no interest accrues).
 """
@@ -14,6 +15,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+import uuid
 
 from sqlmodel import select
 
@@ -165,6 +167,63 @@ class EarnManager:
                 time.sleep(wait)
             if self._spot_free(asset) < need:
                 raise ExchangeError(f"{asset} 已提交赎回，但资金尚未到账现货，稍后重试")
+
+    def ensure_quote(self, need: float) -> None:
+        """Make spot hold ``need`` of the quote asset before a buy or a margin transfer: first redeem
+        the quote from Earn, then convert other stablecoins (spot or Earn) through their 1:1 pair,
+        e.g. USDC -> USDT. The risk engine counts every stablecoin as spendable, so this is what
+        lets USDC fund a BTCUSDT buy."""
+        s = self.svc.settings_store.get()
+        q = s.quote
+        if need - self._spot_free(q) <= 0:
+            return
+        in_earn = self.positions(0).get(q, {}).get("amount", 0.0) if self.covers(q) else 0.0
+        if in_earn > 0:
+            self.ensure_liquid(q, min(need, self._spot_free(q) + in_earn))
+        short = need - self._spot_free(q)
+        if short <= 0:
+            return
+        pos = self.positions(0)
+        others = []
+        for a in s.stables:
+            if a == q:
+                continue
+            avail = max(self._spot_free(a), 0.0) + (pos.get(a, {}).get("amount", 0.0) if self.covers(a) else 0.0)
+            if avail > 0.01:
+                others.append((avail, a))
+        for avail, a in sorted(others, reverse=True):
+            if short <= 0:
+                break
+            self._convert(a, q, min(avail, max(short * 1.003 + 0.01, self.CONVERT_MIN_USD)))
+            short = need - self._spot_free(q)
+        if short > 0:
+            raise ExchangeError(f"{q} 余额不足：还差 {short:,.2f}，其他稳定币也不够换")
+
+    CONVERT_MIN_USD = 6        # Binance's minimum notional is $5; stay a little above it
+
+    def _convert(self, src: str, quote: str, amount: float) -> None:
+        """Turn ``amount`` of stablecoin ``src`` into ``quote`` with a market order on their pair."""
+        broker = self.svc.broker
+        pair_sell, pair_buy = f"{src}{quote}", f"{quote}{src}"
+        rules = broker.rules([pair_sell, pair_buy])
+        rule = rules.get(pair_sell) or rules.get(pair_buy)
+        if rule is None or rule.status != "TRADING":
+            raise ExchangeError(f"{src} 无法换成 {quote}：币安没有可交易的 {pair_sell} 交易对")
+        self.ensure_liquid(src, amount)
+        amount = min(amount, self._spot_free(src))
+        cid = "bclawc" + uuid.uuid4().hex[:18]
+        if rule.symbol == pair_sell:
+            qty = math.ceil(amount / rule.step_size - 1e-9) * rule.step_size if rule.step_size > 0 else amount
+            fill = broker.sell(pair_sell, min(qty, self._spot_free(src)), cid)
+            got = -fill.quote_spent
+        else:
+            fill = broker.buy(pair_buy, math.floor(amount * 100) / 100, cid)
+            got = fill.qty
+        if fill.status != "filled":
+            raise ExchangeError(f"{src} 换 {quote} 未成交（{fill.status}）")
+        msg = f"{src} {amount:,.2f} 已换成 {quote} {got:,.2f}"
+        log.info(msg)
+        self.svc.events.emit("earn", {"asset": src, "amount": amount, "dir": "convert", "text": msg, "by": "system"})
 
     def candidates(self) -> list[str]:
         """Assets sweep() looks at: everything held in spot (auto_all), or the chosen stablecoins."""

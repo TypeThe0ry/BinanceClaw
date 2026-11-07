@@ -642,7 +642,7 @@ class Settings(BaseModel):
         """Display/prompt view of targets for the current mode: {group: {tokens, band}}."""
         if self.allocation.mode == "ai":
             out = {t: {"tokens": {t: None}, "band": [0.0, 1.0]} for t in self.tradable_tokens()}
-            out["STABLE"] = {"tokens": {self.quote: None}, "band": [self.limits.stable_floor, 1.0]}
+            out["STABLE"] = {"tokens": {t: None for t in [self.quote, *self.stables] if t}, "band": [self.limits.stable_floor, 1.0]}
             return out
         out = {}
         for n, c in self.categories.items():

@@ -796,8 +796,8 @@ class Service:
         except ExchangeError:
             foreign = set(rules)                       # can't see the account: allow no new opens
         total = pf.total()
-        quote_bal = float(pf.balances.get(s.quote, 0.0))
-        spendable = min(quote_bal, pf.stable_value() - s.limits.stable_floor * total) - total * s.limits.fee_buffer_ratio
+        # every stablecoin counts: other stables are converted to the quote right before the transfer
+        spendable = pf.stable_value() - s.limits.stable_floor * total - total * s.limits.fee_buffer_ratio
         opens = self.db.all(select(FuturesTrade).where(FuturesTrade.mode == s.mode, FuturesTrade.day == self.today(),
                                                        FuturesTrade.action.in_(OPEN_OPS),
                                                        FuturesTrade.status.in_(("filled", "unknown"))))
@@ -1235,7 +1235,7 @@ class Service:
             try:
                 if op in OPEN_OPS:
                     margin = min(v.margin, float(action.get("margin_usd") or v.margin))
-                    self.earn.ensure_liquid(s.quote, margin * 1.03)
+                    self.earn.ensure_quote(margin * 1.03)
                     side = "LONG" if op == "OPEN_LONG" else "SHORT"
                     pos, fill = fb.open(sym, side, margin, v.leverage, v.stop_loss, v.take_profit, cid,
                                         {"cycle_id": cycle_id, "reason": str(action.get("reason", ""))[:1500],
@@ -1391,7 +1391,7 @@ class Service:
             btc_ref = prices.get("BTC")
             try:
                 if side == "BUY":
-                    self.earn.ensure_liquid(s.quote, amount)
+                    self.earn.ensure_quote(amount)
                     fill = self.broker.buy(symbol, amount, cid)
                 else:
                     token = symbol[: -len(s.quote)]
@@ -1867,6 +1867,12 @@ class Service:
                  "type": (a.payload or {}).get("order", "market"), "price": (a.payload or {}).get("price"),
                  "from": "chat" if (a.payload or {}).get("source") == "chat" else "decision", "expires": a.expires}
                 for a in self.db.pending_approvals() if a.kind == "spot"]
+            # approved limit plans and recent fills: without them the model cannot tell whether a level was
+            # already bought, or why today's order count and the balances disagree
+            slim["open_limit_orders"] = [
+                {"id": lo.id, "side": lo.side, "symbol": lo.symbol, "usd": round(lo.quote_usd, 2), "price": lo.price,
+                 "expires": lo.expires} for lo in self.open_limit_orders()]
+            slim["recent_orders"] = self.chat_recent_orders()
             news = self.latest_news()
             if news and news["items"] and self.settings.news.enabled:
                 slim["news"] = self.news_context(news)
@@ -1896,6 +1902,14 @@ class Service:
                                     approvals=approvals, sources=sources))
             self.events.emit("chat", {"channel": channel})
             return reply + ("\n\n" + self.format_sources(sources) if sources else "")
+
+    def chat_recent_orders(self, days: float = 14, n: int = 10) -> list[dict]:
+        """BinanceClaw's own orders in the current mode (newest first), including limit plans that triggered."""
+        rows = self.db.all(select(Order).where(Order.mode == self.settings.mode, Order.ts > time.time() - days * 86400)
+                           .order_by(desc(Order.ts)).limit(n))
+        limit_ids = {lo.order_id for lo in self.db.all(select(LimitOrder).where(LimitOrder.order_id != ""))}
+        return [{"day": o.day, "time": self._ago(o.ts), "side": o.side, "symbol": o.symbol, "usd": round(o.quote_usd, 2),
+                 "price": o.price, "status": o.status, "via": "limit" if o.id in limit_ids else o.via} for o in rows]
 
     def chat_can_search(self) -> bool:
         """Whether the chat model (or the fallback) can search the web itself."""
