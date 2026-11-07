@@ -163,8 +163,28 @@ class BinanceSpot:
         return [{"t": r[0] / 1000, "o": float(r[1]), "h": float(r[2]), "l": float(r[3]),
                  "c": float(r[4]), "v": float(r[5]), "close_t": r[6] / 1000} for r in rows]
 
+    INVALID_SYMBOL = -1121
+
     def symbol_rules(self, symbols: list[str]) -> dict[str, SymbolRules]:
-        info = self._request("GET", "/api/v3/exchangeInfo", {"symbols": json.dumps(symbols, separators=(",", ":"))})
+        """Rules for the listed pairs; pairs Binance doesn't list are left out.
+
+        exchangeInfo rejects the whole request with -1121 "Invalid symbol" when any one pair is
+        unknown (e.g. USDTUSDC while probing which way a stablecoin pair is listed), so on that
+        error each pair is asked for separately."""
+        symbols = list(dict.fromkeys(symbols))
+        if not symbols:
+            return {}
+        try:
+            info = self._request("GET", "/api/v3/exchangeInfo", {"symbols": json.dumps(symbols, separators=(",", ":"))})
+        except ExchangeError as e:
+            if e.code != self.INVALID_SYMBOL:
+                raise
+            if len(symbols) == 1:
+                return {}
+            out = {}
+            for sym in symbols:
+                out.update(self.symbol_rules([sym]))
+            return out
         out = {}
         for s in info["symbols"]:
             f = {x["filterType"]: x for x in s.get("filters", [])}
