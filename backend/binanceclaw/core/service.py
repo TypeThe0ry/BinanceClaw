@@ -248,6 +248,7 @@ class Service:
                       key=lambda b: (-held[b] * px[b], b))
         pending = [a.symbol[: -len(s.quote)] for a in self.db.pending_approvals()
                    if a.kind == "spot" and a.symbol.endswith(s.quote)]
+        pending += [lo.symbol[: -len(s.quote)] for lo in self.open_limit_orders() if lo.symbol.endswith(s.quote)]
         cared = [b for b in dict.fromkeys([*mine, *pending, *picks]) if b in pairs and b not in skip]
         chosen = [b for b in focus if b in pairs and b not in skip and b not in cared]
         out = [*cared, *chosen][:self.MAX_ROUND_ASSETS]
@@ -585,6 +586,43 @@ class Service:
             t = tickers.get(f"{b}{s.quote}") or {}
             out[b] = {"ticker": b[:-1], "price": t.get("price"), "change_24h": t.get("change_pct"),
                       "tradable": b in ok or self.allows(s, b)}
+        return out
+
+    MAX_CHAT_QUOTES = 8
+    _WORD = re.compile(r"[A-Za-z0-9]{2,15}")
+
+    def chat_quotes(self, text: str, known) -> dict[str, dict]:
+        """Live data for Binance spot assets the owner names in the message that are not already in
+        the chat context (any coin, not just the AI's round): 24 h stats plus 7/30-day change."""
+        s = self.settings
+        try:
+            pairs = {m["base"]: m for m in self._spot_markets() if m["quote"] == s.quote}
+            tickers = self._tickers_24h()
+        except ExchangeError:
+            return {}
+        skip = set(known) | set(s.stables) | {s.quote}
+        out: dict[str, dict] = {}
+        for w in self._WORD.findall(text):
+            t = w.upper()
+            if t.endswith(s.quote) and t != s.quote:
+                t = t[: -len(s.quote)]
+            if t in out or t in skip or t not in pairs:
+                continue
+            m, tk = pairs[t], tickers.get(f"{t}{s.quote}") or {}
+            row = {"price": tk.get("price"), "change_24h": tk.get("change_pct"), "high_24h": tk.get("high"),
+                   "low_24h": tk.get("low"), "quote_volume_24h": round(tk.get("quote_volume") or 0),
+                   "status": m.get("status", "TRADING"), "tradable": self.allows(s, t)}
+            try:
+                closes = [k["c"] for k in self._klines(f"{t}{s.quote}", "1d", 31)]
+                if len(closes) > 7 and closes[-8]:
+                    row["change_7d"] = round(closes[-1] / closes[-8] - 1, 4)
+                if len(closes) > 30 and closes[0]:
+                    row["change_30d"] = round(closes[-1] / closes[0] - 1, 4)
+            except ExchangeError:
+                pass
+            out[t] = row
+            if len(out) >= self.MAX_CHAT_QUOTES:
+                break
         return out
 
     def stock_scan(self, s, exclude) -> dict[str, dict]:
@@ -1375,6 +1413,9 @@ class Service:
                 source: str = "") -> tuple[bool, str, str]:
         """Last line of defence: re-run every risk check on fresh data, then trade."""
         with self._exec_lock:
+            # an approved plan or a triggered limit order for an asset the AI has since dropped from
+            # its focus: bring it back into the round so the checks below can see its price
+            self.admit([symbol[: -len(self.settings.quote)]] if symbol.endswith(self.settings.quote) else [])
             s = self.settings
             try:
                 prices, _m, btc_change, anomaly = self.market_snapshot(max_age=0)
@@ -1862,6 +1903,9 @@ class Service:
             slim["account"] = self.chat_account()
             slim["tradable"] = self.settings.tradable_tokens()
             slim["stock_tokens"] = self.chat_stock_tokens(slim["tradable"])
+            quotes = self.chat_quotes(text, [*slim["tradable"], *slim["stock_tokens"]])
+            if quotes:
+                slim["quotes"] = quotes
             slim["pending_plans"] = [
                 {"id": a.id, "side": a.side, "symbol": a.symbol, "usd": round(a.quote_usd, 2),
                  "type": (a.payload or {}).get("order", "market"), "price": (a.payload or {}).get("price"),
