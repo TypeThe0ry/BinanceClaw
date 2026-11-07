@@ -438,6 +438,14 @@ class Notify(BaseModel):
         return out
 
 
+class Autonomy(BaseModel):
+    """AI 全自主: the AI acts on its own inside the hard limits. Nothing waits for the owner: trades over the
+    auto-execute amount, sells, chat plans, futures opens and limit-plan changes execute directly, and an
+    unanswered question falls back to the AI's recommendation. Every hard limit of the risk engine still applies."""
+    full: bool = False                 # fresh installs start with True (fresh_settings)
+    question_timeout_minutes: int = Field(default=30, ge=5, le=1440)   # questions wait at most this long
+
+
 class ApprovalFree(BaseModel):
     """免审批: trades that would wait for the owner's approval run automatically instead, e.g. while
     they sleep. Only the approval step is skipped; every hard limit of the risk engine still applies."""
@@ -549,6 +557,7 @@ class Settings(BaseModel):
     limit_watch: LimitWatch = Field(default_factory=LimitWatch)
     notify: Notify = Field(default_factory=Notify)
     approval_free: ApprovalFree = Field(default_factory=ApprovalFree)
+    autonomy: Autonomy = Field(default_factory=Autonomy)
     strategy: Strategy = Field(default_factory=Strategy)
     outlook: Outlook = Field(default_factory=Outlook)
     investor_notes: str = "长期投资，BTC 为主。只做现货，不承诺收益。"
@@ -621,6 +630,18 @@ class Settings(BaseModel):
         return self
 
     # ---- derived helpers ----
+    def sells_allowed(self) -> bool:
+        return self.limits.allow_sell or self.autonomy.full
+
+    def question_timeout(self) -> int:
+        """Minutes a question waits; under AI 全自主 it never blocks a decision for long."""
+        qs = self.questions
+        return min(qs.question_timeout_minutes, self.autonomy.question_timeout_minutes) if self.autonomy.full \
+            else qs.question_timeout_minutes
+
+    def question_fallback(self) -> str:
+        return "auto" if self.autonomy.full else self.questions.on_timeout
+
     def tradable_tokens(self) -> list[str]:
         al = self.allocation
         enabled = [t for t in al.enabled if t not in self.stables and t != self.quote]
@@ -672,6 +693,11 @@ class Settings(BaseModel):
             if token in c.tokens:
                 return name
         return "STABLE" if token in self.stables else "OTHER"
+
+
+def fresh_settings() -> Settings:
+    """A new install: the AI decides and acts on its own (AI 全自主 + AI 自主分配), inside the hard limits."""
+    return Settings(autonomy=Autonomy(full=True), allocation=Allocation(mode="ai"))
 
 
 def owner_picks(s: "Settings") -> list[str]:
@@ -744,6 +770,7 @@ DANGEROUS: dict[str, str] = {
     "quote": "计价币",
     "stables": "稳定币列表",
     "live_gate_allow": "保留的 Key 权限",
+    "autonomy.full": "AI 全自主",
     "approval_free.mode": "免审批模式",
     "approval_free.start": "免审批开始时间",
     "approval_free.end": "免审批结束时间",
@@ -788,6 +815,7 @@ DECISION_FIELDS: dict[str, str] = {
     "debate": "多空辩论",
     "news": "联网新闻",
     "approval_free": "免审批",
+    "autonomy": "AI 全自主",
     "strategy": "交易风格",
     "outlook": "个人观点",
     "questions": "AI 提问",
@@ -820,7 +848,7 @@ class SettingsStore:
     def _load(self) -> Settings:
         if self.path.exists():
             return Settings.model_validate(json.loads(self.path.read_text()))
-        s = Settings()
+        s = fresh_settings()
         self._write(s)
         return s
 

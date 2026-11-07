@@ -32,6 +32,7 @@ export interface SettingsResp {
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number };
     notify?: NotifyCfg;
     approval_free: ApprovalFree;
+    autonomy?: { full: boolean; question_timeout_minutes: number };
     strategy: { style: Style };
     outlook: Outlook;
     questions?: Questions;

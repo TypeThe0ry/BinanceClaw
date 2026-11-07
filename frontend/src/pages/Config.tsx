@@ -71,6 +71,7 @@ export default function Config() {
   const lim = d.limits;
   const al = d.allocation;
   const setLim = (k: string, v: number | boolean) => setD({ ...d, limits: { ...lim, [k]: v } });
+  const auto = !!d.autonomy?.full;
   const af = d.approval_free;
   const setAf = (patch: Partial<ApprovalFree>) => setD({ ...d, approval_free: { ...af, ...patch } });
   const ol = d.outlook;
@@ -83,6 +84,16 @@ export default function Config() {
   return (
     <Page className="mx-auto flex max-w-[820px] flex-col gap-10">
       <SettingsNav current="/config" />
+
+      <section id="autonomy">
+        <SectionHead title="AI 全自主" doc="approvals" />
+        <Row label="AI 全自主">
+          <Seg id="autonomy" value={d.autonomy?.full ? "on" : "off"}
+            items={[{ k: "on" as const, label: "开启" }, { k: "off" as const, label: "关闭" }]}
+            onChange={(k) => save(k === "on" ? { autonomy: { full: true }, allocation: { mode: "ai" } } : { autonomy: { full: false } },
+              k === "on" ? "已开启 AI 全自主" : "已关闭 AI 全自主")} />
+        </Row>
+      </section>
 
       <section>
         <SectionHead title="风险预设" doc="risk-presets" />
@@ -245,33 +256,35 @@ export default function Config() {
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ limits: lim })}>保存</button></div>
       </section>
 
-      <section>
-        <SectionHead title="免审批" doc="approvals" />
-        <Row label="免审批模式">
-          <Seg id="approval-free" value={af.mode} onChange={(k) => setAf({ mode: k })}
-            items={[{ k: "off" as const, label: "关闭" }, { k: "window" as const, label: "按时段" }, { k: "always" as const, label: "一直开启" }]} />
-        </Row>
-        {af.mode === "window" && (
-          <Row label={`每天 · ${d.schedule.timezone}`}>
-            <input type="time" aria-label="免审批开始" className="input num h-9 w-32" value={af.start} onChange={(e) => setAf({ start: e.target.value })} />
-            <span className="text-fg-3">至</span>
-            <input type="time" aria-label="免审批结束" className="input num h-9 w-32" value={af.end} onChange={(e) => setAf({ end: e.target.value })} />
+      {!auto && (
+        <section>
+          <SectionHead title="免审批" doc="approvals" />
+          <Row label="免审批模式">
+            <Seg id="approval-free" value={af.mode} onChange={(k) => setAf({ mode: k })}
+              items={[{ k: "off" as const, label: "关闭" }, { k: "window" as const, label: "按时段" }, { k: "always" as const, label: "一直开启" }]} />
           </Row>
-        )}
-        {af.mode !== "off" && (
-          <>
-            <Row label="也包含卖出">
-              <input type="checkbox" className="h-4 w-4 accent-warn" checked={af.include_sell} aria-label="也包含卖出"
-                onChange={(e) => setAf({ include_sell: e.target.checked })} />
+          {af.mode === "window" && (
+            <Row label={`每天 · ${d.schedule.timezone}`}>
+              <input type="time" aria-label="免审批开始" className="input num h-9 w-32" value={af.start} onChange={(e) => setAf({ start: e.target.value })} />
+              <span className="text-fg-3">至</span>
+              <input type="time" aria-label="免审批结束" className="input num h-9 w-32" value={af.end} onChange={(e) => setAf({ end: e.target.value })} />
             </Row>
-            <Row label="也包含合约开仓">
-              <input type="checkbox" className="h-4 w-4 accent-warn" checked={af.include_futures} aria-label="也包含合约开仓"
-                onChange={(e) => setAf({ include_futures: e.target.checked })} />
-            </Row>
-          </>
-        )}
-        <div className="pt-4"><button className="btn-primary" onClick={() => save({ approval_free: d.approval_free })}>保存</button></div>
-      </section>
+          )}
+          {af.mode !== "off" && (
+            <>
+              <Row label="也包含卖出">
+                <input type="checkbox" className="h-4 w-4 accent-warn" checked={af.include_sell} aria-label="也包含卖出"
+                  onChange={(e) => setAf({ include_sell: e.target.checked })} />
+              </Row>
+              <Row label="也包含合约开仓">
+                <input type="checkbox" className="h-4 w-4 accent-warn" checked={af.include_futures} aria-label="也包含合约开仓"
+                  onChange={(e) => setAf({ include_futures: e.target.checked })} />
+              </Row>
+            </>
+          )}
+          <div className="pt-4"><button className="btn-primary" onClick={() => save({ approval_free: d.approval_free })}>保存</button></div>
+        </section>
+      )}
 
       <section id="limit-watch">
         <SectionHead title="挂单盯盘" doc="approvals" />
@@ -287,10 +300,12 @@ export default function Config() {
             <Row label="异动立即检查">
               <Num unit="%" value={lw.move_pct} min={0.5} max={20} step={0.5} onChange={(x) => setLw({ move_pct: x })} />
             </Row>
-            <Row label="撤单 / 降价需审批">
-              <input type="checkbox" className="h-4 w-4 accent-white" checked={lw.require_approval} aria-label="撤单 / 降价需审批"
-                onChange={(e) => setLw({ require_approval: e.target.checked })} />
-            </Row>
+            {!auto && (
+              <Row label="撤单 / 降价需审批">
+                <input type="checkbox" className="h-4 w-4 accent-white" checked={lw.require_approval} aria-label="撤单 / 降价需审批"
+                  onChange={(e) => setLw({ require_approval: e.target.checked })} />
+              </Row>
+            )}
           </>
         )}
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ limit_watch: lw })}>保存</button></div>
@@ -321,10 +336,12 @@ export default function Config() {
             onChange={(e) => setQ({ enabled: e.target.checked })} />
         </Row>
         <Row label="回答期限"><Num unit="分钟" value={q.question_timeout_minutes} min={b.question_timeout_minutes?.[0]} max={b.question_timeout_minutes?.[1]} onChange={(x) => setQ({ question_timeout_minutes: x })} /></Row>
-        <Row label="超时未回答时">
-          <Seg id="on-timeout" value={q.on_timeout} onChange={(k) => setQ({ on_timeout: k })}
-            items={[{ k: "skip" as const, label: "不操作" }, { k: "auto" as const, label: "按 AI 推荐执行" }]} />
-        </Row>
+        {!auto && (
+          <Row label="超时未回答时">
+            <Seg id="on-timeout" value={q.on_timeout} onChange={(k) => setQ({ on_timeout: k })}
+              items={[{ k: "skip" as const, label: "不操作" }, { k: "auto" as const, label: "按 AI 推荐执行" }]} />
+          </Row>
+        )}
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ questions: q })}>保存</button></div>
       </section>
 

@@ -29,6 +29,7 @@ SYSTEM = """你是 BinanceClaw 的投资决策模型，为一位长期投资者�
   接管或清仓一个主人可能有自己打算的资产、大幅调整配置、开较大的合约仓位。每个问题写清现状和你的判断（text），给 2–4 个选项（label 简短，detail 写选了之后你会怎么做），用 recommended 标出你推荐的选项，topic 用简短标识。
   提问的这件事本轮不要同时下单；主人回答后会立即唤醒你，那一轮按回答在风控内决策（questions.answers 里 new 为 true 的项）。主人超时未回答时按 questions.on_timeout 处理：skip 表示这件事不操作，auto 表示采用你推荐的选项。
   questions.pending 里还在等回答的事不要重复提问，也不要抢先操作；小额、常规、你有把握的操作不需要问。questions.enabled 为 false 时不要提问。
+  approval.autonomous 为 true（AI 全自主）时，主人希望你自主决策、尽量少打扰：配置调整、止盈止损、换仓这类判断由你在风控内直接做，不要提问；只有明显取决于主人个人打算的事（例如清仓主人原有的大额持仓）才问。
 - 只能动用 portfolio 里的资金，并遵守 capital.budget_remaining_usd（如有）。
 - 每个动作写清 reason（理由）和 invalidation（什么可观察的情况说明这个判断错了）。
 
@@ -85,7 +86,7 @@ def build_context(settings: Settings, pf, state, market: dict, recent: list[dict
             "max_orders_per_day": lim.max_orders_per_day,
             "max_daily_notional_usd": lim.max_daily_notional_usd,
             "stable_floor": lim.stable_floor,
-            "allow_sell": lim.allow_sell,
+            "allow_sell": settings.sells_allowed(),
             "btc_7d_drop_pause": lim.btc_7d_drop_pause,
         },
         "strategy": _strategy(settings),
@@ -212,6 +213,7 @@ CHAT_PLANS = """
   挂单买入价必须低于现价、卖出价必须高于现价；价格到了由系统下单。
 - 金额和币种要符合 <data> 里的配置与限额；不确定主人意图时先问清楚，不要写方案。
 写了方案就不要再问"要不要执行"，主人会在方案卡片上批准或拒绝。
+<data> 里 autonomous 为 true（AI 全自主）时，通过风控的方案写出来就立即执行（挂单立即开始盯价），不再等主人批准，所以只写你确实要执行的方案。
 <data> 里的 pending_plans 是还没被批准的方案（含挂单）。主人让你取消、或者行情变了方案不再合适时，单独写一行撤回：
 撤回：<id>
 可以写多行，每行一个；已批准的挂单你不能撤，请主人在卡片上撤单。改方案就先撤回旧的再写新的。

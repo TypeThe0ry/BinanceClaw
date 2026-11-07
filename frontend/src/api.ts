@@ -105,6 +105,7 @@ export interface Overview {
   earn?: { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }> };
   binance_categories?: Record<string, { primary: string; tags: string[] }>;
   approval_free?: { mode: "off" | "always" | "window"; start: string; end: string; active: boolean };
+  autonomy?: boolean;
   strategy?: "short" | "medium" | "long";
 }
 

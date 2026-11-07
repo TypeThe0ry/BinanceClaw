@@ -293,7 +293,8 @@ def svc(tmp_path):
                 fclient=FakeFutures())
     # most tests exercise the model's own plan; tests/test_universe.py covers rebalancing
     # tests/test_news.py covers the news step; elsewhere it would reach the network
-    s.settings_store.update({"allocation": {"auto_rebalance": False}, "news": {"enabled": False}})
+    s.settings_store.update({"allocation": {"mode": "targets", "auto_rebalance": False}, "autonomy": {"full": False},
+                             "news": {"enabled": False}})
     return s
 
 
@@ -301,3 +302,11 @@ def use(svc, *replies):
     p = FakeProvider(replies)
     svc.provider = p
     return p
+
+
+@pytest.fixture(autouse=True)
+def _classic_defaults(monkeypatch):
+    """Tests are written against the classic defaults (manual allocation, approvals on); a fresh install
+    starts in AI 全自主 instead, which tests/test_autonomy.py covers."""
+    from binanceclaw import config
+    monkeypatch.setattr(config, "fresh_settings", config.Settings)
