@@ -62,18 +62,28 @@ describe("Assets page", () => {
     expect(within(screen.getByText("BTC", { selector: "b" }).closest("tr")!).queryByText("只卖不买")).not.toBeInTheDocument();
   });
 
-  it("hides empty assets that are not targets until asked", async () => {
+  it("never lists zero-quantity assets, even targets", async () => {
     const ov = overview();
     ov.account_values = { ...ov.account_values!, PEPE: 0 };
     ov.targets = { ...ov.targets!, OTHER: { tokens: { SOL: null, ADA: 0.1 }, band: [0, 0.4] } };
     mockApi({ ...routes, "GET /overview": ov });
     renderPage(<Assets />);
     await screen.findByText("自选", { selector: "td" });
-    expect(screen.getByText("ADA")).toBeInTheDocument();
+    expect(screen.queryByText("ADA")).not.toBeInTheDocument();
     expect(screen.queryByText("PEPE")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /显示 1 个零余额资产/ }));
-    expect(screen.getByText("PEPE")).toBeInTheDocument();
-    expect(localStorage.getItem("bclaw:assets-show-empty")).toBe("1");
+  });
+
+  it("hides assets under 1 USDT when asked and remembers it", async () => {
+    const ov = overview();
+    ov.account_values = { ...ov.account_values!, SHIB: 0.4 };
+    ov.balances = { ...ov.balances!, SHIB: 30000 };
+    mockApi({ ...routes, "GET /overview": ov });
+    renderPage(<Assets />);
+    expect(await screen.findByText("SHIB")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: /隐藏 < 1 USDT/ }));
+    expect(screen.queryByText("SHIB")).not.toBeInTheDocument();
+    expect(screen.getByText("DOGE")).toBeInTheDocument();
+    expect(localStorage.getItem("bclaw:assets-hide-small")).toBe("1");
   });
 
   it("measures today's PnL from the current mode's rounds only", async () => {
