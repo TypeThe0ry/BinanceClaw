@@ -291,6 +291,16 @@ export default function Settings() {
             </div>
           </Row>
         )}
+        <Row label="稳定币自动互换">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.earn.swap ?? true} aria-label="稳定币自动互换"
+            onChange={(e) => setD({ ...d, earn: { ...d.earn, swap: e.target.checked } })} />
+        </Row>
+        {(d.earn.swap ?? true) && (
+          <Row label="挂单与待批准提前换好">
+            <input type="checkbox" className="h-4 w-4 accent-white" checked={d.earn.swap_prefund ?? true} aria-label="挂单与待批准提前换好"
+              onChange={(e) => setD({ ...d, earn: { ...d.earn, swap_prefund: e.target.checked } })} />
+          </Row>
+        )}
         <Row label="稳定币现货保留"><Num unit="USD" value={d.earn.keep_liquid_usd} min={0} onChange={(x) => setD({ ...d, earn: { ...d.earn, keep_liquid_usd: x } })} /></Row>
         <Row label="最小划转"><Num unit="USD" value={d.earn.min_move_usd} min={1} onChange={(x) => setD({ ...d, earn: { ...d.earn, min_move_usd: x } })} /></Row>
         {Object.entries(earn.data?.positions ?? {}).map(([a, p]) => (

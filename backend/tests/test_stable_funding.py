@@ -69,10 +69,73 @@ def test_chat_limit_plan_goes_through_and_triggers(usdc_svc):
     assert svc.chat_recent_orders()[0]["via"] == "limit"
 
 
-def test_no_conversion_pair_fails_cleanly(usdc_svc):
-    rules = usdc_svc.client.symbol_rules
-    usdc_svc.client.symbol_rules = lambda syms: {k: v for k, v in rules(syms).items() if k != "USDCUSDT"}
-    usdc_svc.broker._rules.clear()
+def _no_pair(svc):
+    rules = svc.client.symbol_rules
+    svc.client.symbol_rules = lambda syms: {k: v for k, v in rules(syms).items() if k != "USDCUSDT"}
+    svc.broker._rules.clear()
+
+
+def test_no_pair_falls_back_to_convert(usdc_svc):
+    _no_pair(usdc_svc)
     ok, msg, _ = usdc_svc.execute("BUY", "BTCUSDT", 1000, via="approved")
-    assert not ok and "USDC" in msg
+    assert ok, msg
+    assert spot(usdc_svc, "BTC") > 0.012
+
+
+def test_swap_off_fails_cleanly(usdc_svc):
+    usdc_svc.update_settings({"earn": {"swap": False}})
+    ok, msg, _ = usdc_svc.execute("BUY", "BTCUSDT", 1000, via="approved")
+    assert not ok and "USDT" in msg and "互换已关闭" in msg
     assert spot(usdc_svc, "BTC") == 0
+
+
+def test_convert_failure_fails_cleanly(usdc_svc, monkeypatch):
+    from binanceclaw.exchange.binance_spot import ExchangeError
+    _no_pair(usdc_svc)
+
+    def boom(*a):
+        raise ExchangeError("闪兑不可用")
+    monkeypatch.setattr(usdc_svc.earn, "_convert_api", boom)
+    ok, msg, _ = usdc_svc.execute("BUY", "BTCUSDT", 1000, via="approved")
+    assert not ok and "USDC" in msg and "闪兑不可用" in msg
+    assert spot(usdc_svc, "BTC") == 0
+
+
+def test_usdt_converts_into_usdc(svc):
+    """The other direction (quote USDC, or a trade that needs USDC): USDT -> USDC through USDCUSDT."""
+    svc.client.prices_map["USDCUSDT"] = 1.0
+    rules = svc.client.symbol_rules
+
+    def symbol_rules(symbols):
+        out = rules([s for s in symbols if s != "USDCUSDT"])
+        if "USDCUSDT" in symbols:
+            out["USDCUSDT"] = SymbolRules("USDCUSDT", "USDC", "USDT", "TRADING", 1.0, 1.0, 5.0, 0.0001, 8)
+        return out
+
+    svc.client.symbol_rules = symbol_rules
+    svc.broker.balances()
+    svc.earn.ensure_stable("USDC", 500)
+    assert spot(svc, "USDC") >= 500
+    assert 9400 < spot(svc, "USDT") < 9510
+
+
+def test_prefund_converts_for_open_limit_buy(usdc_svc):
+    svc = usdc_svc
+    use(svc, "挂单\n方案：" + json.dumps({"side": "BUY", "symbol": "BTC", "usd": 1000, "type": "limit",
+                                          "price": 70000, "hours": 24, "reason": "r", "invalidation": "i"}))
+    svc.chat("挂单")
+    a = svc.db.pending_approvals()[0]
+    assert svc.resolve_approval(a.id, True, "web")[0]
+    assert spot(svc, "USDT") < 100
+    msgs = svc.earn.prefund()
+    assert msgs and spot(svc, "USDT") >= 1000
+    assert svc.earn.prefund() == []                         # already covered: nothing more to convert
+
+
+def test_prefund_off(usdc_svc):
+    svc = usdc_svc
+    svc.update_settings({"earn": {"swap_prefund": False}})
+    svc.create_approval("", "BUY", "BTCUSDT", 1000, "r", "i")
+    assert svc.earn.prefund() == []
+    assert spot(svc, "USDT") < 100
+
