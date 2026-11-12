@@ -52,6 +52,7 @@ from ..db import (
 from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
 from ..exchange.broker import Broker, OrderUnknown
+from ..exchange.futures_broker import QUOTE as FUTURES_QUOTE
 from ..exchange.futures_broker import FuturesBroker
 from ..exchange.stream import PriceStream
 from ..risk import gate
@@ -1245,7 +1246,7 @@ class Service:
             try:
                 if op in OPEN_OPS:
                     margin = min(v.margin, float(action.get("margin_usd") or v.margin))
-                    self.earn.ensure_quote(margin * 1.03)
+                    self.earn.ensure_stable(FUTURES_QUOTE, margin * 1.03)
                     side = "LONG" if op == "OPEN_LONG" else "SHORT"
                     pos, fill = fb.open(sym, side, margin, v.leverage, v.stop_loss, v.take_profit, cid,
                                         {"cycle_id": cycle_id, "reason": str(action.get("reason", ""))[:1500],
@@ -2658,6 +2659,7 @@ class Service:
                 self._every("limit_orders", 10, self.check_limit_orders)
                 self._every("limit_watch", 60, self._limit_watch_tick)
                 self._every("futures", 10, self.futures_watch)
+                self._every("stable_swap", 60, self.earn.prefund)
                 self._every("earn", 600, self.earn.sweep)
                 self._every("watchdog", 300, self.watchdog)
                 self._every("backup", 3600, self.backup_db)

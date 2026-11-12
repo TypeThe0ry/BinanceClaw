@@ -1,6 +1,6 @@
-"""Minimal Binance REST clients (HMAC-SHA256): spot, Simple Earn flexible, spot<->USDⓈ-M
-transfer, and (in binance_futures.py) USDⓈ-M perpetuals. No withdrawal, margin-borrow or
-sub-account endpoints exist anywhere in this package, on purpose."""
+"""Minimal Binance REST clients (HMAC-SHA256): spot, Simple Earn flexible, Convert (stablecoin
+to stablecoin only), spot<->USDⓈ-M transfer, and (in binance_futures.py) USDⓈ-M perpetuals.
+No withdrawal, margin-borrow or sub-account endpoints exist anywhere in this package, on purpose."""
 from __future__ import annotations
 
 import hashlib
@@ -233,6 +233,18 @@ class BinanceSpot:
             "symbol": symbol, "side": "SELL", "type": "MARKET", "quantity": qty,
             "newClientOrderId": client_order_id, "newOrderRespType": "FULL",
         }, signed=True)
+
+    # ---------------------------------------------------------------- Convert (stablecoin <-> stablecoin only)
+    def convert_quote(self, from_asset: str, to_asset: str, from_amount: float) -> dict:
+        return self._request("POST", "/sapi/v1/convert/getQuote", {
+            "fromAsset": from_asset, "toAsset": to_asset, "fromAmount": f"{from_amount:.8f}".rstrip("0").rstrip("."),
+            "walletType": "SPOT"}, signed=True)
+
+    def convert_accept(self, quote_id: str) -> dict:
+        return self._request("POST", "/sapi/v1/convert/acceptQuote", {"quoteId": quote_id}, signed=True)
+
+    def convert_status(self, order_id: str) -> dict:
+        return self._request("GET", "/sapi/v1/convert/orderStatus", {"orderId": order_id}, signed=True)
 
     # ---------------------------------------------------------------- Simple Earn (flexible)
     def earn_products(self, asset: str) -> list[dict]:

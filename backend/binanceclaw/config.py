@@ -358,6 +358,8 @@ class Earn(BaseModel):
     assets: list[str] = Field(default_factory=lambda: ["USDT"])   # stablecoins, used when auto_all is off
     keep_liquid_usd: float = 200                 # always leave this much in spot
     min_move_usd: float = 20                     # ignore smaller subscriptions/redemptions
+    swap: bool = True                            # convert between stablecoins (USDT <-> USDC ...) when one is short
+    swap_prefund: bool = True                    # convert ahead for approved limit buys and pending approvals
 
     @field_validator("assets")
     @classmethod
