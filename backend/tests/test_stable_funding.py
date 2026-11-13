@@ -139,3 +139,15 @@ def test_prefund_off(usdc_svc):
     assert svc.earn.prefund() == []
     assert spot(svc, "USDT") < 100
 
+
+
+def test_lossy_conversion_is_topped_up(usdc_svc):
+    """USDC trades below 1 USDT and the sale pays a fee: one pass lands a little short of the order
+    ("还差 0.05"), so the swap asks again instead of failing the buy."""
+    usdc_svc.client.prices_map["USDCUSDT"] = 0.99
+    usdc_svc.broker._rules.clear()
+    usdt_before = spot(usdc_svc, "USDT")
+    ok, msg, _ = usdc_svc.execute("BUY", "BTCUSDT", 1000, via="approved")
+    assert ok, msg
+    assert spot(usdc_svc, "BTC") > 0.012
+    assert spot(usdc_svc, "USDT") >= 0 and usdt_before < 100

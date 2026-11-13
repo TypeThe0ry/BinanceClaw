@@ -196,22 +196,34 @@ class EarnManager:
             why = f"（{'；'.join(tried)}）" if tried else ""
             raise ExchangeError(f"{target} 余额不足：还差 {left:,.2f}，其他稳定币也不够换{why}")
 
+    SWAP_PASSES = 3
+
     def _swap_into(self, target: str, amount: float) -> tuple[float, list[str]]:
         """Convert other stablecoins until spot holds ``amount`` more ``target``.
+        A conversion lands a little under its face value (pair price, fee, lot size), so the sources are
+        asked again, with a margin on what is still missing, until covered or nothing is left to convert.
         Returns (what is still missing, why each failed source failed)."""
         goal = self._spot_free(target) + amount
-        short, tried = amount, []
-        for avail, a in self._other_stables(target):
-            if short <= 0:
+        short, tried, dead = amount, [], set()
+        for _ in range(self.SWAP_PASSES):
+            moved = False
+            for avail, a in self._other_stables(target):
+                if short <= 0:
+                    break
+                if a in dead:
+                    continue
+                try:
+                    self._convert(a, target, min(avail, max(short * 1.005 + 0.05, self.CONVERT_MIN_USD)))
+                    moved = True
+                except OrderUnknown:
+                    raise
+                except ExchangeError as e:
+                    log.warning("convert %s -> %s failed: %s", a, target, e)
+                    tried.append(f"{a}：{e}")
+                    dead.add(a)
+                short = goal - self._spot_free(target)
+            if short <= 1e-9 or not moved:
                 break
-            try:
-                self._convert(a, target, min(avail, max(short * 1.003 + 0.01, self.CONVERT_MIN_USD)))
-            except OrderUnknown:
-                raise
-            except ExchangeError as e:
-                log.warning("convert %s -> %s failed: %s", a, target, e)
-                tried.append(f"{a}：{e}")
-            short = goal - self._spot_free(target)
         return short, tried
 
     def _other_stables(self, target: str) -> list[tuple[float, str]]:
