@@ -1402,7 +1402,7 @@ class Service:
             btc_ref = prices.get("BTC")
             try:
                 if side == "BUY":
-                    self.earn.ensure_quote(amount)
+                    amount = self.earn.ensure_quote(amount, shrink=True)
                     fill = self.broker.buy(symbol, amount, cid)
                 else:
                     token = symbol[: -len(s.quote)]
