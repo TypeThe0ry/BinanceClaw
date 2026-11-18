@@ -47,19 +47,32 @@ class EarnManager:
         return self.svc.settings_store.get().mode == "live"
 
     # ---------------------------------------------------------------- reading
-    def positions(self, max_age: float = 60) -> dict[str, dict]:
-        """asset -> {amount, apr, product_id}. Live: every flexible position on the account."""
+    def positions(self, max_age: float = 60, strict: bool = False) -> dict[str, dict]:
+        """asset -> {amount, apr, product_id}. Live: every flexible position on the account.
+        ``strict``: raise when Binance cannot be read, instead of answering with the last known (or no)
+        positions; funding an order must not mistake a failed lookup for an empty Earn wallet."""
         if self._pos and time.time() - self._pos[0] < max_age:
             return self._pos[1]
         out: dict[str, dict] = {}
         if self.live:
-            try:
-                for r in self.svc.client.earn_positions():
-                    a = r["asset"]
-                    out[a] = {"amount": out.get(a, {}).get("amount", 0.0) + float(r.get("totalAmount") or 0),
-                              "apr": float(r.get("latestAnnualPercentageRate") or 0), "product_id": r.get("productId")}
-            except (ExchangeError, AttributeError) as e:
-                log.warning("earn positions unavailable: %s", e)
+            last_err = None
+            for attempt in range(2 if strict else 1):
+                try:
+                    out = {}
+                    for r in self.svc.client.earn_positions():
+                        a = r["asset"]
+                        out[a] = {"amount": out.get(a, {}).get("amount", 0.0) + float(r.get("totalAmount") or 0),
+                                  "apr": float(r.get("latestAnnualPercentageRate") or 0), "product_id": r.get("productId")}
+                    last_err = None
+                    break
+                except (ExchangeError, AttributeError) as e:
+                    last_err = e
+                    if attempt == 0 and strict:
+                        time.sleep(0.5)
+            if last_err is not None:
+                log.warning("earn positions unavailable: %s", last_err)
+                if strict:
+                    raise ExchangeError(f"读取活期理财持仓失败：{last_err}")
                 return self._pos[1] if self._pos else {}
         else:
             for row in self.svc.db.all(select(PaperBalance)):
@@ -150,14 +163,15 @@ class EarnManager:
         raw = self.svc.broker.balances().get(asset, 0.0)
         return raw - self.svc.settings_store.get().capital.locked.get(asset, 0.0)
 
-    def ensure_liquid(self, asset: str, need: float) -> None:
-        """Redeem enough so that spot holds ``need`` of ``asset`` (beyond locked amounts)."""
-        if not self.covers(asset):
+    def ensure_liquid(self, asset: str, need: float, force: bool = False) -> None:
+        """Redeem enough so that spot holds ``need`` of ``asset`` (beyond locked amounts).
+        ``force``: also when BinanceClaw does not manage this asset's Earn balance (an order needs it)."""
+        if not (force or self.covers(asset)):
             return
         short = need - self._spot_free(asset)
         if short <= 0:
             return
-        have = self.positions(0).get(asset, {}).get("amount", 0)
+        have = self.positions(0, strict=force).get(asset, {}).get("amount", 0)
         if have <= 0:
             return
         if asset in self.svc.settings_store.get().stables:
@@ -173,28 +187,49 @@ class EarnManager:
             if self._spot_free(asset) < need:
                 raise ExchangeError(f"{asset} 已提交赎回，但资金尚未到账现货，稍后重试")
 
-    def ensure_quote(self, need: float) -> None:
+    def ensure_quote(self, need: float, shrink: bool = False) -> float:
         """Make spot hold ``need`` of the quote asset before a buy. The risk engine counts every
-        stablecoin as spendable, so this is what lets USDC fund a BTCUSDT buy (and USDT a BTCUSDC one)."""
-        self.ensure_stable(self.svc.settings_store.get().quote, need)
+        stablecoin as spendable, so this is what lets USDC fund a BTCUSDT buy (and USDT a BTCUSDC one).
+        Returns what the buy may spend (see ensure_stable's ``shrink``)."""
+        return self.ensure_stable(self.svc.settings_store.get().quote, need, shrink)
 
-    def ensure_stable(self, target: str, need: float) -> None:
-        """Make spot hold ``need`` of stablecoin ``target``: first redeem it from Earn, then convert
-        other stablecoins (spot or Earn), largest first, e.g. USDC -> USDT or USDT -> USDC."""
+    # A buy that is still this little short after Earn and every other stablecoin were used (rounding,
+    # a conversion landing a few cents under face value) spends what is there instead of failing.
+    SHRINK_MAX_USD = 2.0
+    SHRINK_MAX_RATIO = 0.01
+    REDEEM_BUFFER = 0.002          # redeem a little more than the shortfall: Earn amounts and fills round
+
+    def ensure_stable(self, target: str, need: float, shrink: bool = False) -> float:
+        """Make spot hold ``need`` of stablecoin ``target``: first redeem it from flexible Earn (with a
+        small buffer), then convert other stablecoins (spot or Earn), largest first, e.g. USDC -> USDT.
+        Every flexible Earn balance of a stablecoin can fund an order, also one sweep() does not manage.
+        ``shrink``: when a small shortfall is left (≤ SHRINK_MAX_USD and ≤ SHRINK_MAX_RATIO of ``need``),
+        return what spot holds instead of raising. Returns the amount that may be spent."""
         if need - self._spot_free(target) <= 0:
-            return
-        in_earn = self.positions(0).get(target, {}).get("amount", 0.0) if self.covers(target) else 0.0
+            return need
+        pos = self.positions(0, strict=True)
+        in_earn = pos.get(target, {}).get("amount", 0.0)
         if in_earn > 0:
-            self.ensure_liquid(target, min(need, self._spot_free(target) + in_earn))
+            want = need * (1 + self.REDEEM_BUFFER) + 0.01
+            self.ensure_liquid(target, min(want, self._spot_free(target) + in_earn), force=True)
         short = need - self._spot_free(target)
         if short <= 0:
-            return
+            return need
+        left, tried = short, []
+        if self.cfg.swap:
+            left, tried = self._swap_into(target, short)
+            if left <= 0:
+                return need
+        spot = max(self._spot_free(target), 0.0)
+        if shrink and left <= min(self.SHRINK_MAX_USD, need * self.SHRINK_MAX_RATIO) and spot > 0:
+            got = math.floor(spot * 100) / 100
+            log.info("%s short by %.4f after Earn and swaps: spending %.2f instead of %.2f", target, left, got, need)
+            return got
+        held = f"现货 {spot:,.2f}，理财 {self.positions(0).get(target, {}).get('amount', 0.0):,.2f}"
         if not self.cfg.swap:
-            raise ExchangeError(f"{target} 余额不足：还差 {short:,.2f}（稳定币自动互换已关闭）")
-        left, tried = self._swap_into(target, short)
-        if left > 0:
-            why = f"（{'；'.join(tried)}）" if tried else ""
-            raise ExchangeError(f"{target} 余额不足：还差 {left:,.2f}，其他稳定币也不够换{why}")
+            raise ExchangeError(f"{target} 余额不足：还差 {left:,.2f}（{held}；稳定币自动互换已关闭）")
+        why = f"；{'；'.join(tried)}" if tried else ""
+        raise ExchangeError(f"{target} 余额不足：还差 {left:,.2f}（{held}），其他稳定币也不够换{why}")
 
     SWAP_PASSES = 3
 
@@ -229,12 +264,12 @@ class EarnManager:
     def _other_stables(self, target: str) -> list[tuple[float, str]]:
         """(available, asset) for every other stablecoin, spot + managed Earn, largest first."""
         s = self.svc.settings_store.get()
-        pos = self.positions(0)
+        pos = self.positions(0, strict=True)
         out = []
         for a in s.stables:
             if a == target:
                 continue
-            avail = max(self._spot_free(a), 0.0) + (pos.get(a, {}).get("amount", 0.0) if self.covers(a) else 0.0)
+            avail = max(self._spot_free(a), 0.0) + pos.get(a, {}).get("amount", 0.0)
             if avail > 0.01:
                 out.append((avail, a))
         return sorted(out, reverse=True)
@@ -287,7 +322,7 @@ class EarnManager:
         pair_sell, pair_buy = f"{src}{target}", f"{target}{src}"
         rules = broker.rules([pair_sell, pair_buy])
         rule = rules.get(pair_sell) or rules.get(pair_buy)
-        self.ensure_liquid(src, amount)
+        self.ensure_liquid(src, amount, force=True)
         amount = min(amount, self._spot_free(src))
         if amount <= 0:
             raise ExchangeError(f"现货没有可用的 {src}")

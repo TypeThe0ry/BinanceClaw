@@ -151,3 +151,44 @@ def test_lossy_conversion_is_topped_up(usdc_svc):
     assert ok, msg
     assert spot(usdc_svc, "BTC") > 0.012
     assert spot(usdc_svc, "USDT") >= 0 and usdt_before < 100
+
+
+def test_buy_redeems_usdt_earn_even_when_not_managed(svc):
+    """The owner parked USDT in flexible Earn by hand and BinanceClaw does not manage Earn: an order
+    still takes what it needs out of Earn instead of failing with 余额不足."""
+    svc.broker.balances()
+    svc.earn.subscribe("USDT", 9950)
+    svc.update_settings({"earn": {"enabled": False}})
+    assert svc.earn.ensure_quote(500) == 500
+    assert spot(svc, "USDT") >= 500 * 1.002
+    assert 9450 < svc.earn.positions(0)["USDT"]["amount"] < 9500
+
+
+def test_small_shortfall_spends_what_is_there(svc):
+    """After Earn and every other stablecoin are used, a few cents short ("还差 0.14") buys a few cents
+    less instead of failing the order."""
+    svc.broker.balances()
+    svc.broker._paper_apply({"USDT": -9900})               # 100 USDT left: 20 in spot, 80 in Earn
+    svc.earn.subscribe("USDT", 80)
+    got = svc.earn.ensure_quote(100.14, shrink=True)
+    assert 99.99 <= got <= 100 and spot(svc, "USDT") >= got
+    assert "USDT" not in svc.earn.positions(0)
+
+
+def test_large_shortfall_still_fails_with_holdings(svc):
+    from binanceclaw.exchange.binance_spot import ExchangeError
+    svc.broker.balances()
+    svc.broker._paper_apply({"USDT": -9900})
+    with pytest.raises(ExchangeError) as e:
+        svc.earn.ensure_quote(150, shrink=True)
+    assert "还差 50.00" in str(e.value) and "现货 100.00" in str(e.value)
+
+
+def test_execute_buy_after_small_shortfall(usdc_svc, monkeypatch):
+    """Service.execute buys with what is there when the order is a few cents short."""
+    svc = usdc_svc
+    monkeypatch.setattr(svc.earn, "_swap_into", lambda t, a: (a, []))   # nothing left to convert
+    svc.broker._paper_apply({"USDT": 930})                               # 1,000 USDT in spot
+    ok, msg, _ = svc.execute("BUY", "BTCUSDT", 1000.14, via="approved")
+    assert ok, msg
+    assert spot(svc, "USDT") < 1
