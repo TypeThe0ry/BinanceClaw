@@ -111,4 +111,16 @@ describe("Assets page", () => {
     expect(within(section("Meme")).getByText("DOGE")).toBeInTheDocument();
     expect(screen.queryByText("Layer 1 / Layer 2", { selector: "td" })).not.toBeInTheDocument();
   });
+
+  it("lists every Binance stock contract in its own section", async () => {
+    mockApi({ ...routes, "GET /futures/markets?tradfi=true&limit=300": [
+      { token: "NVDA", symbol: "NVDAUSDT", price: 180, change_pct: 0.02, quote_volume: 5e7, enabled: false, tradfi: true },
+      { token: "TSLA", symbol: "TSLAUSDT", price: 400, change_pct: -0.01, quote_volume: 4e7, enabled: false, tradfi: true },
+    ] });
+    renderPage(<Assets />);
+    await userEvent.click(await screen.findByRole("button", { name: /合约/ }));
+    const stocks = (await screen.findByText("股票合约", { selector: "td" })).closest("tbody")!;
+    expect(within(stocks).getByText("NVDA")).toHaveAttribute("href", "/futures?symbol=NVDAUSDT");
+    expect(within(stocks).getByText("TSLA")).toBeInTheDocument();
+  });
 });

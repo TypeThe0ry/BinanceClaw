@@ -406,9 +406,9 @@ def create_app(svc, static_dir: Path | None = None) -> FastAPI:
         return svc.futures_overview()
 
     @app.get("/api/futures/markets", dependencies=auth)
-    def futures_markets(q: str = "", limit: int = 50):
+    def futures_markets(q: str = "", limit: int = 50, tradfi: bool = False):
         try:
-            return svc.futures_markets(q[:20], min(max(limit, 1), 200))
+            return svc.futures_markets(q[:20], min(max(limit, 1), 300), tradfi=tradfi)
         except ExchangeError as e:
             raise HTTPException(502, str(e)) from e
 

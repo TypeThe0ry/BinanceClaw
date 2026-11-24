@@ -1,6 +1,6 @@
 import { CrosshairMode, createChart, type IChartApi, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { post, type FPosition, type FuturesResp, type Kline } from "../api";
 import SymbolSearch from "../components/SymbolSearch";
 import { Empty, Page, SectionHead, Seg, Side, Skeleton, Tabs } from "../components/ui";
@@ -55,7 +55,8 @@ function PerpChart({ symbol, iv, pos }: { symbol: string; iv: Iv; pos?: FPositio
 export default function Futures() {
   const { data, reload } = useApi<FuturesResp>("/futures", { poll: 5000, kinds: ["futures", "approval", "settings", "paper_reset"] });
   const toast = useToast();
-  const [sel, setSel] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  const [sel, setSel] = useState<string | null>(() => params.get("symbol")?.toUpperCase() || null);
   const [iv, setIv] = useState<Iv>("1h");
   const [tab, setTab] = useState<"closed" | "trades">("closed");
   const [busy, setBusy] = useState<string | null>(null);
