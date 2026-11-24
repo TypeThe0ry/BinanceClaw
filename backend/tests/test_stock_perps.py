@@ -84,3 +84,10 @@ def test_live_open_signs_tradfi_agreement_once(svc):
     assert fc.calls.index(signs[0]) < fc.calls.index(("leverage", "NVDAUSDT", 2))
     svc.fbroker.open("BTCUSDT", "LONG", 100, 3, 78000, None, "cidn2", {})
     assert len([c for c in fc.calls if c[0] == "sign_tradfi"]) == 1
+
+
+def test_markets_tradfi_filter(svc):
+    _add_nvda(svc)
+    rows = svc.futures_markets("", 300, tradfi=True)
+    assert [r["symbol"] for r in rows] == ["NVDAUSDT"]
+    assert svc.overview()["futures"]["stocks"] is True

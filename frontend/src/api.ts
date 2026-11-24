@@ -101,7 +101,7 @@ export interface Overview {
   capital?: { locked: Record<string, number>; budget_usd: number | null; deployed_usd: number };
   sell_only?: string[];
   risk_preset?: string;
-  futures?: { enabled: boolean; open: number; symbols?: string[] };
+  futures?: { enabled: boolean; open: number; symbols?: string[]; stocks?: boolean };
   earn?: { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }> };
   binance_categories?: Record<string, { primary: string; tags: string[] }>;
   approval_free?: { mode: "off" | "always" | "window"; start: string; end: string; active: boolean };

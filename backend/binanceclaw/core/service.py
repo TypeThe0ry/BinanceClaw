@@ -1369,7 +1369,8 @@ class Service:
                       "change_24h": t.get("change_pct"), "quote_volume_24h": round(t.get("quote_volume") or 0),
                       "funding_rate_8h": prem[sym]["funding_rate"] if sym in prem else None} for sym, t in rows}
 
-    def futures_markets(self, q: str = "", limit: int = 50) -> list[dict]:
+    def futures_markets(self, q: str = "", limit: int = 50, tradfi: bool = False) -> list[dict]:
+        """USDT perps matching ``q``; with ``tradfi`` only Binance's stock / TradFi perps."""
         rules = self.fbroker.rules()
         tk = (0, self._futures_tickers())
         q = q.strip().upper()
@@ -1377,7 +1378,7 @@ class Service:
         rows = [{"token": r.base, "symbol": sym, "price": tk[1].get(sym, {}).get("price"),
                  "change_pct": tk[1].get(sym, {}).get("change_pct"), "quote_volume": tk[1].get(sym, {}).get("quote_volume", 0.0),
                  "enabled": sym in on, "held": False, "tradfi": bool(getattr(r, "tradfi", False))}
-                for sym, r in rules.items() if not q or q in r.base]
+                for sym, r in rules.items() if (not q or q in r.base) and (not tradfi or getattr(r, "tradfi", False))]
         rows.sort(key=lambda r: (not r["enabled"], r["token"] != q, -(r["quote_volume"] or 0)))
         return rows[:limit]
 
@@ -1853,7 +1854,7 @@ class Service:
             "strategy": s.strategy.style,
             "outlook": s.outlook.model_dump(),
             "limits": s.limits.model_dump(),
-            "futures": {"enabled": s.futures.enabled, "symbols": list(s.futures.symbols),
+            "futures": {"enabled": s.futures.enabled, "symbols": list(s.futures.symbols), "stocks": s.futures.stocks,
                         "open": len([p for p in self.fbroker.open_rows() if p.status == "open"])},
             "earn": {"enabled": s.earn.enabled, "positions": self.earn.positions() if s.earn.enabled else {}},
         }

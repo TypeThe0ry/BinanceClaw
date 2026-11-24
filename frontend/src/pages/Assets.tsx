@@ -47,7 +47,7 @@ function GroupRow({ name, n, open, onToggle, cells, span }:
   );
 }
 
-interface FMarket { token: string; symbol: string; price: number | null; change_pct: number | null; quote_volume: number; enabled: boolean }
+interface FMarket { token: string; symbol: string; price: number | null; change_pct: number | null; quote_volume: number; enabled: boolean; tradfi?: boolean }
 
 /** Futures tab: the AI's open positions first (自选), then the contracts it may trade, by Binance category. */
 function FuturesAssets({ o, bcat, collapsed, fold }:
@@ -55,12 +55,16 @@ function FuturesAssets({ o, bcat, collapsed, fold }:
   const fut = useApi<FuturesResp>("/futures", { poll: 10000, kinds: ["futures", "settings", "paper_reset"] });
   const syms = o?.futures?.symbols ?? [];
   const mk = useApi<FMarket[]>(syms.length ? `/futures/markets?limit=${Math.max(syms.length, 1)}` : null, { poll: 60000, kinds: ["settings"] });
+  const stocksOn = o?.futures?.stocks !== false;
+  const sk = useApi<FMarket[]>(stocksOn ? "/futures/markets?tradfi=true&limit=300" : null, { poll: 60000, kinds: ["settings"] });
   const f = fut.data;
   if (!f) return fut.error ? <Empty text={`合约数据读取失败：${fut.error}`} /> : <Skeleton className="mt-3 h-32" />;
   const held = new Set(f.positions.map((p) => token(p.symbol)));
-  const markets = (mk.data ?? []).filter((m) => m.enabled && !held.has(m.token));
+  const markets = (mk.data ?? []).filter((m) => m.enabled && !m.tradfi && !held.has(m.token));
+  const stocks = (sk.data ?? []).filter((m) => !held.has(m.token));
   const open = !collapsed.has(`futures:${PICKED}`);
-  const groups = sectionsOf(markets, () => false, (m) => bcat(m.token), (m) => m.quote_volume || 0);
+  const groups = [...sectionsOf(markets, () => false, (m) => bcat(m.token), (m) => m.quote_volume || 0),
+    ...(stocks.length ? [{ key: "tradfi", name: "股票合约", rows: stocks, value: 0 }] : [])];
   const num = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return (
     <>
@@ -70,8 +74,8 @@ function FuturesAssets({ o, bcat, collapsed, fold }:
         <div><dt className="text-fg-3">未实现盈亏</dt><dd className={`num mt-1 text-[14px] ${f.unrealized >= 0 ? "text-up" : "text-down"}`}>{f.unrealized >= 0 ? "+" : ""}{num(f.unrealized)}</dd></div>
         <div><dt className="text-fg-3">已实现盈亏</dt><dd className={`num mt-1 text-[14px] ${f.realized >= 0 ? "text-up" : "text-down"}`}>{f.realized >= 0 ? "+" : ""}{num(f.realized)}</dd></div>
       </dl>
-      {!f.enabled && !f.positions.length && <Empty text="合约交易未开启" />}
-      {(f.enabled || !!f.positions.length) && (
+      {!f.enabled && !f.positions.length && !stocks.length && <Empty text="合约交易未开启" />}
+      {(f.enabled || !!f.positions.length || !!stocks.length) && (
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px]">
           <thead>
@@ -104,7 +108,7 @@ function FuturesAssets({ o, bcat, collapsed, fold }:
             <GroupRow name={g.name} n={g.rows.length} open={!collapsed.has(`futures:${g.key}`)} onToggle={() => fold(`futures:${g.key}`)} span={6} cells={null} />
             {!collapsed.has(`futures:${g.key}`) && g.rows.map((m) => (
               <tr key={m.symbol} className="border-b border-line">
-                <td className="td"><span className="font-semibold">{m.token}</span> <span className="text-[12px] text-fg-3">永续 · 未持仓</span></td>
+                <td className="td"><Link to={`/futures?symbol=${m.symbol}`} className="font-semibold hover:underline">{m.token}</Link> <span className="text-[12px] text-fg-3">{m.tradfi ? "股票" : "永续"} · 未持仓</span></td>
                 <td className="td text-right text-fg-3">—</td>
                 <td className="td text-right text-fg-3">—</td>
                 <td className="td text-right">{m.price ? fmtPrice(m.price) : "—"}</td>
