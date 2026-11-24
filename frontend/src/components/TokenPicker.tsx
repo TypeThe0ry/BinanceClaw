@@ -4,7 +4,7 @@ import { api } from "../api";
 import { fmtPrice } from "../lib";
 
 export interface Market {
-  token: string; symbol: string; price: number | null; change_pct: number | null; quote_volume: number; held: boolean; enabled: boolean;
+  token: string; symbol: string; price: number | null; change_pct: number | null; quote_volume: number; held: boolean; enabled: boolean; tradfi?: boolean;
   status?: string; trading?: boolean; selectable?: boolean; quotes?: string[]; tags?: string[]; category?: string;
 }
 interface Cat { tag: string; label: string; count: number }
@@ -76,7 +76,7 @@ export default function TokenPicker({ selected, onToggle, endpoint = "/markets",
               <button key={m.symbol || m.token} type="button" disabled={!selectable && !on} onClick={() => onToggle(m.token)}
                 title={!selectable ? `币安上只有 ${m.quotes?.join("/")} 报价，没有 USDT 交易对` : halted ? "币安暂停交易中，可以选，恢复交易前不会买卖" : undefined}
                 className="flex w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50">
-                <span className="w-20 truncate text-[13px] font-medium">{m.token}{m.held && <span className="ml-1 text-[11px] text-fg-3">持有</span>}</span>
+                <span className="w-20 truncate text-[13px] font-medium">{m.token}{m.tradfi && <span className="ml-1 text-[11px] text-fg-3">股票</span>}{m.held && <span className="ml-1 text-[11px] text-fg-3">持有</span>}</span>
                 {withCats && <span className="hidden w-24 truncate text-[11.5px] text-fg-3 sm:inline" title={m.tags?.join(" · ")}>{m.category}</span>}
                 {!selectable ? (
                   <span className="flex-1 text-right text-[12px] text-fg-3">仅 {m.quotes?.join("/")} 报价</span>

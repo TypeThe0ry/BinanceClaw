@@ -375,6 +375,10 @@ export default function Config() {
             </Row>
           );
         })}
+        <Row label="全部股票合约">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.futures.stocks}
+            onChange={(e) => setD({ ...d, futures: { ...d.futures, stocks: e.target.checked } })} />
+        </Row>
         <Row label="允许做空">
           <input type="checkbox" className="h-4 w-4 accent-white" checked={d.futures.allow_short}
             onChange={(e) => setD({ ...d, futures: { ...d.futures, allow_short: e.target.checked } })} />

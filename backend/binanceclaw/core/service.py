@@ -832,6 +832,8 @@ class Service:
                 m.update(ta.derivatives(*self.fbroker.derivatives(sym)))
             except (ExchangeError, KeyError, TypeError, ValueError) as e:
                 log.warning("open interest / funding history unavailable for %s: %s", sym, e)
+        if f.stocks:
+            out["stock_perps"] = self.stock_perps(prem, skip=set(out["markets"]))
         out["positions"] = [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in p.items()
                              if k in ("symbol", "side", "qty", "entry", "mark", "margin", "leverage", "stop",
                                       "take_profit", "upnl", "liq_est")} for p in self.fbroker.snapshot(fv.marks)]
@@ -1344,17 +1346,37 @@ class Service:
                 "realized": realized, "unrealized": sum(p["upnl"] for p in pos),
                 "margin_used": sum(p["margin"] for p in pos), "equity": sum(max(p["margin"] + p["upnl"], 0) for p in pos)}
 
-    def futures_markets(self, q: str = "", limit: int = 50) -> list[dict]:
-        rules = self.fbroker.rules()
+    def _futures_tickers(self) -> dict[str, dict]:
         tk = getattr(self, "_ftickers", None)
         if not tk or time.time() - tk[0] > 120:
             tk = (time.time(), self.fclient.tickers_24h())
             self._ftickers = tk
+        return tk[1]
+
+    def stock_perps(self, prem: dict | None = None, skip: set[str] = frozenset()) -> dict[str, dict]:
+        """24 h overview of every Binance TradFi perp (US stocks, ETFs, commodities; USDT-settled,
+        trades 24/7), most traded first. They are tradable while futures.stocks is on."""
+        try:
+            rules = self.fbroker.rules()
+            tk = self._futures_tickers()
+            prem = prem if prem is not None else self.fbroker.premium()
+        except ExchangeError as e:
+            log.warning("TradFi perps unavailable: %s", e)
+            return {}
+        rows = sorted(((sym, tk.get(sym) or {}) for sym, r in rules.items() if getattr(r, "tradfi", False) and sym not in skip),
+                      key=lambda kv: -(kv[1].get("quote_volume") or 0))
+        return {sym: {"type": rules[sym].underlying or "TRADFI", "mark": round(prem[sym]["mark"], 6) if sym in prem else t.get("price"),
+                      "change_24h": t.get("change_pct"), "quote_volume_24h": round(t.get("quote_volume") or 0),
+                      "funding_rate_8h": prem[sym]["funding_rate"] if sym in prem else None} for sym, t in rows}
+
+    def futures_markets(self, q: str = "", limit: int = 50) -> list[dict]:
+        rules = self.fbroker.rules()
+        tk = (0, self._futures_tickers())
         q = q.strip().upper()
         on = {f"{t}USDT" for t in self.settings.futures.symbols}
         rows = [{"token": r.base, "symbol": sym, "price": tk[1].get(sym, {}).get("price"),
                  "change_pct": tk[1].get(sym, {}).get("change_pct"), "quote_volume": tk[1].get(sym, {}).get("quote_volume", 0.0),
-                 "enabled": sym in on, "held": False}
+                 "enabled": sym in on, "held": False, "tradfi": bool(getattr(r, "tradfi", False))}
                 for sym, r in rules.items() if not q or q in r.base]
         rows.sort(key=lambda r: (not r["enabled"], r["token"] != q, -(r["quote_volume"] or 0)))
         return rows[:limit]
@@ -1888,6 +1910,10 @@ class Service:
             slim["account"] = self.chat_account()
             slim["tradable"] = self.settings.tradable_tokens()
             slim["stock_tokens"] = self.chat_stock_tokens(slim["tradable"])
+            f = self.settings.futures
+            if f.enabled and f.stocks:
+                slim["stock_perps"] = {sym: {"mark": r["mark"], "change_24h": r["change_24h"]}
+                                       for sym, r in self.stock_perps().items()}
             slim["pending_plans"] = [
                 {"id": a.id, "side": a.side, "symbol": a.symbol, "usd": round(a.quote_usd, 2),
                  "type": (a.payload or {}).get("order", "market"), "price": (a.payload or {}).get("price"),

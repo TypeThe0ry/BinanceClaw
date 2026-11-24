@@ -24,7 +24,7 @@ export function settingsResp(over: Record<string, unknown> = {}) {
       model_routing: { enabled: true, tasks: { decision: "strong", allocation: "strong", chat: "strong", report: "fast" }, models: {} },
       stables: ["USDT", "USDC"],
       futures: { enabled: false, symbols: ["BTCUSDT"], max_leverage: 3, max_position_margin_usd: 200, max_total_margin_usd: 500,
-        max_loss_per_trade_usd: 50, max_stop_distance: 0.05, allow_short: false, auto_open: false,
+        max_loss_per_trade_usd: 50, max_stop_distance: 0.05, allow_short: false, stocks: true, auto_open: false,
         auto_open_max_margin_usd: 20, max_opens_per_day: 3 },
       earn: { enabled: true, auto_all: true, assets: ["USDT"], keep_liquid_usd: 100, min_move_usd: 10, swap: true, swap_prefund: true },
       approval_free: { mode: "off", start: "00:00", end: "08:00", include_sell: false, include_futures: false },
