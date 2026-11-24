@@ -254,6 +254,45 @@ class FakeFutures:
         return []
 
 
+class FakeEquity:
+    """Offline stand-in for BinanceEquity (Binance Stocks)."""
+
+    def __init__(self):
+        self.quotes = {"NVDA": 180.0, "AAPL": 230.0, "SMH": 300.0}
+        self.info = {t: {"symbol": t, "tradability": "BUY_SELL", "minNotional": "1.00", "stepSize": "0.000000001"}
+                     for t in self.quotes}
+        self.tokens = [{"assetCode": "NVDAB", "underlyingEquitySymbol": "NVDA", "multiplier": "1", "multiplierValid": True},
+                       {"assetCode": "SMHB", "underlyingEquitySymbol": "SMH", "multiplier": "1", "multiplierValid": True}]
+        self.calls = []
+        self.orders = {}
+        self.fill = True
+
+    def stock_info(self):
+        return dict(self.info)
+
+    def tokenized_assets(self):
+        return list(self.tokens)
+
+    def stock_quote(self, symbol):
+        px = self.quotes.get(symbol)
+        return {"symbol": symbol, "bidPrice": str(px - 0.01), "askPrice": str(px + 0.01)} if px else None
+
+    def sign_stock_disclaimer(self):
+        self.calls.append(("disclaimer",))
+        return {"success": True}
+
+    def stock_market_order(self, symbol, side, cid, *, notional=None, qty=None, tokenize=True):
+        self.calls.append(("order", symbol, side, notional, qty, tokenize))
+        px = self.quotes[symbol]
+        q = notional / px if side == "BUY" else qty
+        self.orders[cid] = {"status": "FILLED" if self.fill else "ACCEPTED", "filledQty": str(q if self.fill else 0),
+                            "filledTotal": str(q * px if self.fill else 0), "avgFilledPrice": str(px), "fee": "0"}
+        return {"status": "S", "orderId": "o-" + cid, "clientOrderId": cid}
+
+    def stock_order(self, cid):
+        return dict(self.orders[cid])
+
+
 class FakeProvider(Provider):
     name = "fake"
 
@@ -272,13 +311,15 @@ class FakeProvider(Provider):
         return Completion(r if isinstance(r, str) else json.dumps(r), "fake-model", {})
 
 
-def plan(*actions, summary="test", futures=None, focus=None):
+def plan(*actions, summary="test", futures=None, focus=None, stocks=None):
     out = {"summary": summary, "market_view": "", "confidence": 0.6,
            "actions": [{"side": a[0], "symbol": a[1], "quote_usd": a[2], "reason": "r", "invalidation": "i"} for a in actions]}
     if focus is not None:
         out["focus"] = focus
     if futures:
         out["futures"] = [{"reason": "r", "invalidation": "i", **f} for f in futures]
+    if stocks:
+        out["stocks"] = [{"reason": "r", "invalidation": "i", **x} for x in stocks]
     return out
 
 
@@ -294,7 +335,7 @@ def _offline_news(monkeypatch):
 def svc(tmp_path):
     from binanceclaw.core.service import Service
     s = Service(data_dir=tmp_path, secrets=Secrets(binance_api_key="k", binance_api_secret="s"), client=FakeSpot(),
-                fclient=FakeFutures())
+                fclient=FakeFutures(), eclient=FakeEquity())
     # most tests exercise the model's own plan; tests/test_universe.py covers rebalancing
     # tests/test_news.py covers the news step; elsewhere it would reach the network
     s.settings_store.update({"allocation": {"mode": "targets", "auto_rebalance": False}, "autonomy": {"full": False},

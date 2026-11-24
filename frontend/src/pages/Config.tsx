@@ -345,6 +345,19 @@ export default function Config() {
         <div className="pt-4"><button className="btn-primary" onClick={() => save({ questions: q })}>保存</button></div>
       </section>
 
+      <section id="stocks">
+        <SectionHead title="币安股票" doc="stocks" />
+        <Row label="美股 / ETF">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.stocks?.enabled ?? true}
+            onChange={(e) => setD({ ...d, stocks: { tokenize: d.stocks?.tokenize ?? true, enabled: e.target.checked } })} />
+        </Row>
+        <Row label="买入时代币化">
+          <input type="checkbox" className="h-4 w-4 accent-white" checked={d.stocks?.tokenize ?? true}
+            onChange={(e) => setD({ ...d, stocks: { enabled: d.stocks?.enabled ?? true, tokenize: e.target.checked } })} />
+        </Row>
+        <div className="pt-4"><button className="btn-primary" onClick={() => save({ stocks: d.stocks ?? { enabled: true, tokenize: true } })}>保存</button></div>
+      </section>
+
       <section id="futures">
         <SectionHead title="合约" doc="futures" />
         <Row label="USDⓈ-M 永续合约">

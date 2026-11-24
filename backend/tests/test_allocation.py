@@ -95,10 +95,10 @@ def test_allocation_api(tmp_path):
     from binanceclaw.config import Secrets
     from binanceclaw.core.service import Service
 
-    from .conftest import FakeFutures, FakeSpot
+    from .conftest import FakeEquity, FakeFutures, FakeSpot
     sec = Secrets(admin_password_hash=PasswordHasher().hash("correct-horse-1"), session_secret="x" * 64,
                   binance_api_key="k", binance_api_secret="s")
-    svc = Service(data_dir=tmp_path, secrets=sec, client=FakeSpot(), fclient=FakeFutures())
+    svc = Service(data_dir=tmp_path, secrets=sec, client=FakeSpot(), fclient=FakeFutures(), eclient=FakeEquity())
     c = TestClient(create_app(svc))
     assert c.post("/api/allocation/propose", json={"instruction": "x"}).status_code == 401
     c.post("/api/auth/login", json={"password": "correct-horse-1"})

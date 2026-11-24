@@ -12,7 +12,7 @@ from binanceclaw.core.arena import BENCHMARK, ArenaConfig
 from binanceclaw.core.service import Service
 from binanceclaw.db import ArenaEquity, ArenaRound, PaperBalance
 
-from .conftest import FakeFutures, FakeSpot
+from .conftest import FakeEquity, FakeFutures, FakeSpot
 
 
 class Scripted(Provider):
@@ -195,7 +195,7 @@ def test_drawdown_and_sharpe_on_leaderboard(arena, svc):
 def test_api(tmp_path):
     sec = Secrets(admin_password_hash=PasswordHasher().hash("correct-horse-1"), session_secret="x" * 64,
                   binance_api_key="k", binance_api_secret="s")
-    svc = Service(data_dir=tmp_path, secrets=sec, client=FakeSpot(), fclient=FakeFutures())
+    svc = Service(data_dir=tmp_path, secrets=sec, client=FakeSpot(), fclient=FakeFutures(), eclient=FakeEquity())
     models = {}
     svc.arena.make_provider = lambda cfg, secrets: models[cfg.model]
     c = TestClient(create_app(svc))

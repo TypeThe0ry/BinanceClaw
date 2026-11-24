@@ -152,6 +152,36 @@ class FuturesTrade(SQLModel, table=True):
     detail: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
 
+class StockLot(SQLModel, table=True):
+    """Shares of a Binance Stock that BinanceClaw bought without tokenizing: Binance has no endpoint
+    that lists them, so this ledger is the holding. Tokenized holdings are read from the wallet."""
+    id: str = Field(default_factory=_id, primary_key=True)
+    mode: str = Field(index=True)
+    symbol: str = Field(index=True)              # ticker, e.g. NVDA
+    qty: float = 0
+    cost_usd: float = 0
+    updated: float = Field(default_factory=time.time)
+
+
+class StockTrade(SQLModel, table=True):
+    id: str = Field(default_factory=_id, primary_key=True)
+    ts: float = Field(default_factory=time.time, index=True)
+    day: str = Field(index=True)
+    mode: str
+    symbol: str                                  # ticker
+    side: str                                    # BUY | SELL
+    usd: float = 0
+    qty: float = 0
+    price: float = 0
+    fee: float = 0
+    tokenized: bool = False
+    status: str = "filled"                       # submitted | filled | failed | canceled
+    via: str = "auto"
+    client_order_id: str = ""
+    cycle_id: str = ""
+    detail: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+
 class EquitySnapshot(SQLModel, table=True):
     """Account total over time, for the home page's 1D / 7D / 30D / 90D / 1Y valuation chart."""
     id: Optional[int] = Field(default=None, primary_key=True)

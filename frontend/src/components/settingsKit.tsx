@@ -29,6 +29,7 @@ export interface SettingsResp {
     news?: NewsCfg;
     stables: string[];
     futures: FuturesCfg;
+    stocks?: { enabled: boolean; tokenize: boolean };
     earn: { enabled: boolean; auto_all: boolean; assets: string[]; keep_liquid_usd: number; min_move_usd: number; swap?: boolean; swap_prefund?: boolean };
     notify?: NotifyCfg;
     approval_free: ApprovalFree;

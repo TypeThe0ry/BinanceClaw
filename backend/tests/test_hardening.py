@@ -7,13 +7,13 @@ from binanceclaw.api.app import create_app
 from binanceclaw.config import ConfirmationRequired, Secrets
 from binanceclaw.core.service import Service
 
-from .conftest import FakeFutures, FakeSpot
+from .conftest import FakeEquity, FakeFutures, FakeSpot
 
 
 def _client(tmp_path, static=None):
     sec = Secrets(admin_password_hash=PasswordHasher().hash("correct-horse-1"), session_secret="x" * 64,
                   binance_api_key="k", binance_api_secret="s")
-    svc = Service(data_dir=tmp_path, secrets=sec, client=FakeSpot(), fclient=FakeFutures())
+    svc = Service(data_dir=tmp_path, secrets=sec, client=FakeSpot(), fclient=FakeFutures(), eclient=FakeEquity())
     return TestClient(create_app(svc, static)), svc
 
 

@@ -107,8 +107,8 @@ def test_chat_history_returns_plan_state(tmp_path):
     from binanceclaw.config import Secrets
     from binanceclaw.core.service import Service
 
-    from .conftest import FakeFutures, FakeSpot
-    svc = Service(data_dir=tmp_path, client=FakeSpot(), fclient=FakeFutures(),
+    from .conftest import FakeEquity, FakeFutures, FakeSpot
+    svc = Service(data_dir=tmp_path, client=FakeSpot(), fclient=FakeFutures(), eclient=FakeEquity(),
                   secrets=Secrets(admin_password_hash=PasswordHasher().hash("correct-horse-1"), session_secret="x" * 64,
                                   binance_api_key="k", binance_api_secret="s"))
     svc.settings_store.update({"allocation": {"auto_rebalance": False}, "news": {"enabled": False}})
