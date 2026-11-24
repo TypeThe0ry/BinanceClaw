@@ -325,6 +325,7 @@ class Futures(BaseModel):
     """USDⓈ-M perpetuals. Off by default; every position must carry an exchange-side stop-loss."""
     enabled: bool = False
     symbols: list[str] = Field(default_factory=lambda: ["BTC", "ETH"])    # base assets, <TOKEN>USDT perps
+    stocks: bool = True                          # every Binance TradFi perp (US stocks, ETFs, commodities) is tradable too
     max_leverage: int = 3
     max_position_margin_usd: float = 200
     max_total_margin_usd: float = 500
@@ -761,6 +762,7 @@ DANGEROUS: dict[str, str] = {
     "futures.max_loss_per_trade_usd": "单笔止损最大亏损",
     "futures.max_stop_distance": "止损最远距离",
     "futures.allow_short": "允许做空",
+    "futures.stocks": "全部股票合约",
     "futures.auto_open": "小额自动开仓",
     "futures.auto_open_max_margin_usd": "自动开仓保证金上限",
     "futures.max_opens_per_day": "每日开仓次数",

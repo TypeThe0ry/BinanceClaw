@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from .binance_spot import BinanceSpot, ExchangeError, _f
 
 FAPI_URL = "https://fapi.binance.com"
+PERP_TYPES = ("PERPETUAL", "TRADIFI_PERPETUAL")
 
 
 @dataclass
@@ -22,6 +23,8 @@ class PerpRules:
     max_qty: float
     min_notional: float
     tick_size: float
+    tradfi: bool = False        # TradFi perp (US stocks / ETFs / commodities), contractType TRADIFI_PERPETUAL
+    underlying: str = ""        # exchangeInfo underlyingType
 
 
 def _num(x: float) -> str:
@@ -36,11 +39,11 @@ class BinanceFutures(BinanceSpot):
 
     # ---------------------------------------------------------------- public
     def perp_rules(self) -> dict[str, PerpRules]:
-        """Every TRADING USDT-margined PERPETUAL contract."""
+        """Every TRADING USDT-margined perpetual, crypto and TradFi (Binance's stock / ETF / commodity perps)."""
         info = self._request("GET", "/fapi/v1/exchangeInfo")
         out = {}
         for s in info["symbols"]:
-            if s.get("contractType") != "PERPETUAL" or s.get("quoteAsset") != "USDT" or s.get("status") != "TRADING":
+            if s.get("contractType") not in PERP_TYPES or s.get("quoteAsset") != "USDT" or s.get("status") != "TRADING":
                 continue
             f = {x["filterType"]: x for x in s.get("filters", [])}
             lot, mlot = f.get("LOT_SIZE", {}), f.get("MARKET_LOT_SIZE", {})
@@ -51,7 +54,8 @@ class BinanceFutures(BinanceSpot):
                 symbol=s["symbol"], base=s["baseAsset"], status=s["status"], step_size=step,
                 min_qty=max(_f(lot.get("minQty")), _f(mlot.get("minQty"))), max_qty=max_q,
                 min_notional=_f(f.get("MIN_NOTIONAL", {}).get("notional")),
-                tick_size=_f(f.get("PRICE_FILTER", {}).get("tickSize")))
+                tick_size=_f(f.get("PRICE_FILTER", {}).get("tickSize")),
+                tradfi=s.get("contractType") == "TRADIFI_PERPETUAL", underlying=s.get("underlyingType") or "")
         return out
 
     def premium(self) -> dict[str, dict]:
@@ -102,6 +106,10 @@ class BinanceFutures(BinanceSpot):
         return r if isinstance(r, list) else r.get("orders", [])
 
     # ---------------------------------------------------------------- signed, trading
+    def sign_tradfi(self) -> dict:
+        """Sign the TradFi-Perps agreement; Binance requires it once before the first TradFi perp order."""
+        return self._request("POST", "/fapi/v1/stock/contract", signed=True)
+
     def set_margin_type(self, symbol: str, margin_type: str = "ISOLATED"):
         try:
             self._request("POST", "/fapi/v1/marginType", {"symbol": symbol, "marginType": margin_type}, signed=True)

@@ -54,6 +54,7 @@ class FuturesBroker:
         self._prem: tuple[float, dict] | None = None
         self._dual: tuple[float, bool] | None = None
         self._deriv: dict[str, tuple[float, tuple]] = {}
+        self._tradfi_signed = False
 
     # ---------------------------------------------------------------- market data
     def rules(self) -> dict:
@@ -188,6 +189,17 @@ class FuturesBroker:
                 log.warning("take-profit for %s not placed: %s", symbol, e)
         return sid, tid
 
+    def _sign_tradfi(self):
+        """Binance wants the TradFi-Perps agreement signed once before the first stock / TradFi perp
+        order. Signing again is harmless; a failure is logged and the order itself reports the cause."""
+        if self._tradfi_signed:
+            return
+        try:
+            self.client.sign_tradfi()
+            self._tradfi_signed = True
+        except ExchangeError as e:
+            log.warning("TradFi-Perps agreement not signed: %s", e)
+
     # ---------------------------------------------------------------- trading
     def open(self, symbol: str, side: str, margin: float, leverage: int, stop: float, tp: float | None,
              cid: str, meta: dict) -> tuple[FuturesPosition, FFill]:
@@ -207,6 +219,8 @@ class FuturesBroker:
             row = self.db.add(FuturesPosition(qty=qty, entry=price, margin=used, fees=fee, **base))
             return row, FFill(qty, price, fee, raw={"paper": True, "mark": mark})
 
+        if rule.tradfi:
+            self._sign_tradfi()
         self.client.set_margin_type(symbol, "ISOLATED")
         self.client.set_leverage(symbol, leverage)
         self._fund(margin * 1.02 + qty * mark * TAKER_FEE * 2)

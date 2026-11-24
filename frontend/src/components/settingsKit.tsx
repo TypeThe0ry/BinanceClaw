@@ -79,7 +79,7 @@ export interface Alloc {
 }
 
 export interface FuturesCfg {
-  enabled: boolean; symbols: string[]; max_leverage: number; max_position_margin_usd: number; max_total_margin_usd: number;
+  enabled: boolean; symbols: string[]; stocks: boolean; max_leverage: number; max_position_margin_usd: number; max_total_margin_usd: number;
   max_loss_per_trade_usd: number; max_stop_distance: number; allow_short: boolean; auto_open: boolean;
   auto_open_max_margin_usd: number; max_opens_per_day: number;
 }

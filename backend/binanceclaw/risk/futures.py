@@ -74,6 +74,15 @@ def liq_distance(leverage: int) -> float:
     return max(1.0 / leverage - MAINT_MARGIN, 0.0)
 
 
+def tradable_perps(f, rules: dict) -> set[str]:
+    """Perps the AI may open: the whitelist, plus every TradFi perp (stocks / ETFs / commodities)
+    while futures.stocks is on."""
+    out = {f"{t}USDT" for t in f.symbols}
+    if f.stocks:
+        out |= {sym for sym, r in rules.items() if getattr(r, "tradfi", False)}
+    return out
+
+
 def floor_step(x: float, step: float) -> float:
     if step <= 0:
         return x
@@ -83,7 +92,7 @@ def floor_step(x: float, step: float) -> float:
 def evaluate_futures(actions: list[dict], fv: FuturesView) -> list[FVerdict]:
     s = fv.settings
     f = s.futures
-    allowed = {f"{t}USDT" for t in f.symbols}
+    allowed = tradable_perps(f, fv.rules)
     margin_left = f.max_total_margin_usd - fv.margin_used
     spendable = fv.spendable_usd
     budget_left = fv.budget_left
@@ -112,7 +121,7 @@ def evaluate_futures(actions: list[dict], fv: FuturesView) -> list[FVerdict]:
             fail("合约开关", "合约交易未开启（配置 → 合约）")
             continue
         if op in OPEN_OPS and sym not in allowed:
-            fail("合约白名单", f"{sym} 不在合约白名单 {sorted(allowed)} 中")
+            fail("合约白名单", f"{sym} 不在合约白名单 {[f'{t}USDT' for t in f.symbols]} 中")
             continue
         mark = fv.marks.get(sym)
         if not mark:

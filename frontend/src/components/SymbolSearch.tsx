@@ -52,6 +52,7 @@ export default function SymbolSearch({ endpoint, placeholder, onPick }:
               <button role="option" aria-selected={false} onClick={() => pick(r.symbol)}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-hover">
                 <span className="font-semibold">{r.token}</span>
+                {r.tradfi && <span className="tag bg-hover text-fg-2">股票</span>}
                 {r.held && <span className="tag bg-hover text-fg-2">持有</span>}
                 {r.trading === false && <span className="tag bg-hover text-fg-3">暂停</span>}
                 <span className="num ml-auto">{fmtPrice(r.price)}</span>

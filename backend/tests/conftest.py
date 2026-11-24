@@ -206,6 +206,10 @@ class FakeFutures:
     def set_margin_type(self, symbol, mt="ISOLATED"):
         self.calls.append(("marginType", symbol, mt))
 
+    def sign_tradfi(self):
+        self.calls.append(("sign_tradfi",))
+        return {"code": 200, "msg": "success"}
+
     def set_leverage(self, symbol, lev):
         self.calls.append(("leverage", symbol, lev))
         return {"leverage": lev}
