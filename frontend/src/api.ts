@@ -102,6 +102,7 @@ export interface Overview {
   sell_only?: string[];
   risk_preset?: string;
   futures?: { enabled: boolean; open: number; symbols?: string[]; stocks?: boolean };
+  stocks?: { enabled: boolean; holdings: StockHolding[]; tokens?: Record<string, string>; error?: string };
   earn?: { enabled: boolean; positions: Record<string, { amount: number; apr: number | null }> };
   binance_categories?: Record<string, { primary: string; tags: string[] }>;
   approval_free?: { mode: "off" | "always" | "window"; start: string; end: string; active: boolean };
@@ -124,7 +125,7 @@ export interface PriceAlert { id: string; created: number; symbol: string; op: "
 export interface RiskCheck { name: string; ok: boolean; detail: string }
 export interface RiskRow {
   index: number;
-  kind?: "futures";
+  kind?: "futures" | "stock";
   side?: "BUY" | "SELL";
   op?: string;
   symbol: string;
@@ -214,7 +215,7 @@ export interface Approval {
   status: "pending" | "approved" | "rejected" | "expired" | "failed";
   resolved_by: string;
   result: string;
-  kind?: "spot" | "futures" | "limit";
+  kind?: "spot" | "futures" | "limit" | "stock";
   payload?: { leverage?: number; stop_loss?: number; take_profit?: number | null; margin_usd?: number;
     source?: "chat" | "limit_watch"; order?: "market" | "limit"; price?: number; hours?: number;
     op?: "cancel" | "reprice"; limit_id?: string; old_price?: number };
@@ -362,3 +363,7 @@ export interface BacktestResult {
   decisions: { proposed: number; execute: number; skipped: number; reject: number }; holdings: Record<string, number>;
 }
 export interface BacktestFull extends BacktestRow { result: Partial<BacktestResult> }
+
+export interface StockHolding {
+  symbol: string; qty: number; shares: number; token: string; token_qty: number; price: number | null; value: number | null; cost: number | null;
+}

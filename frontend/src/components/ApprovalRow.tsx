@@ -46,7 +46,7 @@ export const ApprovalRow = forwardRef<HTMLDivElement, { a: Approval; onDone?: ()
         <button onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-x-4 whitespace-nowrap text-left sm:gap-x-5" aria-expanded={open}>
           <span className="num hidden w-24 text-[13px] text-fg-3 sm:block">{clock(a.created)}</span>
           <span className="flex items-center gap-2 text-[14px]"><Side side={a.side} /><b className="font-semibold">{token(a.symbol)}</b>
-            {a.kind === "futures" && <span className="tag bg-hover text-fg-2">永续</span>}</span>
+            {a.kind === "futures" && <span className="tag bg-hover text-fg-2">永续</span>}{a.kind === "stock" && <span className="tag bg-hover text-fg-2">股票</span>}</span>
           <span className="num text-[14px]">{usd(a.quote_usd, 0)}{a.kind === "futures" && a.payload?.leverage ? <span className="text-fg-2"> × {a.payload.leverage}x</span> : null}</span>
           {a.kind === "limit" && <span className="num text-[13px] text-fg-2">{a.payload?.op === "cancel"
             ? <>撤单 · 挂单 {fmtPrice(a.payload?.old_price)}</>

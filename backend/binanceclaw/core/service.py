@@ -23,7 +23,7 @@ from ..brain import limit_watch as lw
 from ..brain import news as nws
 from ..brain.prompt import CHAT_OFFLINE, CHAT_PLANS, CHAT_SOURCES, CHAT_SYSTEM, CHAT_WEB, SYSTEM, build_context, build_user_prompt
 from ..brain.providers import ProviderError, make_provider
-from ..brain.schema import PlanError, parse_plan
+from ..brain.schema import PlanError, StockAction, parse_plan
 from ..config import (
     DATA_DIR,
     MODEL_TASKS,
@@ -49,6 +49,7 @@ from ..db import (
     PriceAlert,
     Report,
 )
+from ..exchange.binance_equity import BinanceEquity
 from ..exchange.binance_futures import BinanceFutures
 from ..exchange.binance_spot import BinanceSpot, ExchangeError
 from ..exchange.broker import Broker, OrderUnknown
@@ -66,6 +67,7 @@ from .autopilot import Autopilot
 from .backtest import BacktestLab
 from .earn import EarnManager
 from .events import EventBus
+from .stocks import STOCKS_ASSET, StockDesk
 from .track import TrackRecord
 from .valuation import Valuation
 
@@ -94,7 +96,7 @@ def asset_snapshot(price: float, daily: list[dict], h4: list[dict]) -> dict:
 
 class Service:
     def __init__(self, data_dir=DATA_DIR, secrets: Secrets | None = None, client: BinanceSpot | None = None,
-                 fclient: BinanceFutures | None = None):
+                 fclient: BinanceFutures | None = None, eclient: BinanceEquity | None = None):
         self.data_dir = data_dir
         self.settings_store = SettingsStore(data_dir / "settings.json")
         self.secrets = secrets or Secrets.from_env()
@@ -102,6 +104,8 @@ class Service:
         self.events = EventBus()
         self.client = client or BinanceSpot(self.secrets.binance_api_key, self.secrets.binance_api_secret)
         self.fclient = fclient or BinanceFutures(self.secrets.binance_api_key, self.secrets.binance_api_secret)
+        self.eclient = eclient or BinanceEquity(self.secrets.binance_api_key, self.secrets.binance_api_secret)
+        self.sdesk = StockDesk(self)
         self.earn = EarnManager(self)
         self.stream = PriceStream()
         self.autopilot = Autopilot(self)
@@ -723,10 +727,34 @@ class Service:
         for a, pos in self.earn.positions().items():
             raw[a] = raw.get(a, 0.0) + pos["amount"]
         px = {**self.asset_prices([a for a in raw if a not in self.settings.stables]), **prices}
+        px.update(self._stock_token_prices(raw, px))
         eq = self.futures_equity()
         if eq > 0:
             raw[FUTURES_ASSET], px[FUTURES_ASSET] = eq, 1.0
+        sv = self.stocks_ledger_value()
+        if sv > 0:
+            raw[STOCKS_ASSET], px[STOCKS_ASSET] = sv, 1.0
         return Portfolio(raw, px, self.settings)
+
+    def stocks_ledger_value(self) -> float:
+        """Value of the Binance Stocks shares BinanceClaw holds untokenized (its own ledger)."""
+        try:
+            return self.sdesk.ledger_value() if self.sdesk.lots() else 0.0
+        except ExchangeError as e:
+            log.warning("stock ledger value unavailable: %s", e)
+            return sum(r.cost_usd for r in self.sdesk.lots().values())
+
+    def _stock_token_prices(self, raw: dict, px: dict) -> dict[str, float]:
+        """Prices for tokenized stocks without a spot price, from the stock's Binance Stocks quote."""
+        if not self.settings.stocks.enabled:
+            return {}
+        out = {}
+        for code, (t, mult) in self.sdesk.codes().items():
+            if raw.get(code, 0) > 0 and not px.get(code):
+                p = self.sdesk.price(t)
+                if p:
+                    out[code] = p * mult
+        return out
 
     def risk_state(self, btc_change=None, anomaly=None) -> RiskState:
         orders = self.db.orders_for_day(self.today())
@@ -784,6 +812,10 @@ class Service:
         if eq > 0:
             bal[FUTURES_ASSET] = eq
             prices = {**prices, FUTURES_ASSET: 1.0}
+        sv = self.stocks_ledger_value()
+        if sv > 0:
+            bal[STOCKS_ASSET] = sv
+            prices = {**prices, STOCKS_ASSET: 1.0}
         return Portfolio(bal, prices, self.settings)
 
     # ------------------------------------------------------------------ futures state
@@ -910,6 +942,7 @@ class Service:
                 fv = self.futures_view(pf, st, fresh=True)
             except ExchangeError as e:
                 log.warning("futures data unavailable: %s", e)
+        context["stocks"] = self.sdesk.context()
         context["futures"] = self.futures_context(fv)
         if s.futures.enabled and fv is None:
             context["futures"]["note"] = "合约数据暂不可用，本轮不要提出合约动作"
@@ -997,6 +1030,7 @@ class Service:
             self.events.emit("alert", {"text": f"模型输出不合规，本轮不交易：{e}"})
             return finish(status="error", error=f"输出校验失败：{e}")
 
+        self._route_stock_tokens(plan)
         if self.admit([normalize_symbol(a.symbol, s.quote)[: -len(s.quote)] for a in plan.actions]):
             try:
                 prices, market, btc_change, anomaly = self.market_snapshot(max_age=0)
@@ -1026,6 +1060,8 @@ class Service:
         risk.extend(superseded)
         if plan.futures:
             risk.extend(self._handle_futures(plan.futures, fv, c.id))
+        if plan.stocks:
+            risk.extend(self._handle_stocks(plan.stocks, pf, st, c.id))
         if plan.alerts:
             self._replace_ai_alerts(plan.alerts, prices)
         if plan.focus is not None and s.allocation.mode == "ai" and s.allocation.universe != "whitelist":
@@ -1212,6 +1248,76 @@ class Service:
                 row["result"] = "等待批准"
             out.append(row)
         return out
+
+    def stock_holdings(self) -> dict:
+        """Binance Stocks holdings, a stock and its token merged into one row per ticker."""
+        s = self.settings
+        if not s.stocks.enabled:
+            return {"enabled": False, "holdings": []}
+        try:
+            rows = sorted(self.sdesk.holdings().values(), key=lambda r: -(r.get("value") or 0))
+            return {"enabled": True, "holdings": rows, "tokens": {t: c for t, (c, _m) in self.sdesk.tokens_safe().items()}}
+        except ExchangeError as e:
+            return {"enabled": True, "holdings": [], "error": str(e)}
+
+    def _route_stock_tokens(self, plan) -> None:
+        """A stock and its token are one asset: the model's spot trades of a stock token (NVDAB)
+        become Binance Stocks trades of the stock (NVDA)."""
+        s = self.settings
+        if not s.stocks.enabled or not plan.actions:
+            return
+        codes = self.sdesk.codes()
+        keep = []
+        for a in plan.actions:
+            base = normalize_symbol(a.symbol, s.quote)[: -len(s.quote)]
+            if base in codes:
+                plan.stocks.append(StockAction(side=a.side, symbol=codes[base][0], usd=a.quote_usd,
+                                               reason=a.reason, invalidation=a.invalidation))
+            else:
+                keep.append(a)
+        plan.actions = keep
+
+    def _handle_stocks(self, acts, pf, st, cycle_id: str) -> list[dict]:
+        actions = [a.model_dump() for a in acts]
+        out = []
+        for a, v in zip(actions, self.sdesk.evaluate(actions, pf, st), strict=True):
+            row = {**v.to_dict(), "reason_model": a["reason"], "invalidation": a["invalidation"]}
+            act = {**a, "symbol": v.symbol, "usd": v.usd}
+            if v.decision == "execute":
+                ok, msg = self.execute_stock(act, via="auto", cycle_id=cycle_id)
+                row["result"] = msg
+                if not ok:
+                    row["decision"] = "failed"
+            elif v.decision == "approve":
+                ap = self.create_approval(cycle_id, v.side, v.symbol, v.usd, a["reason"], a["invalidation"],
+                                          kind="stock", payload=act)
+                row["approval_id"] = ap.id
+                row["result"] = "等待批准"
+            out.append(row)
+        return out
+
+    def execute_stock(self, action: dict, via: str, cycle_id: str = "") -> tuple[bool, str]:
+        """Re-check a Binance Stocks trade on fresh data, then trade. Approved amounts may shrink, never grow."""
+        with self._exec_lock:
+            try:
+                prices, _m, btc_change, anomaly = self.market_snapshot(max_age=0)
+                pf = self.portfolio(prices)
+            except ExchangeError as e:
+                return False, f"{self.STALE_DATA}{e}"
+            st = self.risk_state(btc_change, anomaly)
+            (v,) = self.sdesk.evaluate([action], pf, st)
+            if not (v.decision == "execute" or (v.decision == "approve" and via == "approved")):
+                return False, f"未执行：{v.reason}"
+            usd = min(v.usd, float(action.get("usd") or 0))
+            try:
+                if v.side == "BUY":
+                    ok, msg = self.sdesk.buy(v.symbol, usd, via, cycle_id)
+                else:
+                    ok, msg = self.sdesk.sell(v.symbol, usd, via, cycle_id)
+            except ExchangeError as e:
+                ok, msg = False, f"下单失败：{e}"
+            self.events.emit("order", {"status": "filled" if ok else "failed", "text": msg, "via": via, "kind": "stock"})
+            return ok, msg
 
     @staticmethod
     def _capped_action(a: dict, v) -> dict:
@@ -1636,6 +1742,8 @@ class Service:
             return False, "这笔已处理"
         if a.kind == "futures":
             ok, msg = self.execute_futures(a.payload or {}, via="approved", cycle_id=a.cycle_id)
+        elif a.kind == "stock":
+            ok, msg = self.execute_stock(a.payload or {}, via="approved", cycle_id=a.cycle_id)
         elif a.kind == "limit":
             ok, msg = self.apply_limit_change(a)
         elif (a.payload or {}).get("order") == "limit":
@@ -1857,6 +1965,7 @@ class Service:
             "futures": {"enabled": s.futures.enabled, "symbols": list(s.futures.symbols), "stocks": s.futures.stocks,
                         "open": len([p for p in self.fbroker.open_rows() if p.status == "open"])},
             "earn": {"enabled": s.earn.enabled, "positions": self.earn.positions() if s.earn.enabled else {}},
+            "stocks": self.stock_holdings(),
         }
         if pf:
             out.update(total=pf.total(), values=pf.values(), balances=pf.balances,
@@ -1911,6 +2020,8 @@ class Service:
             slim["account"] = self.chat_account()
             slim["tradable"] = self.settings.tradable_tokens()
             slim["stock_tokens"] = self.chat_stock_tokens(slim["tradable"])
+            if self.settings.stocks.enabled:
+                slim["stocks"] = self.sdesk.context()
             f = self.settings.futures
             if f.enabled and f.stocks:
                 slim["stock_perps"] = {sym: {"mark": r["mark"], "change_24h": r["change_24h"]}
@@ -2686,6 +2797,7 @@ class Service:
                 self._every("limit_orders", 10, self.check_limit_orders)
                 self._every("limit_watch", 60, self._limit_watch_tick)
                 self._every("futures", 10, self.futures_watch)
+                self._every("stocks", 60, self.sdesk.reconcile)
                 self._every("stable_swap", 60, self.earn.prefund)
                 self._every("earn", 600, self.earn.sweep)
                 self._every("watchdog", 300, self.watchdog)

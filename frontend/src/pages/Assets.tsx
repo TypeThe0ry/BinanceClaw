@@ -173,7 +173,11 @@ export default function Assets() {
     setHideSmall(!hideSmall);
     try { localStorage.setItem("bclaw:assets-hide-small", hideSmall ? "0" : "1"); } catch { /* private mode */ }
   }
-  const spotRows = rows.filter((r) => r.t !== "FUTURES" && !empty(r) && !(hideSmall && r.value < 1));
+  // a stock and its token (NVDA / NVDAB) are one holding: shown once, in the 股票 section
+  const stockTokens = new Set(Object.values(o?.stocks?.tokens ?? {}));
+  const stockRows = (o?.stocks?.holdings ?? []).filter((h) => !(hideSmall && (h.value ?? 0) < 1));
+  const stockValue = stockRows.reduce((x, h) => x + (h.value ?? 0), 0);
+  const spotRows = rows.filter((r) => r.t !== "FUTURES" && r.t !== "STOCKS" && !stockTokens.has(r.t) && !empty(r) && !(hideSmall && r.value < 1));
   const picked = (r: (typeof rows)[number]) => !isStable(r.t) && bcat(r.t) !== "稳定币"
     && ((o?.values?.[r.t] ?? 0) >= 1 || inTargets(r.t));
   const spotSections = sectionsOf(spotRows, picked, (r) => bcat(r.t), (r) => r.value);
@@ -319,6 +323,34 @@ export default function Assets() {
               })}
             </tbody>
             ))}
+            {!!stockRows.length && (
+            <tbody>
+              <GroupRow name="股票" n={stockRows.length} open={!collapsed.has("spot:stocks")} onToggle={() => fold("spot:stocks")}
+                cells={<>
+                  <td className="td num text-right font-medium">{stockValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="td num text-right text-fg-3" colSpan={3}>{acctTotal > 0 ? `${((stockValue / acctTotal) * 100).toFixed(1)}%` : ""}</td>
+                  <td className="td" />
+                </>} span={3} />
+              {!collapsed.has("spot:stocks") && stockRows.map((h) => {
+                const avg = h.cost && h.shares ? h.cost / h.shares : (h.token ? perf.data?.assets?.[h.token]?.avg_cost : undefined);
+                const pnl = avg && h.price ? (h.price - avg) * h.qty : null;
+                return (
+                  <tr key={h.symbol} className="border-b border-line">
+                    <td className="td"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-fg-3" />
+                      <b className="font-semibold">{h.symbol}</b>
+                      {h.token_qty > 0 && <span className="tag bg-hover text-fg-2">{h.token} {h.token_qty.toLocaleString("en-US", { maximumFractionDigits: 6 })}</span>}</span></td>
+                    <td className="td num text-right text-fg-2">{h.qty.toLocaleString("en-US", { maximumFractionDigits: 8 })}</td>
+                    <td className="td text-right">{h.price ? fmtPrice(h.price) : "—"}</td>
+                    <td className="td num text-right">{h.value != null ? h.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</td>
+                    <td className="td num text-right text-fg-2">{avg ? fmtPrice(avg) : "—"}</td>
+                    <td className="td num text-right">{pnl != null ? <span className={pnl >= 0 ? "text-up" : "text-down"}>{pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}</span> : <span className="text-fg-3">—</span>}</td>
+                    <td className="td num text-right">{acctTotal > 0 && h.value ? `${((h.value / acctTotal) * 100).toFixed(1)}%` : "—"}<span className="text-fg-3"> / AI</span></td>
+                    <td className="td pl-8" />
+                  </tr>
+                );
+              })}
+            </tbody>
+            )}
           </table>
         </div>
         ) : <FuturesAssets o={o} bcat={bcat} collapsed={collapsed} fold={fold} />}

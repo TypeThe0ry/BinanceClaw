@@ -112,6 +112,21 @@ describe("Assets page", () => {
     expect(screen.queryByText("Layer 1 / Layer 2", { selector: "td" })).not.toBeInTheDocument();
   });
 
+  it("merges a stock and its token into one row in the 股票 section", async () => {
+    const ov = overview();
+    ov.account_values = { ...ov.account_values!, NVDAB: 360, STOCKS: 180 };
+    ov.account_balances = { BTC: 0.01, SOL: 1, USDT: 100, NVDAB: 2 };
+    ov.stocks = { enabled: true, tokens: { NVDA: "NVDAB" }, holdings: [
+      { symbol: "NVDA", qty: 3, shares: 1, token: "NVDAB", token_qty: 2, price: 180, value: 540, cost: 170 }] };
+    mockApi({ ...routes, "GET /overview": ov });
+    renderPage(<Assets />);
+    const stocks = (await screen.findByText("股票", { selector: "td" })).closest("tbody")!;
+    expect(within(stocks).getByText("NVDA")).toBeInTheDocument();
+    expect(within(stocks).getByText("NVDAB 2")).toBeInTheDocument();
+    expect(screen.queryByText("NVDAB", { selector: "b" })).not.toBeInTheDocument();
+    expect(screen.queryByText("STOCKS", { selector: "b" })).not.toBeInTheDocument();
+  });
+
   it("lists every Binance stock contract in its own section", async () => {
     mockApi({ ...routes, "GET /futures/markets?tradfi=true&limit=300": [
       { token: "NVDA", symbol: "NVDAUSDT", price: 180, change_pct: 0.02, quote_volume: 5e7, enabled: false, tradfi: true },

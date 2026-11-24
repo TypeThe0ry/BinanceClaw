@@ -351,6 +351,13 @@ class Futures(BaseModel):
         return out
 
 
+class Stocks(BaseModel):
+    """Binance Stocks: real US stocks / ETFs bought with USDC. A stock and its tokenized asset
+    (NVDA / NVDAB) are one holding; every spot limit (order size, auto-execute, sells, pause) applies."""
+    enabled: bool = True
+    tokenize: bool = True                        # buy tokenization-enabled stocks as their token (NVDAB in the wallet)
+
+
 class Earn(BaseModel):
     """Simple Earn flexible: park idle balances, redeem automatically when a trade needs them.
     Only flexible products (redeemable at any time), so the money stays usable for trading."""
@@ -555,6 +562,7 @@ class Settings(BaseModel):
     news: News = Field(default_factory=News)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     futures: Futures = Field(default_factory=Futures)
+    stocks: Stocks = Field(default_factory=Stocks)
     earn: Earn = Field(default_factory=Earn)
     questions: Questions = Field(default_factory=Questions)
     limit_watch: LimitWatch = Field(default_factory=LimitWatch)
@@ -763,6 +771,7 @@ DANGEROUS: dict[str, str] = {
     "futures.max_stop_distance": "止损最远距离",
     "futures.allow_short": "允许做空",
     "futures.stocks": "全部股票合约",
+    "stocks.enabled": "币安股票",
     "futures.auto_open": "小额自动开仓",
     "futures.auto_open_max_margin_usd": "自动开仓保证金上限",
     "futures.max_opens_per_day": "每日开仓次数",

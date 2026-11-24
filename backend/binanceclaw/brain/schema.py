@@ -38,6 +38,15 @@ class FuturesAction(BaseModel):
     invalidation: str = Field(min_length=1, max_length=800)
 
 
+class StockAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    side: Literal["BUY", "SELL"]
+    symbol: str = Field(min_length=1, max_length=20, description="美股代码，如 NVDA（股票和它的代币 NVDAB 是同一个持仓）")
+    usd: float = Field(gt=0, le=1_000_000, description="金额（美元）")
+    reason: str = Field(min_length=1, max_length=1500)
+    invalidation: str = Field(min_length=1, max_length=800)
+
+
 class QuestionOption(BaseModel):
     model_config = ConfigDict(extra="forbid")
     label: str = Field(min_length=1, max_length=40, description="按钮上的文字，简短")
@@ -64,6 +73,7 @@ class TradePlan(BaseModel):
     market_view: str = Field(default="", max_length=3000)
     actions: list[Action] = Field(default_factory=list, max_length=10)
     futures: list[FuturesAction] = Field(default_factory=list, max_length=5)
+    stocks: list[StockAction] = Field(default_factory=list, max_length=5)
     alerts: list[AlertSpec] = Field(default_factory=list, max_length=3)
     questions: list[Question] = Field(default_factory=list, max_length=3,
                                       description="需要主人决定的事；主人回答后会立即唤醒你按回答决策")
