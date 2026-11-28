@@ -96,3 +96,65 @@ def test_stocks_off_rejects(svc):
     svc._rebuild()
     v = run(svc, {"side": "BUY", "symbol": "NVDA", "usd": 50}).risk[0]
     assert v["decision"] == "reject"
+
+
+def _live(svc):
+    svc.broker.mode = "live"
+    svc.earn.ensure_stable = lambda target, need, shrink=False: need
+
+
+def _app_order(ec, symbol, side, qty, total, ts, oid):
+    ec.history.append({"orderId": oid, "symbol": symbol, "side": side, "status": "FILLED", "filledQty": str(qty),
+                       "filledTotal": str(total), "createdAt": ts})
+
+
+def test_live_shares_bought_in_binance_app_are_held(svc):
+    """Untokenized NVDA bought in the Binance app: no ledger entry, rebuilt from the order history."""
+    _live(svc)
+    ec = svc.eclient
+    _app_order(ec, "NVDA", "BUY", 2, 340, 1_782_000_000_000, 1)
+    _app_order(ec, "NVDA", "SELL", 0.5, 90, 1_783_000_000_000, 2)
+    _app_order(ec, "AAPL", "BUY", 1, 200, 1_790_000_000_000, 3)
+    ec.converts.append({"underlyingAsset": "AAPL", "underlyingAssetAmount": "0.4", "tokenizedAsset": "AAPLB",
+                        "convertType": "MINT", "status": "S", "createdAt": 1_791_000_000_000})
+    h = svc.stock_holdings()["holdings"]
+    rows = {r["symbol"]: r for r in h}
+    assert rows["NVDA"]["qty"] == 1.5 and abs(rows["NVDA"]["cost"] - 255) < 1e-6
+    assert abs(rows["AAPL"]["qty"] - 0.6) < 1e-9
+    assert abs(svc.stocks_ledger_value() - (1.5 * 180 + 0.6 * 230)) < 1
+    assert "NVDA" in svc.sdesk.context()["holdings"]
+
+
+def test_live_history_skips_own_tokenized_buys_and_counts_funding_tokens(svc):
+    _live(svc)
+    ok, _ = svc.sdesk.buy("NVDA", 90, "auto")                    # tokenized buy: the holding is NVDAB, not shares
+    assert ok
+    svc.eclient.funding = {"NVDAB": 0.5, "USDC": 3.0}
+    svc.sdesk.refresh()
+    h = svc.sdesk.holdings({})["NVDA"]
+    assert h["shares"] == 0 and h["token_qty"] == 0.5 and h["qty"] == 0.5
+
+
+def test_live_sell_of_app_shares_goes_through_binance_stocks(svc):
+    svc.settings_store.update({"limits": {"allow_sell": True}})
+    svc._rebuild()
+    _live(svc)
+    ec = svc.eclient
+    _app_order(ec, "NVDA", "BUY", 1, 170, 1_782_000_000_000, 1)
+    ok, msg = svc.sdesk.sell("NVDA", 90, "web")
+    assert ok, msg
+    order = next(c for c in ec.calls if c[0] == "order")
+    assert order[1:3] == ("NVDA", "SELL") and 0.49 < order[4] < 0.51
+    assert ec.calls[-1][:2] == ("funding_to_spot", "USDC")       # proceeds land in funding; moved to spot
+    assert 0.49 < svc.sdesk.holdings({})["NVDA"]["qty"] < 0.51
+
+
+def test_live_history_failure_falls_back_to_ledger(svc):
+    from binanceclaw.exchange.binance_spot import ExchangeError
+    _live(svc)
+    svc.sdesk._book("AAPL", 1.0, 230)
+
+    def boom(*a, **k):
+        raise ExchangeError("geo")
+    svc.eclient.order_history = boom
+    assert svc.sdesk.positions()["AAPL"] == (1.0, 230)

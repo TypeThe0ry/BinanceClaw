@@ -20,6 +20,8 @@ DISCLAIMER_MISSING = 486410
 FILLED = "FILLED"
 OPEN_STATUSES = ("NEW", "ACCEPTED", "PARTIALLY_FILLED")
 DONE_STATUSES = ("FILLED", "CANCELED", "EXPIRED", "REJECTED")
+FILLED_STATUSES = "FILLED,PARTIALLY_FILLED,CANCELED,EXPIRED"      # every status that can carry a fill
+HISTORY_PAGE = 100
 
 
 def _num(x: float) -> str:
@@ -89,6 +91,28 @@ class BinanceEquity(BinanceSpot):
 
     def stock_order(self, client_order_id: str) -> dict:
         return self._signed("GET", "/order/detail", {"clientOrderId": client_order_id})
+
+    # ---------------------------------------------------------------- history (where holdings come from)
+    def order_history(self, start_ms: int, end_ms: int, page: int = 1, size: int = HISTORY_PAGE) -> dict:
+        """{total, page, size, rows: [{orderId, symbol, side, filledQty, filledTotal, status, createdAt, ...}]}"""
+        return self._signed("GET", "/order/history", {"startTime": start_ms, "endTime": end_ms, "orderStatus": FILLED_STATUSES,
+                                                       "current": page, "size": size}) or {}
+
+    def tokenized_history(self, start_ms: int, end_ms: int, last_id: int | None = None, size: int = HISTORY_PAGE) -> dict:
+        """Mint / redeem between a stock and its token: {rows: [{underlyingAsset, underlyingAssetAmount,
+        tokenizedAsset, tokenizedAssetAmount, convertType MINT|REDEEM, status P|S|F, createdAt}], hasMore, nextLastId}"""
+        return self._signed("GET", "/tokenized/history", {"startTime": start_ms, "endTime": end_ms, "lastId": last_id,
+                                                          "size": size}) or {}
+
+    # ---------------------------------------------------------------- funding wallet
+    def funding_assets(self) -> dict[str, float]:
+        """Funding wallet balances: stock sells settle there, and tokens minted by a buy by default."""
+        r = self._request("POST", "/sapi/v1/asset/get-funding-asset", {}, signed=True) or []
+        return {a["asset"]: float(a.get("free") or 0) for a in r if float(a.get("free") or 0) > 0}
+
+    def funding_to_spot(self, asset: str, amount: float) -> dict:
+        return self._request("POST", "/sapi/v1/asset/transfer", {"type": "FUNDING_MAIN", "asset": asset,
+                                                                 "amount": _num(amount)}, signed=True)
 
 
 def stock_cid() -> str:
