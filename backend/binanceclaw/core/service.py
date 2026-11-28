@@ -737,12 +737,15 @@ class Service:
         return Portfolio(raw, px, self.settings)
 
     def stocks_ledger_value(self) -> float:
-        """Value of the Binance Stocks shares BinanceClaw holds untokenized (its own ledger)."""
+        """Value of the Binance Stocks holdings the spot wallet doesn't show: untokenized shares
+        (including ones bought in the Binance app) and stock tokens in the funding wallet."""
+        if not self.settings.stocks.enabled:
+            return 0.0
         try:
-            return self.sdesk.ledger_value() if self.sdesk.lots() else 0.0
+            return self.sdesk.ledger_value() if (self.sdesk.positions() or self.sdesk.funding()) else 0.0
         except ExchangeError as e:
             log.warning("stock ledger value unavailable: %s", e)
-            return sum(r.cost_usd for r in self.sdesk.lots().values())
+            return sum(c for _q, c in self.sdesk.positions().values())
 
     def _stock_token_prices(self, raw: dict, px: dict) -> dict[str, float]:
         """Prices for tokenized stocks without a spot price, from the stock's Binance Stocks quote."""

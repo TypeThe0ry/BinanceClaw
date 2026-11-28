@@ -1,9 +1,10 @@
 """Binance Stocks (real US stocks / ETFs) as one asset per ticker.
 
 A stock can be held two ways and BinanceClaw shows and trades them as one holding:
-* tokenized: the stock's token (NVDA -> NVDAB) in the spot wallet, read from the balances;
-* not tokenized: shares held by Binance's broker. No endpoint lists them, so the shares
-  BinanceClaw bought are kept in its own ledger (StockLot).
+* tokenized: the stock's token (NVDA -> NVDAB) in the spot or funding wallet, read from the balances;
+* not tokenized: shares held by Binance's broker. No endpoint lists them, so live they are rebuilt
+  from the Binance Stocks order and mint/redeem history (which includes shares bought in the
+  Binance app); paper trading keeps its own ledger (StockLot).
 
 Buys go through Binance Stocks (USDC, market order); a buy of a tokenization-enabled stock settles
 as its token when stocks.tokenize is on. Sells use the ledger shares first, then the token through
@@ -15,6 +16,7 @@ import math
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from sqlmodel import select
 
@@ -27,6 +29,12 @@ log = logging.getLogger("binanceclaw.stocks")
 STOCKS_ASSET = "STOCKS"          # pseudo-asset: value of the ledger shares, in USD
 MAX_STOCK_ACTIONS = 5
 POLL_TRIES = 3
+DAY_MS = 86_400_000
+LAUNCH_MS = int(datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp() * 1000)     # Binance Stocks launch
+WINDOW_MS = 30 * DAY_MS          # history range per request (Binance does not document a maximum)
+SMALL_WINDOW_MS = 7 * DAY_MS     # fallback when a 30-day range is refused
+SETTLED_MS = 3 * DAY_MS          # windows that ended this long ago no longer change: fetched once
+HISTORY_TTL = 600
 
 
 def _f(x) -> float:
@@ -58,6 +66,9 @@ class StockDesk:
         self._tok: tuple[float, dict] | None = None
         self._quotes: dict[str, tuple[float, float]] = {}
         self._disclaimer = False
+        self._pos: tuple[float, dict] | None = None          # live broker shares from the history
+        self._settled: dict[tuple[str, int, int], list] = {}  # rows of history windows that can't change any more
+        self._funding: tuple[float, dict] | None = None
 
     @property
     def client(self):
@@ -143,30 +154,170 @@ class StockDesk:
 
     # ---------------------------------------------------------------- holdings
     def lots(self) -> dict[str, StockLot]:
+        """BinanceClaw's own ledger of untokenized shares (paper trading, and the live fallback)."""
         return {r.symbol: r for r in self.svc.db.all(select(StockLot).where(StockLot.mode == self.mode)) if r.qty > 1e-12}
 
+    def funding(self) -> dict[str, float]:
+        """Stock tokens in the funding wallet (live): a buy in the Binance app mints its token there by default."""
+        if self.mode != "live":
+            return {}
+        if not self._funding or time.time() - self._funding[0] > 60:
+            try:
+                bal = self.client.funding_assets()
+            except ExchangeError as e:
+                log.warning("funding wallet unavailable: %s", e)
+                bal = self._funding[1] if self._funding else {}
+            codes = self.codes()
+            self._funding = (time.time(), {a: v for a, v in bal.items() if a in codes})
+        return self._funding[1]
+
+    def positions(self) -> dict[str, tuple[float, float]]:
+        """ticker -> (untokenized shares, cost in USD). Live: rebuilt from the Binance Stocks history,
+        so shares bought in the Binance app count too; the ledger when the history can't be read."""
+        lots = {t: (r.qty, r.cost_usd) for t, r in self.lots().items()}
+        if self.mode != "live":
+            return lots
+        if self._pos and time.time() - self._pos[0] < HISTORY_TTL:
+            return self._pos[1]
+        try:
+            pos = self._history_positions()
+        except ExchangeError as e:
+            log.warning("Binance Stocks history unavailable: %s", e)
+            pos = self._pos[1] if self._pos else lots
+            self._pos = (time.time() - HISTORY_TTL + 120, pos)
+            return pos
+        self._pos = (time.time(), pos)
+        return pos
+
+    def refresh(self) -> None:
+        self._pos = None
+        self._funding = None
+
+    def _windows(self, now_ms: int):
+        a = LAUNCH_MS
+        while a < now_ms:
+            yield a, min(a + WINDOW_MS, now_ms)
+            a += WINDOW_MS
+
+    def _history(self, kind: str, a: int, b: int, now_ms: int) -> list[dict]:
+        key = (kind, a, b)
+        if key in self._settled:
+            return self._settled[key]
+        fetch = self._order_rows if kind == "orders" else self._convert_rows
+        try:
+            rows = fetch(a, b)
+        except ExchangeError:
+            rows = []
+            for x in range(a, b, SMALL_WINDOW_MS):
+                rows += fetch(x, min(x + SMALL_WINDOW_MS, b))
+        if b == a + WINDOW_MS and b < now_ms - SETTLED_MS:
+            self._settled[key] = rows
+        return rows
+
+    def _order_rows(self, a: int, b: int) -> list[dict]:
+        rows, page = [], 1
+        while True:
+            r = self.client.order_history(a, b, page)
+            got = r.get("rows") or []
+            rows += got
+            if len(got) < (r.get("size") or len(got) or 1) or page * max(len(got), 1) >= int(r.get("total") or 0) or page >= 50:
+                return rows
+            page += 1
+
+    def _convert_rows(self, a: int, b: int) -> list[dict]:
+        rows, last = [], None
+        for _ in range(50):
+            r = self.client.tokenized_history(a, b, last)
+            rows += r.get("rows") or []
+            if not r.get("hasMore") or r.get("nextLastId") in (None, last):
+                break
+            last = r.get("nextLastId")
+        return rows
+
+    def _history_positions(self) -> dict[str, tuple[float, float]]:
+        """Shares per ticker = filled buys - filled sells - minted into tokens + redeemed from tokens.
+        Buys that settled as tokens are left out: BinanceClaw's own by order id; a buy made elsewhere
+        that minted without a mint record is matched against its token in the funding wallet."""
+        now = int(time.time() * 1000)
+        orders, converts = {}, {}
+        for a, b in self._windows(now):
+            for o in self._history("orders", a, b, now):
+                orders[str(o.get("orderId"))] = o
+            for c in self._history("converts", a, b, now):
+                converts[str(c.get("issuerRequestId") or (c.get("createdAt"), c.get("tokenizedAsset")))] = c
+        tokenized = set()
+        own_token_shares: dict[str, float] = {}
+        for tr in self.svc.db.all(select(StockTrade).where(StockTrade.mode == "live", StockTrade.tokenized == True)):  # noqa: E712
+            oid = str((tr.detail or {}).get("order_id") or ((tr.detail or {}).get("binance") or {}).get("orderId") or "")
+            if oid:
+                tokenized.add(oid)
+            own_token_shares[tr.symbol] = own_token_shares.get(tr.symbol, 0.0) + (tr.qty or 0.0)
+        events = []
+        for oid, o in orders.items():
+            q, t = _f(o.get("filledQty")), str(o.get("symbol") or "").upper()
+            if q > 0 and t and oid not in tokenized and o.get("side") in ("BUY", "SELL"):
+                events.append((_f(o.get("createdAt")), t, o["side"], q, _f(o.get("filledTotal"))))
+        converted = set()
+        for c in converts.values():
+            q, t = _f(c.get("underlyingAssetAmount")), str(c.get("underlyingAsset") or "").upper()
+            kind = str(c.get("convertType") or "").upper()
+            if t:
+                converted.add(t)
+            if q > 0 and t and c.get("status") == "S" and kind in ("MINT", "REDEEM"):
+                events.append((_f(c.get("createdAt")), t, "SELL" if kind == "MINT" else "REDEEM", q, 0.0))
+        pos: dict[str, list[float]] = {}
+        for _ts, t, side, q, total in sorted(events, key=lambda e: e[0]):
+            p = pos.setdefault(t, [0.0, 0.0])
+            if side == "BUY":
+                p[0] += q
+                p[1] += total
+            elif side == "REDEEM":
+                p[1] += p[1] / p[0] * q if p[0] > 1e-12 else 0.0
+                p[0] += q
+            else:
+                q = min(q, p[0])
+                p[1] -= p[1] / p[0] * q if p[0] > 1e-12 else 0.0
+                p[0] -= q
+        funding = self.funding()
+        for t, p in pos.items():
+            tok = self.tokens_safe().get(t)
+            if tok and t not in converted and p[0] > 1e-12:
+                minted = funding.get(tok[0], 0.0) * tok[1] - own_token_shares.get(t, 0.0)
+                cut = min(max(minted, 0.0), p[0])
+                if cut > 0:
+                    p[1] -= p[1] / p[0] * cut
+                    p[0] -= cut
+        return {t: (q, max(c, 0.0)) for t, (q, c) in pos.items() if q > 1e-9}
+
     def ledger_value(self) -> float:
+        """USD value of what the spot wallet doesn't show: untokenized shares and tokens in the funding wallet."""
         total = 0.0
-        for t, lot in self.lots().items():
+        for t, (qty, cost) in self.positions().items():
             px = self.price(t)
-            total += lot.qty * (px if px else lot.cost_usd / lot.qty)
+            total += qty * (px if px else cost / qty)
+        codes = self.codes()
+        for code, amt in self.funding().items():
+            t, m = codes[code]
+            px = self.price(t)
+            total += amt * m * (px or 0.0)
         return total
 
     def holdings(self, balances: dict[str, float] | None = None) -> dict[str, dict]:
-        """ticker -> merged holding: ledger shares + tokens in the wallet (in shares)."""
+        """ticker -> merged holding: untokenized shares + tokens in the spot and funding wallets (in shares)."""
         bal = balances if balances is not None else self.svc.spot_balances()
+        fund = self.funding()
         out: dict[str, dict] = {}
         for code, (t, m) in self.codes().items():
-            amt = bal.get(code, 0.0)
+            amt = bal.get(code, 0.0) + fund.get(code, 0.0)
             if amt > 1e-12:
                 out.setdefault(t, {"symbol": t, "shares": 0.0, "token": code, "token_qty": 0.0, "cost": None})
                 out[t]["token_qty"] = amt
                 out[t]["token_shares"] = amt * m
-        for t, lot in self.lots().items():
+        for t, (qty, cost) in self.positions().items():
             row = out.setdefault(t, {"symbol": t, "shares": 0.0, "token": (self.tokens_safe().get(t) or ("",))[0],
                                      "token_qty": 0.0, "cost": None})
-            row["shares"] = lot.qty
-            row["cost"] = lot.cost_usd
+            row["shares"] = qty
+            row["cost"] = cost or None
         for t, row in out.items():
             row["qty"] = row["shares"] + row.get("token_shares", 0.0)
             px = self.price(t)
@@ -287,8 +438,21 @@ class StockDesk:
             return tr
         if qty > 0 and not tr.tokenized:
             self._book(tr.symbol, qty if tr.side == "BUY" else -qty, total if tr.side == "BUY" else 0.0)
+        self.refresh()
+        if qty > 0 and tr.side == "SELL" and tr.mode == "live":
+            self._proceeds_to_spot(total - _f(d.get("fee")))
         return self.svc.db.update(StockTrade, tr.id, status="filled" if qty > 0 else status, qty=qty, price=price,
                                   usd=total or tr.usd, fee=_f(d.get("fee")), detail={**tr.detail, "binance": d})
+
+    def _proceeds_to_spot(self, usd: float):
+        """A stock sell settles USDC to the funding wallet; move it to spot, where the AI can use it."""
+        amt = math.floor(usd * 100) / 100
+        if amt <= 0:
+            return
+        try:
+            self.client.funding_to_spot("USDC", amt)
+        except ExchangeError as e:
+            log.warning("moving %.2f USDC from funding to spot failed: %s", amt, e)
 
     def _place(self, t: str, side: str, cid: str, **kw) -> dict:
         try:
@@ -352,10 +516,9 @@ class StockDesk:
         if not px:
             return False, f"{t} 没有报价"
         need = usd / px
-        lot = self.lots().get(t)
         msgs = []
         day = self.svc.today()
-        have = lot.qty if lot else 0.0
+        have = self.positions().get(t, (0.0, 0.0))[0]
         q1 = min(need, have)
         step = _f((self.info().get(t) or {}).get("stepSize"))
         if have - q1 <= max(step, have * 0.01):
@@ -386,10 +549,14 @@ class StockDesk:
         if rest > 1e-9 and tok:
             code, mult = tok
             have = self.svc.spot_balances().get(code, 0.0)
-            units = min(rest / mult, have)
+            fund = self.funding().get(code, 0.0)
+            units = min(rest / mult, have + fund)
             pair = f"{code}{s.quote}"
             if units > 0 and self.svc.is_spot_pair(pair):
                 try:
+                    if units > have and fund > 0:
+                        self.client.funding_to_spot(code, min(units - have, fund))
+                        self.refresh()
                     msgs.append(self._sell_token(t, code, pair, units, via, cycle_id))
                 except ExchangeError as e:
                     if not q1:

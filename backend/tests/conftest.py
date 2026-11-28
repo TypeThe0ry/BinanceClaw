@@ -266,6 +266,9 @@ class FakeEquity:
         self.calls = []
         self.orders = {}
         self.fill = True
+        self.history = []            # order history rows of orders placed outside BinanceClaw (the Binance app)
+        self.converts = []
+        self.funding = {}
 
     def stock_info(self):
         return dict(self.info)
@@ -286,11 +289,29 @@ class FakeEquity:
         px = self.quotes[symbol]
         q = notional / px if side == "BUY" else qty
         self.orders[cid] = {"status": "FILLED" if self.fill else "ACCEPTED", "filledQty": str(q if self.fill else 0),
-                            "filledTotal": str(q * px if self.fill else 0), "avgFilledPrice": str(px), "fee": "0"}
+                            "filledTotal": str(q * px if self.fill else 0), "avgFilledPrice": str(px), "fee": "0",
+                            "orderId": "o-" + cid, "symbol": symbol, "side": side, "createdAt": int(time.time() * 1000) - 1000 + len(self.orders)}
         return {"status": "S", "orderId": "o-" + cid, "clientOrderId": cid}
 
     def stock_order(self, cid):
         return dict(self.orders[cid])
+
+    def order_history(self, start_ms, end_ms, page=1, size=100):
+        self.calls.append(("order_history", start_ms, end_ms, page))
+        rows = [r for r in [*self.history, *self.orders.values()] if r.get("symbol") and start_ms <= r.get("createdAt", 0) < end_ms]
+        return {"total": len(rows), "page": page, "size": size, "rows": rows[(page - 1) * size: page * size]}
+
+    def tokenized_history(self, start_ms, end_ms, last_id=None, size=100):
+        rows = [r for r in self.converts if start_ms <= r.get("createdAt", 0) < end_ms]
+        return {"rows": rows, "hasMore": False, "nextLastId": None}
+
+    def funding_assets(self):
+        return dict(self.funding)
+
+    def funding_to_spot(self, asset, amount):
+        self.calls.append(("funding_to_spot", asset, amount))
+        self.funding[asset] = self.funding.get(asset, 0.0) - amount
+        return {"tranId": 1}
 
 
 class FakeProvider(Provider):
